@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VHS Garage — A Lo-Fi Love Letter to the Golden Age of Video</title>
+  <meta name="description" content="Two dudes on a mission to rewind the clock and bring analog vibes back to a digital world. VHS swap meets, found footage, and IRL events.">
+  <meta name="theme-color" content="#000000">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="VHS Garage — A Lo-Fi Love Letter to the Golden Age of Video">
+  <meta property="og:description" content="Two dudes on a mission to rewind the clock and bring analog vibes back to a digital world. VHS swap meets, found footage, and IRL events.">
+  <meta property="og:image" content="unfurl.png">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="VHS Garage — A Lo-Fi Love Letter to the Golden Age of Video">
+  <meta name="twitter:description" content="Two dudes on a mission to rewind the clock and bring analog vibes back to a digital world. VHS swap meets, found footage, and IRL events.">
+  <meta name="twitter:image" content="unfurl.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="apple-touch-icon" href="favicon.png">
+
+  <!-- Manifest -->
+  <link rel="manifest" href="site.webmanifest">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @font-face {
+      font-family: 'VCR';
+      src: url('VCR.ttf') format('truetype');
+    }
+    body { font-family: 'VCR', monospace; }
+    @keyframes vhs-dots {
+      0%, 100% { content: '░░░'; }
+      14% { content: '▒░░'; }
+      28% { content: '▓▒░'; }
+      42% { content: '▓▓▒'; }
+      57% { content: '▓▓▓'; }
+      71% { content: '▓▓▒'; }
+      85% { content: '▓▒░'; }
+    }
+    #video-loader::after {
+      content: '░░░';
+      animation: vhs-dots 0.9s steps(1) infinite;
+    }
+  </style>
+</head>
+<body class="bg-black text-white">
+
+  <!-- Hero -->
+  <section class="relative md:h-screen md:overflow-hidden md:flex md:items-center">
+    <div class="relative w-full">
+      <img src="bg-vertical.webp" alt="VHS Garage" class="w-full block relative z-10" />
+
+      <div id="video-loader" class="absolute top-[44.5%] left-[20.5%] w-[24%] z-0 rotate-[2.5deg] flex items-center justify-center text-white/40 text-sm"></div>
+      <video
+        id="hero-video"
+        src="vhs-loop.mp4"
+        autoplay
+        loop
+        muted
+        playsinline
+        class="absolute top-[40.5%] left-[20.5%] w-[24%] z-0 rotate-[2.5deg] opacity-0 transition-opacity duration-500"
+      ></video>
+    </div>
+
+    <div class="absolute bottom-8 left-1/2 -translate-x-1/2 animate-bounce z-20">
+      <svg class="w-8 h-8 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+      </svg>
+    </div>
+  </section>
+
+  <!-- Content -->
+  <section class="max-w-2xl mx-auto px-6 py-24 text-left">
+    <h2 class="text-7xl mb-6 tracking-tight">Welcome to the Garage</h2>
+    <p class="text-lg text-gray-300 mb-4 leading-relaxed">
+      VHS Garage is a lo-fi love letter to the golden age of video. Two dudes on a mission to rewind the clock and bring analog vibes back to a digital world.
+    </p>
+    <p class="text-lg text-gray-300 mb-12 leading-relaxed">
+      Hosted by <a href="https://x.com/oracrest" target="_blank" class="text-white underline hover:text-gray-300">Matt Manchester</a>. Co-hosted by <a href="https://x.com/clarklab" target="_blank" class="text-white underline hover:text-gray-300">Clark Wimberly</a>.
+    </p>
+
+    <!-- What We're Into -->
+    <div class="mb-12">
+      <h3 class="text-2xl mb-4">#What We're Into</h3>
+      <ul class="text-lg text-gray-300 space-y-2">
+        <li>▓ VHS Swap Meets</li>
+        <li>▒ Found Footage Channel</li>
+        <li>░ IRL Events</li>
+      </ul>
+    </div>
+
+    <!-- Upcoming Events -->
+    <div class="mb-12">
+      <h3 class="text-2xl mb-4">#Upcoming Events</h3>
+      <p class="text-gray-400">Nothing scheduled yet. Follow <a href="https://x.com/oracrest" target="_blank" class="text-white underline hover:text-gray-300">Matt on Twitter</a> for event announcements, or send us an invite to your event. We'll probably show up!</p>
+    </div>
+
+    <!-- Signup -->
+    <div>
+      <h3 class="text-2xl mb-2">#Enter the Garage</h3>
+      <p class="text-gray-400 mb-6">Drop your email and we'll give you a <strong class="text-white">free mystery VHS</strong> at an upcoming event. No spam. Just tapes.</p>
+      <form id="garage-form" name="garage-signup" method="POST" data-netlify="true" class="flex gap-3">
+        <input type="hidden" name="form-name" value="garage-signup" />
+        <input
+          id="garage-email"
+          type="email"
+          name="email"
+          placeholder="your@email.com"
+          required
+          class="flex-1 px-4 py-3 rounded-lg bg-black border border-white/30 text-white placeholder-gray-500 focus:outline-none focus:border-white"
+        />
+        <button id="garage-btn" type="submit" class="px-6 py-3 bg-white text-black rounded-lg hover:bg-gray-200 transition-colors shrink-0 min-w-[100px]">
+          Sign Up
+        </button>
+      </form>
+      <p id="garage-confirm" class="hidden text-lg mt-4"></p>
+    </div>
+  </section>
+
+  <script>
+    (() => {
+      const vid = document.getElementById('hero-video');
+      const loader = document.getElementById('video-loader');
+      vid.addEventListener('canplaythrough', () => {
+        vid.classList.remove('opacity-0');
+        loader.classList.add('hidden');
+      }, { once: true });
+    })();
+  </script>
+
+  <script>
+    (() => {
+      const form = document.getElementById('garage-form');
+      const btn = document.getElementById('garage-btn');
+      const email = document.getElementById('garage-email');
+      const confirm = document.getElementById('garage-confirm');
+      const frames = ['░░░', '▒░░', '▓▒░', '▓▓▒', '▓▓▓', '▓▓▒', '▓▒░', '▒░░'];
+      let tick;
+
+      function startLoader() {
+        let i = 0;
+        btn.disabled = true;
+        btn.textContent = frames[0];
+        tick = setInterval(() => {
+          i = (i + 1) % frames.length;
+          btn.textContent = frames[i];
+        }, 120);
+      }
+
+      function stopLoader() {
+        clearInterval(tick);
+        btn.disabled = false;
+        btn.textContent = 'Sign Up';
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        startLoader();
+        try {
+          const res = await fetch('/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(new FormData(form)).toString()
+          });
+          stopLoader();
+          if (res.ok) {
+            form.classList.add('hidden');
+            confirm.classList.remove('hidden');
+            confirm.textContent = '▓ You\'re in. See you at the next event.';
+          } else {
+            confirm.classList.remove('hidden');
+            confirm.textContent = '░ Something went wrong. Try again.';
+            confirm.classList.add('text-red-400');
+          }
+        } catch {
+          stopLoader();
+          confirm.classList.remove('hidden');
+          confirm.textContent = '░ Network error. Try again.';
+          confirm.classList.add('text-red-400');
+        }
+      });
+    })();
+  </script>
+
+  <footer class="text-left text-gray-600 text-sm pb-8 max-w-2xl mx-auto px-6">&copy; 2026 VHS Garage</footer>
+
+</body>
+</html>
