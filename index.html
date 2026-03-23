@@ -51,7 +51,7 @@
 <body class="bg-black text-white">
 
   <!-- Hero -->
-  <section class="relative md:h-screen md:overflow-hidden md:flex md:items-center">
+  <section class="relative md:h-screen md:overflow-hidden md:flex md:items-center cursor-pointer">
     <div class="relative w-full">
       <img id="bg-dark" src="bg-vertical-dark.webp" alt="" class="w-full block relative z-10" />
       <img id="bg-light" src="bg-vertical.webp" alt="VHS Garage" class="absolute inset-0 w-full block z-10 transition-opacity duration-150" />
@@ -68,7 +68,7 @@
       ></video>
     </div>
 
-    <p class="absolute top-4 right-4 text-white text-xs z-20 opacity-60">Sound Up</p>
+    <p id="sound-hint" class="absolute top-4 right-4 text-white text-xs z-20 opacity-60">Sound On</p>
 
     <div class="absolute bottom-8 left-1/2 -translate-x-1/2 animate-bounce z-20">
       <svg class="w-8 h-8 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -163,6 +163,19 @@
         vid.classList.remove('opacity-0');
         loader.classList.add('hidden');
       }, { once: true });
+    })();
+  </script>
+
+  <script>
+    (() => {
+      const section = document.querySelector('section');
+      const vid = document.getElementById('hero-video');
+      const hint = document.getElementById('sound-hint');
+
+      section.addEventListener('click', () => {
+        vid.muted = !vid.muted;
+        hint.textContent = vid.muted ? 'Sound On' : 'Sound Off';
+      });
     })();
   </script>
 
