@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Watch — VHS Garage</title>
+  <meta name="description" content="A VHS screen saver. Random clips from the garage.">
+  <meta name="theme-color" content="#000000">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Watch — VHS Garage">
+  <meta property="og:description" content="A VHS screen saver. Random clips from the garage.">
+  <meta property="og:image" content="https://vhsgarage.com/unfurl.png">
+
+  <link rel="icon" type="image/png" href="https://vhsgarage.com/favicon.png">
+  <link rel="apple-touch-icon" href="https://vhsgarage.com/favicon.png">
+  <link rel="manifest" href="https://vhsgarage.com/site.webmanifest">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @font-face {
+      font-family: 'VCR';
+      src: url('VCR.ttf') format('truetype');
+    }
+    body { font-family: 'VCR', monospace; margin: 0; }
+    @keyframes vhs-dots {
+      0%, 100% { content: '░░░'; }
+      14% { content: '▒░░'; }
+      28% { content: '▓▒░'; }
+      42% { content: '▓▓▒'; }
+      57% { content: '▓▓▓'; }
+      71% { content: '▓▓▒'; }
+      85% { content: '▓▒░'; }
+    }
+    #yt-loader::after {
+      content: '░░░';
+      animation: vhs-dots 0.9s steps(1) infinite;
+    }
+    #yt-player-wrap iframe {
+      width: 100%;
+      aspect-ratio: 4/3;
+      display: block;
+      border: none;
+    }
+    .panel-btn {
+      transition: color 0.2s, opacity 0.2s;
+    }
+    .panel-btn:hover { color: rgba(255,255,255,0.8); }
+    .setting-opt {
+      padding: 4px 10px;
+      cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.15);
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .setting-opt:hover { border-color: rgba(255,255,255,0.4); }
+    .setting-opt.active {
+      background: rgba(255,255,255,0.15);
+      border-color: rgba(255,255,255,0.5);
+    }
+  </style>
+</head>
+<body class="bg-black text-white overflow-hidden h-screen w-screen">
+
+  <!-- Background mask -->
+  <div id="screen" class="relative w-full h-full flex items-center">
+    <div class="relative w-full">
+      <img id="bg-dark" src="bg-vertical-dark.webp" alt="" class="w-full block relative z-10" />
+      <img id="bg-light" src="bg-vertical.webp" alt="" class="absolute inset-0 w-full block z-10 transition-opacity duration-150" />
+
+      <div id="yt-loader" class="absolute top-[44.5%] left-[20.5%] w-[24%] z-0 rotate-[2.5deg] flex items-center justify-center text-white/40 text-sm"></div>
+      <div id="yt-player-wrap" class="absolute top-[40.5%] left-[20.5%] w-[24%] z-0 rotate-[2.5deg] opacity-0 transition-opacity duration-500">
+        <div id="yt-player"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Corner UI -->
+  <div id="corner-ui" class="fixed inset-0 z-30 pointer-events-none transition-opacity duration-300">
+    <!-- Top-left: Garage -->
+    <div class="absolute top-4 left-4 pointer-events-auto">
+      <button id="garage-btn" class="panel-btn text-white/40 text-xs">▓ Matt's Garage</button>
+      <div id="garage-panel" class="hidden mt-2 bg-black/90 border border-white/20 p-3 w-48 text-xs">
+        <p class="text-white/60 mb-2">Garage</p>
+        <div class="text-white/80 p-2 border border-white/30 bg-white/10">Matt's Garage</div>
+        <p class="text-white/30 mt-2 text-[10px]">More garages coming soon</p>
+      </div>
+    </div>
+
+    <!-- Top-right: Channel -->
+    <div class="absolute top-4 right-4 pointer-events-auto text-right">
+      <button id="channel-btn" class="panel-btn text-white/40 text-xs">CH ░ <span id="channel-name">oracrest</span></button>
+      <div id="channel-panel" class="hidden mt-2 bg-black/90 border border-white/20 p-3 w-64 text-xs text-left">
+        <p class="text-white/60 mb-2">Channel</p>
+        <div class="flex gap-2 mb-3">
+          <input id="channel-input" type="text" placeholder="YouTube channel URL or ID"
+            class="flex-1 px-2 py-1 bg-black border border-white/30 text-white text-xs placeholder-white/30 focus:outline-none focus:border-white/60" />
+          <button id="channel-load" class="px-3 py-1 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors">Load</button>
+        </div>
+        <p class="text-white/30 text-[10px]">Paste a youtube.com/user/ or youtube.com/channel/ URL</p>
+      </div>
+    </div>
+
+    <!-- Bottom-left: Settings -->
+    <div class="absolute bottom-4 left-4 pointer-events-auto">
+      <div id="settings-panel" class="hidden mb-2 bg-black/90 border border-white/20 p-3 w-56 text-xs">
+        <p class="text-white/60 mb-2">Clip Length</p>
+        <div class="flex gap-1 mb-3" id="clip-options">
+          <span class="setting-opt" data-val="30000">30s</span>
+          <span class="setting-opt" data-val="60000">1m</span>
+          <span class="setting-opt" data-val="300000">5m</span>
+          <span class="setting-opt active" data-val="0">&#8734;</span>
+        </div>
+        <p class="text-white/60 mb-2">Sleep Timer</p>
+        <div class="flex gap-1" id="sleep-options">
+          <span class="setting-opt" data-val="3600000">1hr</span>
+          <span class="setting-opt" data-val="7200000">2hr</span>
+          <span class="setting-opt" data-val="14400000">4hr</span>
+          <span class="setting-opt active" data-val="0">&#8734;</span>
+        </div>
+      </div>
+      <button id="settings-btn" class="panel-btn text-white/40 text-xs">▒ Settings</button>
+    </div>
+
+    <!-- Bottom-right: Fullscreen -->
+    <div class="absolute bottom-4 right-4 pointer-events-auto">
+      <button id="fullscreen-btn" class="panel-btn text-white/40 text-xs">[ ]</button>
+    </div>
+  </div>
+
+  <!-- Sleep overlay -->
+  <div id="sleep-overlay" class="hidden fixed inset-0 z-40 bg-black/80 flex items-center justify-center cursor-pointer">
+    <p class="text-white/30 text-sm">░ paused ░ click to resume</p>
+  </div>
+
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script>
+    const YOUTUBE_API_KEY = ''; // Add your YouTube Data API v3 key here
+
+    const GARAGES = [
+      { id: 'matts', name: "Matt's Garage", bg: 'bg-vertical', channel: 'oracrest' }
+    ];
+
+    const DEFAULT_CHANNEL_ID = 'UC-wMG2tGhmeBOCO9IVbu4kg';
+
+    // Hardcoded oracrest video IDs (fallback when no API key)
+    const SEED_VIDEOS = [
+      '7NoPy_y1ENM', 'CQiDcue0Mwg', 'argK6e8sZrc', 'hkFqZGpX2aI',
+      'T5y2jcGYZj4', 'V1ETmE426Xc', 'R7o9aGdz92o', '2_kFa7Prp4A',
+      'mthwgR-cqWk', 'skaEO-fUeIo', 'YblSGYjPugQ', 'edum1muSs7s',
+      '3StHm3JtTlo', 'bq5ASTfWWLQ', 'l3tKnOaGjfg'
+    ];
+
+    const STORAGE_KEY = 'vhsg_watch';
+
+    const App = {
+      player: null,
+      playlist: [...SEED_VIDEOS],
+      currentIndex: -1,
+      clipLimitMs: 0,
+      sleepTimerMs: 0,
+      sleepTimeout: null,
+      clipTimeout: null,
+      channelId: '',
+      channelName: 'oracrest',
+
+      loadSettings() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+          if (saved.clipLimit !== undefined) this.clipLimitMs = saved.clipLimit;
+          if (saved.sleepTimer !== undefined) this.sleepTimerMs = saved.sleepTimer;
+          if (saved.channelName) this.channelName = saved.channelName;
+          if (saved.channelId) this.channelId = saved.channelId;
+          if (saved.playlist && saved.playlist.length) this.playlist = saved.playlist;
+        } catch (e) {}
+      },
+
+      saveSettings() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          clipLimit: this.clipLimitMs,
+          sleepTimer: this.sleepTimerMs,
+          channelName: this.channelName,
+          channelId: this.channelId,
+          playlist: this.playlist
+        }));
+      },
+
+      initPlayer() {
+        this.player = new YT.Player('yt-player', {
+          height: '100%',
+          width: '100%',
+          playerVars: {
+            autoplay: 1,
+            controls: 0,
+            disablekb: 1,
+            fs: 0,
+            iv_load_policy: 3,
+            modestbranding: 1,
+            rel: 0,
+            showinfo: 0,
+            playsinline: 1,
+            origin: window.location.origin
+          },
+          events: {
+            onReady: (e) => this.onPlayerReady(e),
+            onStateChange: (e) => this.onStateChange(e),
+            onError: (e) => this.onError(e)
+          }
+        });
+      },
+
+      onPlayerReady() {
+        this.playRandom();
+        if (this.sleepTimerMs > 0) this.startSleepTimer();
+      },
+
+      onStateChange(event) {
+        if (event.data === YT.PlayerState.PLAYING) {
+          document.getElementById('yt-player-wrap').classList.remove('opacity-0');
+          document.getElementById('yt-loader').classList.add('hidden');
+          this.startClipTimer();
+        }
+        if (event.data === YT.PlayerState.ENDED) {
+          this.playRandom();
+        }
+      },
+
+      onError() {
+        // Skip errored videos
+        this.playRandom();
+      },
+
+      playRandom() {
+        if (!this.playlist.length) return;
+        let idx;
+        do {
+          idx = Math.floor(Math.random() * this.playlist.length);
+        } while (idx === this.currentIndex && this.playlist.length > 1);
+        this.currentIndex = idx;
+        this.player.loadVideoById(this.playlist[idx]);
+      },
+
+      startClipTimer() {
+        clearTimeout(this.clipTimeout);
+        if (this.clipLimitMs > 0) {
+          this.clipTimeout = setTimeout(() => this.playRandom(), this.clipLimitMs);
+        }
+      },
+
+      startSleepTimer() {
+        clearTimeout(this.sleepTimeout);
+        if (this.sleepTimerMs > 0) {
+          this.sleepTimeout = setTimeout(() => {
+            this.player.pauseVideo();
+            document.getElementById('sleep-overlay').classList.remove('hidden');
+          }, this.sleepTimerMs);
+        }
+      },
+
+      setClipLimit(ms) {
+        this.clipLimitMs = ms;
+        this.saveSettings();
+        this.startClipTimer();
+      },
+
+      setSleepTimer(ms) {
+        this.sleepTimerMs = ms;
+        this.saveSettings();
+        this.startSleepTimer();
+      },
+
+      async loadChannel(input) {
+        // Extract channel identifier from URL or raw input
+        let channelId = '';
+        let channelName = input;
+
+        // Try to parse YouTube URL formats
+        try {
+          const url = new URL(input.includes('://') ? input : 'https://' + input);
+          const path = url.pathname;
+          if (path.startsWith('/channel/')) {
+            channelId = path.split('/')[2];
+            channelName = channelId;
+          } else if (path.startsWith('/user/') || path.startsWith('/@') || path.startsWith('/c/')) {
+            channelName = path.split('/').filter(Boolean).pop().replace('@', '');
+          }
+        } catch (e) {
+          channelName = input.replace('@', '');
+        }
+
+        this.channelName = channelName;
+        document.getElementById('channel-name').textContent = channelName;
+
+        if (YOUTUBE_API_KEY) {
+          await this.fetchChannelVideos(channelId, channelName);
+        }
+
+        this.saveSettings();
+        this.playRandom();
+      },
+
+      async fetchChannelVideos(channelId, channelName) {
+        if (!YOUTUBE_API_KEY) return;
+
+        try {
+          // Resolve channel ID if we only have a username
+          if (!channelId) {
+            const chRes = await fetch(
+              `https://www.googleapis.com/youtube/v3/channels?part=id&forUsername=${channelName}&key=${YOUTUBE_API_KEY}`
+            );
+            const chData = await chRes.json();
+            if (chData.items && chData.items.length) {
+              channelId = chData.items[0].id;
+            } else {
+              // Try search as fallback
+              const searchRes = await fetch(
+                `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${channelName}&type=channel&maxResults=1&key=${YOUTUBE_API_KEY}`
+              );
+              const searchData = await searchRes.json();
+              if (searchData.items && searchData.items.length) {
+                channelId = searchData.items[0].id.channelId;
+              }
+            }
+          }
+
+          if (!channelId) return;
+          this.channelId = channelId;
+
+          // Check cache
+          const cacheKey = `vhsg_ch_${channelId}`;
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) {
+            const { videos, ts } = JSON.parse(cached);
+            if (Date.now() - ts < 3600000) {
+              this.playlist = videos;
+              return;
+            }
+          }
+
+          // Fetch uploads
+          const res = await fetch(
+            `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&type=video&maxResults=50&order=date&key=${YOUTUBE_API_KEY}`
+          );
+          const data = await res.json();
+          if (data.items && data.items.length) {
+            this.playlist = data.items.map(i => i.id.videoId);
+            localStorage.setItem(cacheKey, JSON.stringify({
+              videos: this.playlist,
+              ts: Date.now()
+            }));
+          }
+        } catch (e) {
+          console.warn('YouTube API fetch failed, using existing playlist');
+        }
+      }
+    };
+
+    // YouTube API callback
+    function onYouTubeIframeAPIReady() {
+      App.loadSettings();
+      App.initPlayer();
+    }
+
+    // --- UI Wiring ---
+    document.addEventListener('DOMContentLoaded', () => {
+      // Flicker effect
+      (() => {
+        const light = document.getElementById('bg-light');
+        const dark = document.getElementById('bg-dark');
+        let ready = 0;
+
+        function startFlicker() {
+          let t = 0;
+          function tick() {
+            t += 0.002 + Math.random() * 0.003;
+            const v = 0.5
+              + 0.35 * Math.sin(t * 1.0)
+              + 0.25 * Math.sin(t * 2.7 + 1.3)
+              + 0.15 * Math.sin(t * 5.1 + 0.7);
+            light.style.opacity = String(Math.max(0, Math.min(1, v)));
+            requestAnimationFrame(tick);
+          }
+          tick();
+        }
+
+        [light, dark].forEach(img => {
+          if (img.complete) { ready++; }
+          else { img.addEventListener('load', () => { ready++; if (ready === 2) startFlicker(); }, { once: true }); }
+        });
+        if (ready === 2) startFlicker();
+      })();
+
+      // Panel toggles
+      function togglePanel(btnId, panelId) {
+        const btn = document.getElementById(btnId);
+        const panel = document.getElementById(panelId);
+        const allPanels = ['garage-panel', 'channel-panel', 'settings-panel'];
+
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const wasHidden = panel.classList.contains('hidden');
+          // Close all panels
+          allPanels.forEach(id => document.getElementById(id).classList.add('hidden'));
+          if (wasHidden) panel.classList.remove('hidden');
+        });
+      }
+
+      togglePanel('garage-btn', 'garage-panel');
+      togglePanel('channel-btn', 'channel-panel');
+      togglePanel('settings-btn', 'settings-panel');
+
+      // Close panels on outside click
+      document.addEventListener('click', () => {
+        ['garage-panel', 'channel-panel', 'settings-panel'].forEach(id =>
+          document.getElementById(id).classList.add('hidden')
+        );
+      });
+
+      // Stop propagation on panels themselves
+      ['garage-panel', 'channel-panel', 'settings-panel'].forEach(id => {
+        document.getElementById(id).addEventListener('click', e => e.stopPropagation());
+      });
+
+      // Settings: clip limit
+      const clipOpts = document.querySelectorAll('#clip-options .setting-opt');
+      clipOpts.forEach(opt => {
+        opt.addEventListener('click', () => {
+          clipOpts.forEach(o => o.classList.remove('active'));
+          opt.classList.add('active');
+          App.setClipLimit(parseInt(opt.dataset.val));
+        });
+      });
+
+      // Settings: sleep timer
+      const sleepOpts = document.querySelectorAll('#sleep-options .setting-opt');
+      sleepOpts.forEach(opt => {
+        opt.addEventListener('click', () => {
+          sleepOpts.forEach(o => o.classList.remove('active'));
+          opt.classList.add('active');
+          App.setSleepTimer(parseInt(opt.dataset.val));
+        });
+      });
+
+      // Restore active states from saved settings
+      App.loadSettings();
+      clipOpts.forEach(o => {
+        if (parseInt(o.dataset.val) === App.clipLimitMs) {
+          clipOpts.forEach(x => x.classList.remove('active'));
+          o.classList.add('active');
+        }
+      });
+      sleepOpts.forEach(o => {
+        if (parseInt(o.dataset.val) === App.sleepTimerMs) {
+          sleepOpts.forEach(x => x.classList.remove('active'));
+          o.classList.add('active');
+        }
+      });
+      document.getElementById('channel-name').textContent = App.channelName;
+
+      // Channel load
+      document.getElementById('channel-load').addEventListener('click', () => {
+        const val = document.getElementById('channel-input').value.trim();
+        if (val) {
+          App.loadChannel(val);
+          document.getElementById('channel-panel').classList.add('hidden');
+        }
+      });
+
+      document.getElementById('channel-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          document.getElementById('channel-load').click();
+        }
+      });
+
+      // Fullscreen
+      document.getElementById('fullscreen-btn').addEventListener('click', () => {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        } else {
+          document.exitFullscreen();
+        }
+      });
+
+      document.addEventListener('fullscreenchange', () => {
+        const ui = document.getElementById('corner-ui');
+        if (document.fullscreenElement) {
+          ui.style.opacity = '0';
+          ui.style.pointerEvents = 'none';
+          // Close any open panels
+          ['garage-panel', 'channel-panel', 'settings-panel'].forEach(id =>
+            document.getElementById(id).classList.add('hidden')
+          );
+        } else {
+          ui.style.opacity = '1';
+          ui.style.pointerEvents = '';
+        }
+      });
+
+      // Sleep overlay — click to resume
+      document.getElementById('sleep-overlay').addEventListener('click', () => {
+        document.getElementById('sleep-overlay').classList.add('hidden');
+        App.player.playVideo();
+        App.startSleepTimer();
+      });
+    });
+  </script>
+
+</body>
+</html>
