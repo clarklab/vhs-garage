@@ -190,11 +190,47 @@ function wireWebcamSelector() {
 
 function wireSleeveCapture() {
   document.getElementById('sleeve-capture-btn').addEventListener('click', () => {
-    handleSleeveCapture();
+    const result = handleSleeveCapture();
+    if (result && result.captured === 'front') {
+      analyzeSleevePhoto(result.data);
+    }
   });
   document.getElementById('sleeve-retake-btn').addEventListener('click', () => {
     handleSleeveRetake();
   });
+}
+
+async function analyzeSleevePhoto(imageData) {
+  const loader = document.getElementById('clip-info-loader');
+  const fields = document.getElementById('clip-info-fields');
+
+  // Show loader, hide fields
+  loader.classList.remove('hidden');
+  fields.classList.add('opacity-30', 'pointer-events-none');
+
+  try {
+    const res = await fetch('/.netlify/functions/sleeve-ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: imageData }),
+    });
+    const info = await res.json();
+
+    if (!info.error) {
+      if (info.title) document.getElementById('clip-title').value = info.title;
+      if (info.year) document.getElementById('clip-year').value = info.year;
+      if (info.description) document.getElementById('clip-description').value = info.description;
+      if (info.tags) document.getElementById('clip-tags').value = info.tags;
+      if (info.tape) document.getElementById('clip-tape').value = info.tape;
+      if (info.cassetteNotes) document.getElementById('clip-notes').value = info.cassetteNotes;
+    }
+  } catch (e) {
+    console.warn('Sleeve AI analysis failed:', e);
+  }
+
+  // Hide loader, restore fields
+  loader.classList.add('hidden');
+  fields.classList.remove('opacity-30', 'pointer-events-none');
 }
 
 // --- Record button ---
@@ -262,6 +298,7 @@ function wireRecordButton() {
         const basename = currentFilename.replace('.webm', '');
 
         // Read metadata fields
+        const year = document.getElementById('clip-year')?.value || '';
         const description = document.getElementById('clip-description')?.value || '';
         const tags = document.getElementById('clip-tags')?.value || '';
         const tape = document.getElementById('clip-tape')?.value || '';
@@ -269,10 +306,11 @@ function wireRecordButton() {
 
         const entry = createClipEntry(title || 'Untitled', currentFilename, duration, fileSize, bitrate);
         entry.thumbnail = thumbnail;
+        entry.year = year;
         entry.description = description;
         entry.tags = tags;
         entry.tape = tape;
-        entry.notes = notes;
+        entry.cassetteNotes = notes;
 
         // Attach sleeve data
         const sleeveData = getSleeveData();

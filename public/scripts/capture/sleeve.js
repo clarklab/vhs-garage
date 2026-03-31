@@ -73,6 +73,7 @@ export function handleSleeveCapture() {
     document.getElementById('sleeve-front-status').textContent = 'Front \u2713';
     sleeveState = 'front_captured';
     label.textContent = 'Flip & Capture Back';
+    return { captured: 'front', data: frontData };
   } else if (sleeveState === 'front_captured') {
     // Capture back photo, then switch to review view
     backData = capturePhoto();
@@ -83,7 +84,9 @@ export function handleSleeveCapture() {
     // Switch to review view
     captureView.classList.add('hidden');
     reviewView.classList.remove('hidden');
+    return { captured: 'back', data: backData };
   }
+  return null;
 }
 
 export function handleSleeveRetake() {

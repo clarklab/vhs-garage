@@ -105,8 +105,6 @@ import Flicker from '../components/Flicker.astro';
   </div>
 
   <script is:inline>
-    const YOUTUBE_API_KEY = ''; // Add your YouTube Data API v3 key here
-
     const GARAGES = [
       { id: 'matts', name: "Matt's Garage", bg: 'bg-vertical', channel: 'oracrest' }
     ];
@@ -179,7 +177,11 @@ import Flicker from '../components/Flicker.astro';
         });
       },
 
-      onPlayerReady() {
+      async onPlayerReady() {
+        // If no custom channel loaded, fetch the default channel's full listing
+        if (!App.channelId) {
+          await App.fetchChannelVideos(DEFAULT_CHANNEL_ID, App.channelName);
+        }
         App.playRandom();
         if (App.sleepTimerMs > 0) App.startSleepTimer();
       },
@@ -240,11 +242,10 @@ import Flicker from '../components/Flicker.astro';
       },
 
       async loadChannel(input) {
-        // Extract channel identifier from URL or raw input
         let channelId = '';
         let channelName = input;
 
-        // Try to parse YouTube URL formats
+        // Parse YouTube URL formats
         try {
           const url = new URL(input.includes('://') ? input : 'https://' + input);
           const path = url.pathname;
@@ -261,42 +262,29 @@ import Flicker from '../components/Flicker.astro';
         App.channelName = channelName;
         document.getElementById('channel-name').textContent = channelName;
 
-        if (YOUTUBE_API_KEY) {
-          await App.fetchChannelVideos(channelId, channelName);
-        }
-
+        await App.fetchChannelVideos(channelId, channelName);
         App.saveSettings();
         App.playRandom();
       },
 
       async fetchChannelVideos(channelId, channelName) {
-        if (!YOUTUBE_API_KEY) return;
-
         try {
           // Resolve channel ID if we only have a username
           if (!channelId) {
-            const chRes = await fetch(
-              `https://www.googleapis.com/youtube/v3/channels?part=id&forUsername=${channelName}&key=${YOUTUBE_API_KEY}`
-            );
-            const chData = await chRes.json();
-            if (chData.items && chData.items.length) {
-              channelId = chData.items[0].id;
-            } else {
-              // Try search as fallback
-              const searchRes = await fetch(
-                `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${channelName}&type=channel&maxResults=1&key=${YOUTUBE_API_KEY}`
-              );
-              const searchData = await searchRes.json();
-              if (searchData.items && searchData.items.length) {
-                channelId = searchData.items[0].id.channelId;
-              }
+            const res = await fetch(`/.netlify/functions/youtube?action=resolve&name=${encodeURIComponent(channelName)}`);
+            const data = await res.json();
+            if (data.error) return;
+            channelId = data.channelId;
+            if (data.channelName) {
+              App.channelName = data.channelName;
+              document.getElementById('channel-name').textContent = data.channelName;
             }
           }
 
           if (!channelId) return;
           App.channelId = channelId;
 
-          // Check cache
+          // Check cache (1 hour)
           const cacheKey = `vhsg_ch_${channelId}`;
           const cached = localStorage.getItem(cacheKey);
           if (cached) {
@@ -307,20 +295,18 @@ import Flicker from '../components/Flicker.astro';
             }
           }
 
-          // Fetch uploads
-          const res = await fetch(
-            `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&type=video&maxResults=50&order=date&key=${YOUTUBE_API_KEY}`
-          );
+          // Fetch videos via serverless function
+          const res = await fetch(`/.netlify/functions/youtube?action=videos&channelId=${encodeURIComponent(channelId)}`);
           const data = await res.json();
-          if (data.items && data.items.length) {
-            App.playlist = data.items.map(i => i.id.videoId);
+          if (data.videos && data.videos.length) {
+            App.playlist = data.videos;
             localStorage.setItem(cacheKey, JSON.stringify({
               videos: App.playlist,
               ts: Date.now()
             }));
           }
         } catch (e) {
-          console.warn('YouTube API fetch failed, using existing playlist');
+          console.warn('Channel fetch failed, using existing playlist');
         }
       }
     };
