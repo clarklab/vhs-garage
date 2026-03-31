@@ -366,11 +366,11 @@ import { GARAGES } from '../data/garages.js';
       }
     };
 
-    // YouTube API callback — must be global
-    function onYouTubeIframeAPIReady() {
+    // YouTube API callback — must be on window (Astro's define:vars wraps in IIFE)
+    window.onYouTubeIframeAPIReady = function() {
       App.loadSettings();
       App.initPlayer();
-    }
+    };
 
     // --- UI Wiring ---
     document.addEventListener('DOMContentLoaded', () => {
