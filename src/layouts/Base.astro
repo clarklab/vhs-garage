@@ -1,0 +1,43 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+const fullTitle = title === 'VHS Garage'
+  ? 'VHS Garage — A Lo-Fi Love Letter to the Golden Age of Video'
+  : `${title} — VHS Garage`;
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{fullTitle}</title>
+  <meta name="description" content={description}>
+  <meta name="theme-color" content="#000000">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content={fullTitle}>
+  <meta property="og:description" content={description}>
+  <meta property="og:image" content="https://vhsgarage.com/unfurl.png">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content={fullTitle}>
+  <meta name="twitter:description" content={description}>
+  <meta name="twitter:image" content="https://vhsgarage.com/unfurl.png">
+
+  <link rel="icon" type="image/png" href="https://vhsgarage.com/favicon.png">
+  <link rel="apple-touch-icon" href="https://vhsgarage.com/favicon.png">
+  <link rel="manifest" href="https://vhsgarage.com/site.webmanifest">
+
+  <slot name="head" />
+</head>
+<body class="bg-black text-white">
+  <slot />
+</body>
+</html>
