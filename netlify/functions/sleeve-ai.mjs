@@ -11,7 +11,12 @@ export default async (req) => {
     return json({ error: 'Gemini API not configured' }, 500);
   }
 
-  const { image } = await req.json();
+  let image;
+  try {
+    ({ image } = await req.json());
+  } catch (e) {
+    return json({ error: 'Invalid request body' }, 400);
+  }
   if (!image) {
     return json({ error: 'Missing image data' }, 400);
   }

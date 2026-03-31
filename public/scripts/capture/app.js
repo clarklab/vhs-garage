@@ -200,19 +200,41 @@ function wireSleeveCapture() {
   });
 }
 
+function resizeForAI(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 800;
+      let w = img.width, h = img.height;
+      if (w > MAX || h > MAX) {
+        const scale = MAX / Math.max(w, h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', 0.7));
+    };
+    img.src = dataUrl;
+  });
+}
+
 async function analyzeSleevePhoto(imageData) {
   const loader = document.getElementById('clip-info-loader');
   const fields = document.getElementById('clip-info-fields');
 
-  // Show loader, hide fields
+  // Show loader, dim fields
   loader.classList.remove('hidden');
   fields.classList.add('opacity-30', 'pointer-events-none');
 
   try {
+    const smallImage = await resizeForAI(imageData);
     const res = await fetch('/.netlify/functions/sleeve-ai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageData }),
+      body: JSON.stringify({ image: smallImage }),
     });
     const info = await res.json();
 
