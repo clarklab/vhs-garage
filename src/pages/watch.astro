@@ -1,6 +1,7 @@
 ---
 import Base from '../layouts/Base.astro';
 import Flicker from '../components/Flicker.astro';
+import { GARAGES } from '../data/garages.js';
 ---
 
 <Base title="Watch" description="A VHS screen saver. Random clips from the garage.">
@@ -13,9 +14,12 @@ import Flicker from '../components/Flicker.astro';
       content: '░░░';
       animation: vhs-dots 0.9s steps(1) infinite;
     }
-    #yt-player-wrap iframe {
-      width: 100%;
+    #yt-player-wrap {
       aspect-ratio: 4/3;
+    }
+    #yt-player-wrap iframe {
+      width: 100% !important;
+      height: 100% !important;
       display: block;
       border: none;
     }
@@ -37,7 +41,7 @@ import Flicker from '../components/Flicker.astro';
   </style>
 
   <!-- Screen container -->
-  <div id="screen" class="relative w-full h-screen flex items-center overflow-hidden">
+  <div id="screen" class="relative w-full md:h-screen md:flex md:items-center md:overflow-hidden">
     <Flicker>
       <div id="yt-loader" class="absolute top-[44.5%] left-[20.5%] w-[24%] z-0 rotate-[2.5deg] flex items-center justify-center text-white/40 text-sm"></div>
       <div id="yt-player-wrap" class="absolute top-[40.5%] left-[20.5%] w-[24%] z-0 rotate-[2.5deg] opacity-0 transition-opacity duration-500">
@@ -50,11 +54,15 @@ import Flicker from '../components/Flicker.astro';
   <div id="corner-ui" class="fixed inset-0 z-30 pointer-events-none transition-opacity duration-300">
     <!-- Top-left: Garage -->
     <div class="absolute top-4 left-4 pointer-events-auto">
-      <button id="garage-sel-btn" class="panel-btn text-white/40 text-xs">▓ Matt's Garage</button>
-      <div id="garage-panel" class="hidden mt-2 bg-black/90 border border-white/20 p-3 w-48 text-xs">
+      <button id="garage-sel-btn" class="panel-btn text-white/40 text-xs">▓ <span id="garage-name">{GARAGES[0].name}</span></button>
+      <div id="garage-panel" class="hidden mt-2 bg-black/90 border border-white/20 p-3 w-56 text-xs">
         <p class="text-white/60 mb-2">Garage</p>
-        <div class="text-white/80 p-2 border border-white/30 bg-white/10">Matt's Garage</div>
-        <p class="text-white/30 mt-2 text-[10px]">More garages coming soon</p>
+        {GARAGES.map((g, i) => (
+          <button data-garage-idx={i} class:list={["garage-opt w-full text-left p-2 border mb-1 transition-colors", i === 0 ? "text-white/80 border-white/30 bg-white/10" : "text-white/50 border-white/15 hover:border-white/30"]}>
+            {g.name}
+          </button>
+        ))}
+        {GARAGES.length < 2 && <p class="text-white/30 mt-2 text-[10px]">More garages coming soon</p>}
       </div>
     </div>
 
@@ -104,12 +112,9 @@ import Flicker from '../components/Flicker.astro';
     <p class="text-white/30 text-sm">░ paused ░ click to resume</p>
   </div>
 
-  <script is:inline>
-    const GARAGES = [
-      { id: 'matts', name: "Matt's Garage", bg: 'bg-vertical', channel: 'oracrest' }
-    ];
-
-    const DEFAULT_CHANNEL_ID = 'UC-wMG2tGhmeBOCO9IVbu4kg';
+  <script is:inline define:vars={{ GARAGES_JSON: JSON.stringify(GARAGES) }}>
+    const GARAGES = JSON.parse(GARAGES_JSON);
+    const DEFAULT_CHANNEL_ID = GARAGES[0].channelId;
 
     // Hardcoded oracrest video IDs (fallback when no API key)
     const SEED_VIDEOS = [
@@ -130,7 +135,7 @@ import Flicker from '../components/Flicker.astro';
       sleepTimeout: null,
       clipTimeout: null,
       channelId: '',
-      channelName: 'oracrest',
+      channelName: GARAGES[0].channel,
 
       loadSettings() {
         try {
