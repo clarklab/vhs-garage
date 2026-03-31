@@ -54,6 +54,7 @@ If you cannot determine a field, use an empty string. Return ONLY the JSON objec
         },
         body: JSON.stringify({
           contents: [{
+            role: 'user',
             parts: [
               { text: prompt },
               {
