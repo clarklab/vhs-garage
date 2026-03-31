@@ -16,3 +16,6 @@ video/
 .env.*
 !.env.example
 video/edits/
+
+# Local Netlify folder
+.netlify

@@ -24,7 +24,16 @@ export function getTotalBytes() {
   return totalBytes;
 }
 
-export async function startRecording(stream, directoryHandle, filename, bitrate, { onTick, onStop, onError }) {
+function selectMimeType(format) {
+  if (format !== 'webm') {
+    if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1')) return 'video/mp4;codecs=avc1';
+    if (MediaRecorder.isTypeSupported('video/mp4')) return 'video/mp4';
+  }
+  if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) return 'video/webm;codecs=vp9';
+  return 'video/webm';
+}
+
+export async function startRecording(stream, directoryHandle, filename, bitrate, format, { onTick, onStop, onError }) {
   onTickCallback = onTick;
   onStopCallback = onStop;
   totalBytes = 0;
@@ -33,9 +42,7 @@ export async function startRecording(stream, directoryHandle, filename, bitrate,
   lastFileHandle = fileHandle;
   writableStream = await fileHandle.createWritable();
 
-  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-    ? 'video/webm;codecs=vp9'
-    : 'video/webm';
+  const mimeType = selectMimeType(format);
 
   mediaRecorder = new MediaRecorder(stream, {
     mimeType,
@@ -92,15 +99,16 @@ export function formatSize(bytes) {
   return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
 }
 
-export function generateFilename(title, nameFormat) {
+export function generateFilename(title, nameFormat, format) {
+  const ext = format === 'webm' ? 'webm' : 'mp4';
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
   const time = String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
 
   if (nameFormat === 'timestamp' || !title.trim()) {
-    return `VHS_Capture_${date}_${time}.webm`;
+    return `VHS_Capture_${date}_${time}.${ext}`;
   }
 
   const sanitized = title.trim().replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '_');
-  return `${sanitized}_${date}_${time}.webm`;
+  return `${sanitized}_${date}_${time}.${ext}`;
 }

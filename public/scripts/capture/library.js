@@ -68,7 +68,7 @@ export async function exportCatalog(directoryHandle) {
   await writable.close();
 }
 
-export function renderLibrary(container, emptyMsg, clips, onDelete) {
+export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen) {
   if (!clips.length) {
     container.innerHTML = '';
     emptyMsg.classList.remove('hidden');
@@ -78,15 +78,22 @@ export function renderLibrary(container, emptyMsg, clips, onDelete) {
   emptyMsg.classList.add('hidden');
   container.innerHTML = clips.map(clip => `
     <div class="border border-white/20 p-3 text-xs" data-id="${clip.id}">
-      <div class="aspect-[4/3] bg-[#141214] mb-2 overflow-hidden flex items-center justify-center">
-        ${clip.thumbnail ? `<img src="${clip.thumbnail}" class="w-full h-full object-contain" alt="">` : '<span class="text-white/10">No thumbnail</span>'}
+      <div class="aspect-[4/3] bg-[#141214] mb-2 overflow-hidden flex items-center justify-center cursor-pointer open-clip hover:opacity-80 transition-opacity" data-id="${clip.id}" data-filename="${clip.filename || ''}" title="Open file">
+        ${clip.thumbnail ? `<img src="${clip.thumbnail}" class="w-full h-full object-contain pointer-events-none" alt="">` : '<span class="text-white/10 pointer-events-none">No thumbnail</span>'}
       </div>
       <p class="text-white truncate mb-1">${clip.title}</p>
       <p class="text-gray-500">${new Date(clip.date).toLocaleDateString()} · ${formatDuration(clip.duration)} · ${formatLibSize(clip.fileSize)}</p>
+      <p class="text-gray-600 truncate text-[10px] mt-1">${clip.filename || ''}</p>
       ${clip.sleeveFront ? '<p class="text-gray-500 mt-1">Sleeve: Front' + (clip.sleeveBack ? ' + Back' : '') + '</p>' : ''}
       <button class="delete-clip text-red-400/50 hover:text-red-400 mt-2 transition-colors" data-id="${clip.id}">Delete</button>
     </div>
   `).join('');
+
+  container.querySelectorAll('.open-clip').forEach(el => {
+    el.addEventListener('click', () => {
+      if (onOpen) onOpen(el.dataset.id, el.dataset.filename);
+    });
+  });
 
   container.querySelectorAll('.delete-clip').forEach(btn => {
     btn.addEventListener('click', () => {

@@ -50,6 +50,14 @@ import Base from '../layouts/Base.astro';
       75%  { content: '░░░▒▓█░░░'; }
       87%  { content: '░░░░▒▓█░░'; }
     }
+    #preview-container.recording-active {
+      border: 3px solid #e53935;
+      box-shadow: inset 0 0 30px rgba(229, 57, 53, 0.15);
+    }
+    #rec-overlay-timer {
+      font-size: 2rem;
+      letter-spacing: 0.05em;
+    }
     .scanlines {
       background: repeating-linear-gradient(
         0deg,
@@ -86,6 +94,9 @@ import Base from '../layouts/Base.astro';
           <video id="preview" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
           <video id="playback" controls class="hidden w-full h-full object-contain bg-black"></video>
           <div class="scanlines absolute inset-0"></div>
+          <div id="rec-overlay-timer" class="hidden absolute top-3 right-4 text-red-500 tabular-nums z-10" style="text-shadow: 0 0 10px rgba(229,57,53,0.7), 0 0 20px rgba(229,57,53,0.4);">
+            00:00:00
+          </div>
           <!-- Shown when no device selected -->
           <div id="no-signal" class="absolute inset-0 flex items-center justify-center">
             <div class="text-center">
@@ -184,7 +195,6 @@ import Base from '../layouts/Base.astro';
         <!-- Clip Info -->
         <fieldset class="border border-white/20 p-3">
           <legend class="text-white/70 text-xs px-2">░ Clip Info ░</legend>
-          <div id="clip-info-loader" class="hidden py-6 text-center text-white/40 text-sm ai-loader"></div>
           <div id="clip-info-fields" class="space-y-2 text-xs">
             <div>
               <label class="text-gray-400 block mb-1">Title</label>
@@ -192,29 +202,32 @@ import Base from '../layouts/Base.astro';
                 class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
             </div>
             <div>
-              <label class="text-gray-400 block mb-1">Year</label>
-              <input id="clip-year" type="text" placeholder="1994"
-                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
-            </div>
-            <div>
               <label class="text-gray-400 block mb-1">Description</label>
               <textarea id="clip-description" rows="2" placeholder="What's on this clip..."
                 class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
             </div>
-            <div>
-              <label class="text-gray-400 block mb-1">Tags</label>
-              <input id="clip-tags" type="text" placeholder="home video, 90s, family"
-                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
-            </div>
-            <div>
-              <label class="text-gray-400 block mb-1">VHS Tape</label>
-              <input id="clip-tape" type="text" placeholder="Which tape is this from?"
-                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
-            </div>
-            <div>
-              <label class="text-gray-400 block mb-1">Cassette Notes</label>
-              <textarea id="clip-notes" rows="2" placeholder="Special edition, director's cut, recording speed..."
-                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
+            <div id="ai-fields" class="space-y-2">
+              <div id="clip-info-loader" class="hidden py-4 text-center text-white/40 text-sm ai-loader"></div>
+              <div>
+                <label class="text-gray-400 block mb-1">Year</label>
+                <input id="clip-year" type="text" placeholder="1994"
+                  class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+              </div>
+              <div>
+                <label class="text-gray-400 block mb-1">Tags</label>
+                <input id="clip-tags" type="text" placeholder="home video, 90s, family"
+                  class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+              </div>
+              <div>
+                <label class="text-gray-400 block mb-1">VHS Tape</label>
+                <input id="clip-tape" type="text" placeholder="Which tape is this from?"
+                  class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+              </div>
+              <div>
+                <label class="text-gray-400 block mb-1">Cassette Notes</label>
+                <textarea id="clip-notes" rows="2" placeholder="Special edition, director's cut, recording speed..."
+                  class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
+              </div>
             </div>
           </div>
         </fieldset>
@@ -283,6 +296,13 @@ import Base from '../layouts/Base.astro';
           <option value="8000000">Archival (8 Mbps)</option>
           <option value="5000000" selected>High (5 Mbps)</option>
           <option value="2500000">Standard (2.5 Mbps)</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-gray-400 block mb-1">Video Format</label>
+        <select id="setting-format" class="w-full bg-black border border-white/20 text-white text-xs p-1">
+          <option value="mp4" selected>MP4 (H.264)</option>
+          <option value="webm">WebM (VP9)</option>
         </select>
       </div>
       <div>

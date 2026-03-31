@@ -61,6 +61,7 @@ async function startApp() {
 
     // Load settings into popover
     if (settings.bitrate) document.getElementById('setting-quality').value = String(settings.bitrate);
+    if (settings.videoFormat) document.getElementById('setting-format').value = settings.videoFormat;
     if (settings.nameFormat) document.getElementById('setting-name-format').value = settings.nameFormat;
   } catch (err) {
     console.warn('Could not open capture stream:', err);
@@ -223,11 +224,11 @@ function resizeForAI(dataUrl) {
 
 async function analyzeSleevePhoto(imageData) {
   const loader = document.getElementById('clip-info-loader');
-  const fields = document.getElementById('clip-info-fields');
+  const aiFields = document.getElementById('ai-fields');
 
-  // Show loader, dim fields
+  // Show loader, dim only AI-filled fields (leave Title & Description editable)
   loader.classList.remove('hidden');
-  fields.classList.add('opacity-30', 'pointer-events-none');
+  aiFields.classList.add('opacity-30', 'pointer-events-none');
 
   try {
     const smallImage = await resizeForAI(imageData);
@@ -243,7 +244,8 @@ async function analyzeSleevePhoto(imageData) {
     if (!res.ok) {
       console.error('Sleeve AI error:', res.status, info);
     } else if (!info.error) {
-      if (info.tape) document.getElementById('clip-tape').value = info.tape + (info.year ? ` (${info.year})` : '');
+      if (info.tape) document.getElementById('clip-tape').value = info.tape;
+      if (info.year) document.getElementById('clip-year').value = info.year;
       if (info.tags) document.getElementById('clip-tags').value = info.tags;
       if (info.cassetteNotes) document.getElementById('clip-notes').value = info.cassetteNotes;
     }
@@ -251,9 +253,9 @@ async function analyzeSleevePhoto(imageData) {
     console.warn('Sleeve AI analysis failed:', e);
   }
 
-  // Hide loader, restore fields
+  // Hide loader, restore AI fields
   loader.classList.add('hidden');
-  fields.classList.remove('opacity-30', 'pointer-events-none');
+  aiFields.classList.remove('opacity-30', 'pointer-events-none');
 }
 
 // --- Record button ---
@@ -269,6 +271,8 @@ function wireRecordButton() {
       btn.classList.remove('recording');
       btn.querySelector('.rec-label').textContent = 'REC';
       titleInput.readOnly = false;
+      document.getElementById('preview-container').classList.remove('recording-active');
+      document.getElementById('rec-overlay-timer').classList.add('hidden');
       stopRecording();
       return;
     }
@@ -300,25 +304,30 @@ function wireRecordButton() {
 
     const settings = loadSettings();
     const title = titleInput.value;
-    currentFilename = generateFilename(title, settings.nameFormat || 'title');
+    const videoFormat = settings.videoFormat || 'mp4';
+    currentFilename = generateFilename(title, settings.nameFormat || 'title', videoFormat);
     const bitrate = settings.bitrate || 5000000;
 
     titleInput.readOnly = true;
     btn.classList.add('recording');
     btn.querySelector('.rec-label').textContent = 'STOP';
+    document.getElementById('preview-container').classList.add('recording-active');
+    document.getElementById('rec-overlay-timer').classList.remove('hidden');
     resetSleeve();
 
-    await startRecording(captureStream, directoryHandle, currentFilename, bitrate, {
+    await startRecording(captureStream, directoryHandle, currentFilename, bitrate, videoFormat, {
       onTick: ({ elapsed, bytes }) => {
-        timerEl.textContent = formatTime(elapsed);
+        const timeStr = formatTime(elapsed);
+        timerEl.textContent = timeStr;
         sizeEl.textContent = formatSize(bytes);
+        document.getElementById('rec-overlay-timer').textContent = timeStr;
       },
       onStop: async ({ duration, fileSize }) => {
         timerEl.textContent = formatTime(duration);
         sizeEl.textContent = formatSize(fileSize);
 
         const thumbnail = captureThumbnail(document.getElementById('preview'));
-        const basename = currentFilename.replace('.webm', '');
+        const basename = currentFilename.replace(/\.(webm|mp4)$/, '');
 
         // Read metadata fields
         const year = document.getElementById('clip-year')?.value || '';
@@ -354,7 +363,16 @@ function wireRecordButton() {
             playbackBlobUrl = URL.createObjectURL(file);
             const playbackVideo = document.getElementById('playback');
             playbackVideo.src = playbackBlobUrl;
-            showPlaybackTab();
+            playbackVideo.load();
+            const onReady = () => {
+              clearTimeout(fallbackTimer);
+              showPlaybackTab();
+            };
+            playbackVideo.addEventListener('loadeddata', onReady, { once: true });
+            const fallbackTimer = setTimeout(() => {
+              playbackVideo.removeEventListener('loadeddata', onReady);
+              showPlaybackTab();
+            }, 3000);
           }
         } catch (err) {
           console.warn('Could not load playback:', err);
@@ -365,6 +383,8 @@ function wireRecordButton() {
       onError: (err) => {
         btn.classList.remove('recording');
         titleInput.readOnly = false;
+        document.getElementById('preview-container').classList.remove('recording-active');
+        document.getElementById('rec-overlay-timer').classList.add('hidden');
         alert('Recording error: ' + err.message);
       },
     });
@@ -509,6 +529,7 @@ function wireDevicePopover() {
 function applyQualitySettings() {
   const settings = loadSettings();
   settings.bitrate = parseInt(document.getElementById('setting-quality').value);
+  settings.videoFormat = document.getElementById('setting-format').value;
   settings.nameFormat = document.getElementById('setting-name-format').value;
   saveSettings(settings);
 }
@@ -534,6 +555,26 @@ function refreshLibrary() {
   renderLibrary(grid, empty, clips, (id) => {
     deleteClip(id);
     refreshLibrary();
+  }, async (id, filename) => {
+    if (!directoryHandle || !filename) {
+      alert('Save folder not available. Please re-select it from settings to open files.');
+      return;
+    }
+    try {
+      const fileHandle = await directoryHandle.getFileHandle(filename);
+      const file = await fileHandle.getFile();
+      const url = URL.createObjectURL(file);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      console.warn('Could not open file:', err);
+      alert('Could not open file. The save folder may need to be re-selected, or the file may have been moved.');
+    }
   });
 }
 
