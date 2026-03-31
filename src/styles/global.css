@@ -1,1 +1,24 @@
 @import "tailwindcss";
+
+@font-face {
+  font-family: 'VCR';
+  src: url('/fonts/VCR.ttf') format('truetype');
+}
+
+body {
+  font-family: 'VCR', monospace;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@keyframes vhs-dots {
+  0%, 100% { content: '░░░'; }
+  14% { content: '▒░░'; }
+  28% { content: '▓▒░'; }
+  42% { content: '▓▓▒'; }
+  57% { content: '▓▓▓'; }
+  71% { content: '▓▓▒'; }
+  85% { content: '▓▒░'; }
+}
