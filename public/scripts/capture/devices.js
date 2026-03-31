@@ -14,7 +14,8 @@ export function saveSettings(settings) {
 }
 
 export async function requestPermissions() {
-  await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  stream.getTracks().forEach(t => t.stop());
 }
 
 export async function enumerateDevices() {
