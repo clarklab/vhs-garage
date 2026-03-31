@@ -236,7 +236,7 @@ import { GARAGES } from '../data/garages.js';
       },
 
       playRandom() {
-        if (!App.playlist.length) return;
+        if (!App.player || !App.playlist.length) return;
         let idx;
         do {
           idx = Math.floor(Math.random() * App.playlist.length);
