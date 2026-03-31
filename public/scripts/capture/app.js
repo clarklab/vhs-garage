@@ -11,6 +11,7 @@ import {
 import {
   initWebcam, stopWebcam, handleSleeveCapture, getSleeveData, resetSleeve, saveSleevePhotos
 } from './sleeve.js';
+import { initMeter, stopMeter } from './meter.js';
 
 let directoryHandle = null;
 let captureStream = null;
@@ -48,6 +49,7 @@ async function startApp() {
       const preview = document.getElementById('preview');
       preview.srcObject = captureStream;
       document.getElementById('no-signal').classList.add('hidden');
+      initMeter(captureStream);
     }
 
     // Auto-connect webcam if saved
@@ -123,6 +125,8 @@ function wireDeviceSelectors() {
       preview.srcObject = captureStream;
       document.getElementById('no-signal').classList.add('hidden');
       selector.classList.add('hidden');
+      stopMeter();
+      initMeter(captureStream);
 
       saveSettings({
         ...loadSettings(),
