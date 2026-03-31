@@ -1,0 +1,16 @@
+{
+  "name": "VHS Garage",
+  "short_name": "VHS Garage",
+  "description": "A lo-fi love letter to the golden age of video.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "https://vhsgarage.com/favicon.png",
+      "sizes": "any",
+      "type": "image/png"
+    }
+  ]
+}
