@@ -186,7 +186,12 @@ import { GARAGES } from '../data/garages.js';
       },
 
       initPlayer() {
+        // Pick a random starting video to load immediately
+        const startIdx = Math.floor(Math.random() * App.playlist.length);
+        App.currentIndex = startIdx;
+
         this.player = new YT.Player('yt-player', {
+          videoId: App.playlist[startIdx],
           height: '100%',
           width: '100%',
           playerVars: {
@@ -209,13 +214,11 @@ import { GARAGES } from '../data/garages.js';
         });
       },
 
-      async onPlayerReady() {
-        // Try to fetch channel videos, but don't block playback
+      onPlayerReady() {
+        // Fetch full channel listing in the background (upgrades seed list)
         if (!App.channelId) {
           App.fetchChannelVideos(DEFAULT_CHANNEL_ID, App.channelName).catch(() => {});
         }
-        // Always start playing immediately from whatever playlist we have
-        App.playRandom();
         if (App.sleepTimerMs > 0) App.startSleepTimer();
       },
 
