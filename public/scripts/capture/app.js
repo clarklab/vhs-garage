@@ -3,19 +3,21 @@ import {
   requestPermissions, enumerateDevices, matchDevice, onDeviceChange, openStream
 } from './devices.js';
 import {
-  startRecording, stopRecording, isRecording, formatTime, formatSize, generateFilename
+  startRecording, stopRecording, isRecording, formatTime, formatSize, generateFilename, getLastFileHandle
 } from './recorder.js';
 import {
   getClips, addClip, deleteClip, createClipEntry, captureThumbnail, exportCatalog, renderLibrary
 } from './library.js';
 import {
-  initWebcam, stopWebcam, handleSleeveCapture, getSleeveData, resetSleeve, saveSleevePhotos
+  initWebcam, stopWebcam, handleSleeveCapture, handleSleeveRetake, getSleeveData, resetSleeve, saveSleevePhotos
 } from './sleeve.js';
 import { initMeter, stopMeter } from './meter.js';
 
 let directoryHandle = null;
 let captureStream = null;
 let currentFilename = null;
+let playbackBlobUrl = null;
+let lastClipId = null;
 
 async function init() {
   // Browser check
@@ -85,6 +87,7 @@ async function startApp() {
   wireViewToggle();
   wireDevicePopover();
   wireLibrary();
+  wirePlaybackTabs();
   wireBeforeUnload();
 }
 
@@ -189,6 +192,9 @@ function wireSleeveCapture() {
   document.getElementById('sleeve-capture-btn').addEventListener('click', () => {
     handleSleeveCapture();
   });
+  document.getElementById('sleeve-retake-btn').addEventListener('click', () => {
+    handleSleeveRetake();
+  });
 }
 
 // --- Record button ---
@@ -202,6 +208,7 @@ function wireRecordButton() {
   btn.addEventListener('click', async () => {
     if (isRecording()) {
       btn.classList.remove('recording');
+      btn.querySelector('.rec-label').textContent = 'REC';
       titleInput.readOnly = false;
       stopRecording();
       return;
@@ -239,6 +246,7 @@ function wireRecordButton() {
 
     titleInput.readOnly = true;
     btn.classList.add('recording');
+    btn.querySelector('.rec-label').textContent = 'STOP';
     resetSleeve();
 
     await startRecording(captureStream, directoryHandle, currentFilename, bitrate, {
@@ -246,7 +254,7 @@ function wireRecordButton() {
         timerEl.textContent = formatTime(elapsed);
         sizeEl.textContent = formatSize(bytes);
       },
-      onStop: ({ duration, fileSize }) => {
+      onStop: async ({ duration, fileSize }) => {
         timerEl.textContent = formatTime(duration);
         sizeEl.textContent = formatSize(fileSize);
 
@@ -271,9 +279,25 @@ function wireRecordButton() {
         entry.sleeveFront = sleeveData.front;
         entry.sleeveBack = sleeveData.back;
         addClip(entry);
+        lastClipId = entry.id;
 
         // Save sleeve photos to disk if captured
         saveSleevePhotos(directoryHandle, basename).catch(() => {});
+
+        // Create blob URL from the recorded file for playback
+        try {
+          const fh = getLastFileHandle();
+          if (fh) {
+            const file = await fh.getFile();
+            if (playbackBlobUrl) URL.revokeObjectURL(playbackBlobUrl);
+            playbackBlobUrl = URL.createObjectURL(file);
+            const playbackVideo = document.getElementById('playback');
+            playbackVideo.src = playbackBlobUrl;
+            showPlaybackTab();
+          }
+        } catch (err) {
+          console.warn('Could not load playback:', err);
+        }
 
         currentFilename = null;
       },
@@ -463,6 +487,89 @@ function wireBeforeUnload() {
   });
 }
 
+// --- Playback tabs ---
+
+function wirePlaybackTabs() {
+  const tabLive = document.getElementById('tab-live');
+  const tabPlayback = document.getElementById('tab-playback');
+  const deleteBtn = document.getElementById('delete-recording-btn');
+
+  tabLive.addEventListener('click', () => showLiveTab());
+  tabPlayback.addEventListener('click', () => showPlaybackTab());
+
+  deleteBtn.addEventListener('click', async () => {
+    if (!lastClipId) return;
+    if (!confirm('Delete this recording? The file and catalog entry will be removed.')) return;
+
+    // Remove from catalog
+    deleteClip(lastClipId);
+
+    // Remove the file from disk
+    try {
+      const fh = getLastFileHandle();
+      if (fh && directoryHandle) {
+        await directoryHandle.removeEntry(fh.name);
+      }
+    } catch (err) {
+      console.warn('Could not delete file:', err);
+    }
+
+    // Clean up playback
+    const playbackVideo = document.getElementById('playback');
+    playbackVideo.src = '';
+    if (playbackBlobUrl) {
+      URL.revokeObjectURL(playbackBlobUrl);
+      playbackBlobUrl = null;
+    }
+    lastClipId = null;
+
+    showLiveTab();
+    document.getElementById('tab-playback').classList.add('hidden');
+    deleteBtn.classList.add('hidden');
+  });
+}
+
+function showPlaybackTab() {
+  const tabLive = document.getElementById('tab-live');
+  const tabPlayback = document.getElementById('tab-playback');
+  const preview = document.getElementById('preview');
+  const playback = document.getElementById('playback');
+  const deleteBtn = document.getElementById('delete-recording-btn');
+
+  tabPlayback.classList.remove('hidden');
+  tabPlayback.classList.replace('text-white/30', 'text-white/70');
+  tabPlayback.classList.replace('bg-black', 'bg-[#141214]');
+  tabPlayback.classList.replace('border-white/10', 'border-white/20');
+  tabLive.classList.replace('text-white/70', 'text-white/30');
+  tabLive.classList.replace('bg-[#141214]', 'bg-black');
+  tabLive.classList.replace('border-white/20', 'border-white/10');
+
+  preview.classList.add('hidden');
+  playback.classList.remove('hidden');
+  deleteBtn.classList.remove('hidden');
+}
+
+function showLiveTab() {
+  const tabLive = document.getElementById('tab-live');
+  const tabPlayback = document.getElementById('tab-playback');
+  const preview = document.getElementById('preview');
+  const playback = document.getElementById('playback');
+  const deleteBtn = document.getElementById('delete-recording-btn');
+
+  tabLive.classList.replace('text-white/30', 'text-white/70');
+  tabLive.classList.replace('bg-black', 'bg-[#141214]');
+  tabLive.classList.replace('border-white/10', 'border-white/20');
+  if (!tabPlayback.classList.contains('hidden')) {
+    tabPlayback.classList.replace('text-white/70', 'text-white/30');
+    tabPlayback.classList.replace('bg-[#141214]', 'bg-black');
+    tabPlayback.classList.replace('border-white/20', 'border-white/10');
+  }
+
+  playback.classList.add('hidden');
+  preview.classList.remove('hidden');
+  deleteBtn.classList.add('hidden');
+}
+
 // --- Helpers ---
 
 function populateSelect(id, devices) {
@@ -481,10 +588,12 @@ function updateStatus(type, device) {
   const dot = document.getElementById(`status-${type}-dot`);
   if (device) {
     label.textContent = device.label || 'Connected';
-    dot.className = 'status-dot connected';
+    dot.textContent = '\u2593';
+    dot.style.color = '#4caf50';
   } else {
     label.textContent = 'Not found';
-    dot.className = 'status-dot disconnected';
+    dot.textContent = '\u2591';
+    dot.style.color = '#f44336';
   }
 }
 
@@ -493,10 +602,12 @@ function updateStatusWebcam(device) {
   const dot = document.getElementById('status-webcam-dot');
   if (device) {
     label.textContent = device.label || 'Ready';
-    dot.className = 'status-dot ready';
+    dot.textContent = '\u2592';
+    dot.style.color = '#ff9800';
   } else {
     label.textContent = 'Not found';
-    dot.className = 'status-dot disconnected';
+    dot.textContent = '\u2591';
+    dot.style.color = '#f44336';
   }
 }
 

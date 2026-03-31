@@ -5,6 +5,11 @@ let totalBytes = 0;
 let onTickCallback = null;
 let onStopCallback = null;
 let timerInterval = null;
+let lastFileHandle = null;
+
+export function getLastFileHandle() {
+  return lastFileHandle;
+}
 
 export function isRecording() {
   return mediaRecorder && mediaRecorder.state === 'recording';
@@ -25,6 +30,7 @@ export async function startRecording(stream, directoryHandle, filename, bitrate,
   totalBytes = 0;
 
   const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
+  lastFileHandle = fileHandle;
   writableStream = await fileHandle.createWritable();
 
   const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')

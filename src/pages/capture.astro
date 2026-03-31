@@ -6,37 +6,35 @@ import Base from '../layouts/Base.astro';
 
   <style>
     .rec-btn {
-      width: 80px;
-      height: 80px;
-      border-radius: 50%;
-      border: 3px solid #e53935;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 18px;
+      border: 2px solid #e53935;
       background: transparent;
       cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       transition: background 0.2s;
     }
     .rec-btn:hover { background: rgba(229, 57, 53, 0.1); }
     .rec-btn .rec-dot {
-      width: 32px;
-      height: 32px;
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
       background: #e53935;
-      transition: border-radius 0.2s, width 0.2s, height 0.2s;
+    }
+    .rec-btn .rec-label {
+      font-family: monospace;
+      font-size: 14px;
+      font-weight: bold;
+      color: #e53935;
+      letter-spacing: 0.08em;
     }
     .rec-btn.recording .rec-dot {
-      border-radius: 4px;
-      width: 28px;
-      height: 28px;
+      animation: rec-blink 0.8s steps(1) infinite;
     }
-    .rec-btn.recording {
-      border-color: #e53935;
-      animation: rec-pulse 1.5s ease-in-out infinite;
-    }
-    @keyframes rec-pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(229, 57, 53, 0.4); }
-      50% { box-shadow: 0 0 0 12px rgba(229, 57, 53, 0); }
+    @keyframes rec-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
     }
     .scanlines {
       background: repeating-linear-gradient(
@@ -48,15 +46,6 @@ import Base from '../layouts/Base.astro';
       );
       pointer-events: none;
     }
-    .status-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      display: inline-block;
-    }
-    .status-dot.connected { background: #4caf50; }
-    .status-dot.disconnected { background: #f44336; }
-    .status-dot.ready { background: #ff9800; }
   </style>
 
   <!-- Browser check -->
@@ -73,15 +62,21 @@ import Base from '../layouts/Base.astro';
 
       <!-- Left: Main Capture -->
       <div class="flex flex-col min-h-0">
+        <!-- Preview tabs -->
+        <div id="preview-tabs" class="flex gap-0 text-xs mb-0">
+          <button id="tab-live" class="px-3 py-1 border border-white/20 border-b-0 text-white/70 bg-[#141214]">Live</button>
+          <button id="tab-playback" class="hidden px-3 py-1 border border-white/10 border-b-0 text-white/30 bg-black hover:text-white/50">Last Recording</button>
+        </div>
         <!-- Preview -->
         <div id="preview-container" class="relative flex-1 bg-[#141214] border border-white/10 overflow-hidden cursor-pointer">
           <video id="preview" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
+          <video id="playback" controls class="hidden w-full h-full object-contain bg-black"></video>
           <div class="scanlines absolute inset-0"></div>
           <!-- Shown when no device selected -->
           <div id="no-signal" class="absolute inset-0 flex items-center justify-center">
             <div class="text-center">
-              <p class="text-white/30 text-sm mb-2">No capture device</p>
-              <p class="text-white/50 text-xs">Click to select</p>
+              <p class="text-white/50 text-sm mb-2">No capture device</p>
+              <p class="text-white/70 text-xs">Click to select</p>
             </div>
           </div>
           <!-- Inline device selector (hidden by default) -->
@@ -102,17 +97,18 @@ import Base from '../layouts/Base.astro';
         <div class="py-3">
           <div class="flex items-center gap-4 mb-3">
             <button id="rec-btn" class="rec-btn shrink-0" title="Record">
-              <div class="rec-dot"></div>
+              <span class="rec-dot"></span><span class="rec-label">REC</span>
             </button>
             <div class="flex-1">
               <div class="flex items-baseline gap-3">
                 <span id="rec-timer" class="text-xl tabular-nums">00:00:00</span>
-                <span id="rec-size" class="text-xs text-gray-500">0.0 MB</span>
+                <span id="rec-size" class="text-xs text-gray-400">0.0 MB</span>
               </div>
             </div>
           </div>
-          <div class="flex items-center text-xs">
-            <button id="to-library-btn" class="text-white/40 hover:text-white/80 transition-colors">View Library →</button>
+          <div class="flex items-center text-xs gap-3">
+            <button id="to-library-btn" class="text-white/60 hover:text-white/80 transition-colors">View Library →</button>
+            <button id="delete-recording-btn" class="hidden text-red-500 hover:text-red-400 transition-colors">Delete Recording</button>
           </div>
         </div>
       </div>
@@ -122,72 +118,83 @@ import Base from '../layouts/Base.astro';
 
         <!-- Sleeve Capture -->
         <fieldset class="border border-white/20 p-3">
-          <legend class="text-white/50 text-xs px-2">░ VHS Sleeve ░</legend>
-          <div id="webcam-container" class="relative bg-[#141214] border border-white/10 aspect-[4/3] overflow-hidden cursor-pointer mb-3">
-            <video id="sleeve-webcam" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
-            <!-- Translucent VHS case target overlay -->
-            <div id="sleeve-target" class="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div class="w-[55%] h-[75%] border-2 border-white/25 rounded-lg flex items-end justify-center pb-2">
-                <span class="text-white/20 text-[10px]">Position sleeve here</span>
+          <legend class="text-white/70 text-xs px-2">░ VHS Sleeve ░</legend>
+
+          <!-- Capture view: webcam + shutter -->
+          <div id="sleeve-capture-view">
+            <div id="webcam-container" class="relative bg-[#141214] border border-white/10 aspect-[4/3] overflow-hidden cursor-pointer mb-3">
+              <video id="sleeve-webcam" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
+              <!-- Translucent VHS case target overlay -->
+              <div id="sleeve-target" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div class="aspect-[17/30] h-[70%] border-2 border-white/25 rounded-lg flex items-end justify-center pb-2">
+                  <span class="text-white/20 text-[10px]">Position sleeve here</span>
+                </div>
+              </div>
+              <!-- No webcam placeholder -->
+              <div id="no-webcam" class="absolute inset-0 flex items-center justify-center">
+                <div class="text-center">
+                  <p class="text-white/50 text-xs mb-1">No webcam</p>
+                  <p class="text-white/70 text-[10px]">Click to select</p>
+                </div>
+              </div>
+              <!-- Inline webcam selector -->
+              <div id="webcam-selector" class="hidden absolute inset-0 bg-black/90 flex items-center justify-center">
+                <div class="w-48">
+                  <p class="text-xs mb-2">Select webcam</p>
+                  <select id="select-webcam" class="w-full bg-black border border-white/30 text-white text-xs p-2 mb-2"></select>
+                  <button id="select-webcam-ok" class="w-full py-1 border border-white/30 text-white/60 hover:text-white text-xs">Connect</button>
+                </div>
               </div>
             </div>
-            <!-- No webcam placeholder -->
-            <div id="no-webcam" class="absolute inset-0 flex items-center justify-center">
-              <div class="text-center">
-                <p class="text-white/30 text-xs mb-1">No webcam</p>
-                <p class="text-white/50 text-[10px]">Click to select</p>
-              </div>
-            </div>
-            <!-- Inline webcam selector -->
-            <div id="webcam-selector" class="hidden absolute inset-0 bg-black/90 flex items-center justify-center">
-              <div class="w-48">
-                <p class="text-xs mb-2">Select webcam</p>
-                <select id="select-webcam" class="w-full bg-black border border-white/30 text-white text-xs p-2 mb-2"></select>
-                <button id="select-webcam-ok" class="w-full py-1 border border-white/30 text-white/60 hover:text-white text-xs">Connect</button>
-              </div>
-            </div>
+            <button id="sleeve-capture-btn" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs">
+              <span id="sleeve-capture-label">Capture Front</span>
+            </button>
           </div>
-          <button id="sleeve-capture-btn" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs mb-2">Capture Front</button>
-          <div class="grid grid-cols-2 gap-2">
-            <div class="text-center">
-              <div id="sleeve-front-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-[10px] mb-1">—</div>
-              <span id="sleeve-front-status" class="text-[10px] text-white/30">Front</span>
+
+          <!-- Review view: side-by-side previews + retake -->
+          <div id="sleeve-review-view" class="hidden">
+            <div class="grid grid-cols-2 gap-2 mb-2">
+              <div class="text-center">
+                <div id="sleeve-front-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-[10px] mb-1">--</div>
+                <span id="sleeve-front-status" class="text-[10px] text-white/50">Front</span>
+              </div>
+              <div class="text-center">
+                <div id="sleeve-back-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-[10px] mb-1">--</div>
+                <span id="sleeve-back-status" class="text-[10px] text-white/50">Back</span>
+              </div>
             </div>
-            <div class="text-center">
-              <div id="sleeve-back-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-[10px] mb-1">—</div>
-              <span id="sleeve-back-status" class="text-[10px] text-white/30">Back</span>
-            </div>
+            <button id="sleeve-retake-btn" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs">Retake</button>
           </div>
         </fieldset>
 
         <!-- Clip Info -->
         <fieldset class="border border-white/20 p-3">
-          <legend class="text-white/50 text-xs px-2">░ Clip Info ░</legend>
+          <legend class="text-white/70 text-xs px-2">░ Clip Info ░</legend>
           <div class="space-y-2 text-xs">
             <div>
-              <label class="text-gray-500 block mb-1">Title</label>
+              <label class="text-gray-400 block mb-1">Title</label>
               <input id="clip-title" type="text" placeholder="My Home Videos 1994"
-                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/15 focus:outline-none focus:border-white/40" />
+                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
             </div>
             <div>
-              <label class="text-gray-500 block mb-1">Description</label>
+              <label class="text-gray-400 block mb-1">Description</label>
               <textarea id="clip-description" rows="2" placeholder="What's on this clip..."
-                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/15 focus:outline-none focus:border-white/40 resize-none"></textarea>
+                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
             </div>
             <div>
-              <label class="text-gray-500 block mb-1">Tags</label>
+              <label class="text-gray-400 block mb-1">Tags</label>
               <input id="clip-tags" type="text" placeholder="home video, 90s, family"
-                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/15 focus:outline-none focus:border-white/40" />
+                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
             </div>
             <div>
-              <label class="text-gray-500 block mb-1">VHS Tape</label>
+              <label class="text-gray-400 block mb-1">VHS Tape</label>
               <input id="clip-tape" type="text" placeholder="Which tape is this from?"
-                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/15 focus:outline-none focus:border-white/40" />
+                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
             </div>
             <div>
-              <label class="text-gray-500 block mb-1">Notes</label>
+              <label class="text-gray-400 block mb-1">Notes</label>
               <textarea id="clip-notes" rows="2" placeholder="Any other notes..."
-                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/15 focus:outline-none focus:border-white/40 resize-none"></textarea>
+                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
             </div>
           </div>
         </fieldset>
@@ -195,10 +202,10 @@ import Base from '../layouts/Base.astro';
     </div>
 
     <!-- Bottom status bar -->
-    <div id="status-bar" class="flex items-center gap-4 py-2 text-[10px] text-white/30 border-t border-white/10 mt-2 cursor-pointer hover:text-white/50 transition-colors">
-      <span>Video: <span id="status-video-label">—</span> <span id="status-video-dot" class="status-dot disconnected"></span></span>
-      <span>Audio: <span id="status-audio-label">—</span> <span id="status-audio-dot" class="status-dot disconnected"></span></span>
-      <span>Webcam: <span id="status-webcam-label">—</span> <span id="status-webcam-dot" class="status-dot disconnected"></span></span>
+    <div id="status-bar" class="flex items-center gap-4 py-2 text-[10px] text-white/50 border-t border-white/10 mt-2 cursor-pointer hover:text-white/70 transition-colors">
+      <span>Video: <span id="status-video-label">—</span> <span id="status-video-dot" style="color:#f44336;">░</span></span>
+      <span>Audio: <span id="status-audio-label">—</span> <span id="status-audio-dot" style="color:#f44336;">░</span></span>
+      <span>Webcam: <span id="status-webcam-label">—</span> <span id="status-webcam-dot" style="color:#f44336;">░</span></span>
       <span id="status-dir-label">No save folder</span>
       <span class="ml-auto">⚙</span>
     </div>
@@ -206,25 +213,25 @@ import Base from '../layouts/Base.astro';
     <!-- Device settings popover (triggered by clicking status bar) -->
     <div id="device-popover" class="hidden fixed bottom-10 left-4 right-4 z-30 max-w-xl mx-auto bg-black/95 border border-white/20 p-4 text-xs">
       <div class="flex items-center justify-between mb-3">
-        <span class="text-white/50">Device Settings</span>
-        <button id="device-popover-close" class="text-white/30 hover:text-white/60 transition-colors">Close</button>
+        <span class="text-white/70">Device Settings</span>
+        <button id="device-popover-close" class="text-white/50 hover:text-white/70 transition-colors">Close</button>
       </div>
       <div class="grid md:grid-cols-2 gap-3">
         <div>
-          <label class="text-gray-500 block mb-1">Video Source</label>
+          <label class="text-gray-400 block mb-1">Video Source</label>
           <select id="dp-video" class="w-full bg-black border border-white/20 text-white text-xs p-1.5"></select>
         </div>
         <div>
-          <label class="text-gray-500 block mb-1">Audio Source</label>
+          <label class="text-gray-400 block mb-1">Audio Source</label>
           <select id="dp-audio" class="w-full bg-black border border-white/20 text-white text-xs p-1.5"></select>
         </div>
         <div>
-          <label class="text-gray-500 block mb-1">Webcam</label>
+          <label class="text-gray-400 block mb-1">Webcam</label>
           <select id="dp-webcam" class="w-full bg-black border border-white/20 text-white text-xs p-1.5"></select>
         </div>
         <div>
-          <label class="text-gray-500 block mb-1">Save Location</label>
-          <button id="dp-pick-dir" class="w-full py-1.5 border border-white/20 text-white/40 hover:text-white text-left px-2">
+          <label class="text-gray-400 block mb-1">Save Location</label>
+          <button id="dp-pick-dir" class="w-full py-1.5 border border-white/20 text-white/60 hover:text-white text-left px-2">
             <span id="dp-dir-name">Choose folder...</span>
           </button>
         </div>
@@ -239,11 +246,11 @@ import Base from '../layouts/Base.astro';
   <div id="view-library" class="hidden fixed inset-0 z-30 bg-black p-4 overflow-y-auto">
     <div class="max-w-4xl mx-auto">
       <div class="flex items-center justify-between mb-4">
-        <button id="to-capture-btn" class="text-xs text-white/40 hover:text-white/80">← Back to Capture</button>
-        <button id="export-catalog-btn" class="text-xs text-white/40 hover:text-white/80">Export catalog.json</button>
+        <button id="to-capture-btn" class="text-xs text-white/60 hover:text-white/80">← Back to Capture</button>
+        <button id="export-catalog-btn" class="text-xs text-white/60 hover:text-white/80">Export catalog.json</button>
       </div>
       <div id="library-grid" class="grid grid-cols-2 md:grid-cols-3 gap-4"></div>
-      <p id="library-empty" class="text-gray-500 text-sm text-center py-12">No clips captured yet.</p>
+      <p id="library-empty" class="text-gray-400 text-sm text-center py-12">No clips captured yet.</p>
     </div>
   </div>
 
@@ -251,7 +258,7 @@ import Base from '../layouts/Base.astro';
   <div id="settings-popover" class="hidden fixed bottom-10 right-4 z-30 bg-black/95 border border-white/20 p-3 w-56 text-xs">
     <div class="space-y-3">
       <div>
-        <label class="text-gray-500 block mb-1">Recording Quality</label>
+        <label class="text-gray-400 block mb-1">Recording Quality</label>
         <select id="setting-quality" class="w-full bg-black border border-white/20 text-white text-xs p-1">
           <option value="8000000">Archival (8 Mbps)</option>
           <option value="5000000" selected>High (5 Mbps)</option>
@@ -259,14 +266,14 @@ import Base from '../layouts/Base.astro';
         </select>
       </div>
       <div>
-        <label class="text-gray-500 block mb-1">File naming</label>
+        <label class="text-gray-400 block mb-1">File naming</label>
         <select id="setting-name-format" class="w-full bg-black border border-white/20 text-white text-xs p-1">
           <option value="title">Title + timestamp</option>
           <option value="timestamp">Timestamp only</option>
         </select>
       </div>
       <div>
-        <button id="setting-pick-dir" class="w-full py-1 border border-white/20 text-white/40 hover:text-white text-left px-2">
+        <button id="setting-pick-dir" class="w-full py-1 border border-white/20 text-white/60 hover:text-white text-left px-2">
           <span id="setting-dir-name">Choose save folder...</span>
         </button>
       </div>

@@ -13,9 +13,18 @@ export function resetSleeve() {
   sleeveState = 'idle';
   frontData = null;
   backData = null;
-  document.getElementById('sleeve-capture-btn').textContent = 'Capture Front';
-  document.getElementById('sleeve-front-preview').innerHTML = '<span class="text-white/10 text-[10px]">—</span>';
-  document.getElementById('sleeve-back-preview').innerHTML = '<span class="text-white/10 text-[10px]">—</span>';
+
+  // Show capture view, hide review view
+  const captureView = document.getElementById('sleeve-capture-view');
+  const reviewView = document.getElementById('sleeve-review-view');
+  if (captureView) captureView.classList.remove('hidden');
+  if (reviewView) reviewView.classList.add('hidden');
+
+  const label = document.getElementById('sleeve-capture-label');
+  if (label) label.textContent = 'Capture Front';
+
+  document.getElementById('sleeve-front-preview').innerHTML = '<span class="text-white/10 text-[10px]">--</span>';
+  document.getElementById('sleeve-back-preview').innerHTML = '<span class="text-white/10 text-[10px]">--</span>';
   document.getElementById('sleeve-front-status').textContent = 'Front';
   document.getElementById('sleeve-back-status').textContent = 'Back';
 }
@@ -53,23 +62,32 @@ export function capturePhoto() {
 }
 
 export function handleSleeveCapture() {
-  const btn = document.getElementById('sleeve-capture-btn');
+  const captureView = document.getElementById('sleeve-capture-view');
+  const reviewView = document.getElementById('sleeve-review-view');
+  const label = document.getElementById('sleeve-capture-label');
 
   if (sleeveState === 'idle') {
+    // Capture front photo
     frontData = capturePhoto();
     document.getElementById('sleeve-front-preview').innerHTML = `<img src="${frontData}" class="w-full h-full object-contain" alt="Front">`;
-    document.getElementById('sleeve-front-status').textContent = 'Front ✓';
+    document.getElementById('sleeve-front-status').textContent = 'Front \u2713';
     sleeveState = 'front_captured';
-    btn.textContent = 'Flip & Capture Back';
+    label.textContent = 'Flip & Capture Back';
   } else if (sleeveState === 'front_captured') {
+    // Capture back photo, then switch to review view
     backData = capturePhoto();
     document.getElementById('sleeve-back-preview').innerHTML = `<img src="${backData}" class="w-full h-full object-contain" alt="Back">`;
-    document.getElementById('sleeve-back-status').textContent = 'Back ✓';
+    document.getElementById('sleeve-back-status').textContent = 'Back \u2713';
     sleeveState = 'done';
-    btn.textContent = 'Retake';
-  } else if (sleeveState === 'done') {
-    resetSleeve();
+
+    // Switch to review view
+    captureView.classList.add('hidden');
+    reviewView.classList.remove('hidden');
   }
+}
+
+export function handleSleeveRetake() {
+  resetSleeve();
 }
 
 export async function saveSleevePhotos(directoryHandle, basename) {
