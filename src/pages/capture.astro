@@ -49,8 +49,8 @@ import Base from '../layouts/Base.astro';
       pointer-events: none;
     }
     .status-dot {
-      width: 8px;
-      height: 8px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
       display: inline-block;
     }
@@ -67,171 +67,175 @@ import Base from '../layouts/Base.astro';
     </div>
   </div>
 
-  <!-- First-run wizard -->
-  <div id="setup-wizard" class="hidden fixed inset-0 z-40 bg-black/95 flex items-center justify-center p-8">
-    <div class="max-w-lg w-full">
-      <p class="text-lg mb-6">Setup</p>
+  <!-- Two-column grid -->
+  <div id="capture-app" class="h-screen flex flex-col p-4 max-w-7xl mx-auto">
+    <div class="flex-1 grid md:grid-cols-[1fr_340px] gap-4 min-h-0">
 
-      <div id="wizard-step-1">
-        <p class="text-gray-400 text-sm mb-2">Chrome will ask for camera and microphone access. This is needed to receive the video signal from your capture card.</p>
-        <p class="text-sm mb-2">Which device is your VHS capture card?</p>
-        <select id="wizard-video" class="w-full bg-black border border-white/30 text-white text-sm p-2 mb-4 focus:outline-none focus:border-white/60">
-          <option value="">Select video device...</option>
-        </select>
-        <p class="text-sm mb-2">Audio source</p>
-        <select id="wizard-audio" class="w-full bg-black border border-white/30 text-white text-sm p-2 mb-4 focus:outline-none focus:border-white/60">
-          <option value="">Select audio device...</option>
-        </select>
-        <p class="text-sm mb-2">Which device is your MacBook webcam?</p>
-        <select id="wizard-webcam" class="w-full bg-black border border-white/30 text-white text-sm p-2 mb-4 focus:outline-none focus:border-white/60">
-          <option value="">Select webcam...</option>
-        </select>
-        <button id="wizard-next" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-sm">Next →</button>
-      </div>
-
-      <div id="wizard-step-2" class="hidden">
-        <p class="text-sm mb-4">Where should recordings be saved?</p>
-        <button id="wizard-pick-dir" class="w-full py-3 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-sm mb-2">Choose Folder...</button>
-        <p id="wizard-dir-name" class="text-gray-500 text-xs mb-4"></p>
-        <button id="wizard-finish" class="hidden w-full py-2 bg-white/10 border border-white/30 text-white hover:bg-white/20 transition-colors text-sm">Start Capturing</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Main capture UI -->
-  <div id="capture-app" class="min-h-screen flex flex-col p-4 max-w-4xl mx-auto">
-
-    <!-- Status bar -->
-    <div id="status-bar" class="border border-white/20 p-4 mb-4 text-xs">
-      <div class="flex flex-wrap gap-x-6 gap-y-2 items-center">
-        <span>Video: <span id="status-video-label" class="text-gray-400">—</span> <span id="status-video-dot" class="status-dot disconnected"></span></span>
-        <span>Audio: <span id="status-audio-label" class="text-gray-400">—</span> <span id="status-audio-dot" class="status-dot disconnected"></span></span>
-        <span>Camera: <span id="status-webcam-label" class="text-gray-400">—</span> <span id="status-webcam-dot" class="status-dot disconnected"></span></span>
-        <button id="settings-btn" class="ml-auto text-white/40 hover:text-white/80 transition-colors">Settings</button>
-      </div>
-    </div>
-
-    <!-- Mode toggle -->
-    <div class="flex gap-4 mb-4 text-xs">
-      <button id="mode-capture" class="text-white border-b border-white pb-1">Capture</button>
-      <button id="mode-library" class="text-white/40 hover:text-white/80 transition-colors pb-1">Library</button>
-    </div>
-
-    <!-- Capture mode -->
-    <div id="view-capture">
-      <!-- Preview -->
-      <div class="relative mb-4 bg-[#141214] border border-white/10 aspect-[4/3] max-w-2xl mx-auto overflow-hidden">
-        <video id="preview" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
-        <div class="scanlines absolute inset-0"></div>
-        <div id="no-signal" class="absolute inset-0 flex items-center justify-center text-white/20 text-sm">No signal</div>
-      </div>
-
-      <!-- Controls -->
-      <div class="max-w-2xl mx-auto">
-        <div class="mb-4">
-          <label class="text-xs text-gray-400 block mb-1">Clip Title</label>
-          <input id="clip-title" type="text" placeholder="My Home Videos 1994"
-            class="w-full px-3 py-2 bg-black border border-white/30 text-white text-sm placeholder-white/20 focus:outline-none focus:border-white/60" />
-        </div>
-
-        <div class="flex items-center justify-center gap-6 mb-6">
-          <button id="rec-btn" class="rec-btn" title="Record">
-            <div class="rec-dot"></div>
-          </button>
-          <div class="text-right">
-            <p id="rec-timer" class="text-2xl tabular-nums">00:00:00</p>
-            <p id="rec-size" class="text-xs text-gray-400">0.0 MB</p>
+      <!-- Left: Main Capture -->
+      <div class="flex flex-col min-h-0">
+        <!-- Preview -->
+        <div id="preview-container" class="relative flex-1 bg-[#141214] border border-white/10 overflow-hidden cursor-pointer">
+          <video id="preview" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
+          <div class="scanlines absolute inset-0"></div>
+          <!-- Shown when no device selected -->
+          <div id="no-signal" class="absolute inset-0 flex items-center justify-center">
+            <div class="text-center">
+              <p class="text-white/30 text-sm mb-2">No capture device</p>
+              <p class="text-white/50 text-xs">Click to select</p>
+            </div>
+          </div>
+          <!-- Inline device selector (hidden by default) -->
+          <div id="device-selector" class="hidden absolute inset-0 bg-black/90 flex items-center justify-center">
+            <div class="w-64">
+              <p class="text-sm mb-3">Select capture device</p>
+              <select id="select-video" class="w-full bg-black border border-white/30 text-white text-xs p-2 mb-2"></select>
+              <select id="select-audio" class="w-full bg-black border border-white/30 text-white text-xs p-2 mb-3"></select>
+              <button id="select-video-ok" class="w-full py-2 border border-white/30 text-white/60 hover:text-white text-xs">Connect</button>
+            </div>
           </div>
         </div>
 
-        <div class="flex gap-4 text-xs">
-          <button id="snap-sleeve-btn" class="text-white/40 hover:text-white/80 transition-colors">Snap Sleeve</button>
-          <button id="to-library-btn" class="ml-auto text-white/40 hover:text-white/80 transition-colors">View Library →</button>
+        <!-- Controls below preview -->
+        <div class="py-3">
+          <div class="flex items-center gap-4 mb-3">
+            <button id="rec-btn" class="rec-btn shrink-0" title="Record">
+              <div class="rec-dot"></div>
+            </button>
+            <div class="flex-1">
+              <div class="flex items-baseline gap-3">
+                <span id="rec-timer" class="text-xl tabular-nums">00:00:00</span>
+                <span id="rec-size" class="text-xs text-gray-500">0.0 MB</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center text-xs">
+            <button id="to-library-btn" class="text-white/40 hover:text-white/80 transition-colors">View Library →</button>
+          </div>
         </div>
+      </div>
+
+      <!-- Right: Sidebar -->
+      <div class="flex flex-col gap-4 min-h-0 overflow-y-auto">
+
+        <!-- Sleeve Capture -->
+        <fieldset class="border border-white/20 p-3">
+          <legend class="text-white/50 text-xs px-2">░ VHS Sleeve ░</legend>
+          <div id="webcam-container" class="relative bg-[#141214] border border-white/10 aspect-[4/3] overflow-hidden cursor-pointer mb-3">
+            <video id="sleeve-webcam" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
+            <!-- Translucent VHS case target overlay -->
+            <div id="sleeve-target" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div class="w-[55%] h-[75%] border-2 border-white/25 rounded-lg flex items-end justify-center pb-2">
+                <span class="text-white/20 text-[10px]">Position sleeve here</span>
+              </div>
+            </div>
+            <!-- No webcam placeholder -->
+            <div id="no-webcam" class="absolute inset-0 flex items-center justify-center">
+              <div class="text-center">
+                <p class="text-white/30 text-xs mb-1">No webcam</p>
+                <p class="text-white/50 text-[10px]">Click to select</p>
+              </div>
+            </div>
+            <!-- Inline webcam selector -->
+            <div id="webcam-selector" class="hidden absolute inset-0 bg-black/90 flex items-center justify-center">
+              <div class="w-48">
+                <p class="text-xs mb-2">Select webcam</p>
+                <select id="select-webcam" class="w-full bg-black border border-white/30 text-white text-xs p-2 mb-2"></select>
+                <button id="select-webcam-ok" class="w-full py-1 border border-white/30 text-white/60 hover:text-white text-xs">Connect</button>
+              </div>
+            </div>
+          </div>
+          <button id="sleeve-capture-btn" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs mb-2">Capture Front</button>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="text-center">
+              <div id="sleeve-front-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-[10px] mb-1">—</div>
+              <span id="sleeve-front-status" class="text-[10px] text-white/30">Front</span>
+            </div>
+            <div class="text-center">
+              <div id="sleeve-back-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-[10px] mb-1">—</div>
+              <span id="sleeve-back-status" class="text-[10px] text-white/30">Back</span>
+            </div>
+          </div>
+        </fieldset>
+
+        <!-- Clip Info -->
+        <fieldset class="border border-white/20 p-3">
+          <legend class="text-white/50 text-xs px-2">░ Clip Info ░</legend>
+          <div class="space-y-2 text-xs">
+            <div>
+              <label class="text-gray-500 block mb-1">Title</label>
+              <input id="clip-title" type="text" placeholder="My Home Videos 1994"
+                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/15 focus:outline-none focus:border-white/40" />
+            </div>
+            <div>
+              <label class="text-gray-500 block mb-1">Description</label>
+              <textarea id="clip-description" rows="2" placeholder="What's on this clip..."
+                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/15 focus:outline-none focus:border-white/40 resize-none"></textarea>
+            </div>
+            <div>
+              <label class="text-gray-500 block mb-1">Tags</label>
+              <input id="clip-tags" type="text" placeholder="home video, 90s, family"
+                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/15 focus:outline-none focus:border-white/40" />
+            </div>
+            <div>
+              <label class="text-gray-500 block mb-1">VHS Tape</label>
+              <input id="clip-tape" type="text" placeholder="Which tape is this from?"
+                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/15 focus:outline-none focus:border-white/40" />
+            </div>
+            <div>
+              <label class="text-gray-500 block mb-1">Notes</label>
+              <textarea id="clip-notes" rows="2" placeholder="Any other notes..."
+                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/15 focus:outline-none focus:border-white/40 resize-none"></textarea>
+            </div>
+          </div>
+        </fieldset>
       </div>
     </div>
 
-    <!-- Library mode -->
-    <div id="view-library" class="hidden">
+    <!-- Bottom status bar -->
+    <div id="status-bar" class="flex items-center gap-4 py-2 text-[10px] text-white/30 border-t border-white/10 mt-2">
+      <span>Video: <span id="status-video-label">—</span> <span id="status-video-dot" class="status-dot disconnected"></span></span>
+      <span>Audio: <span id="status-audio-label">—</span> <span id="status-audio-dot" class="status-dot disconnected"></span></span>
+      <span>Webcam: <span id="status-webcam-label">—</span> <span id="status-webcam-dot" class="status-dot disconnected"></span></span>
+      <span id="status-dir-label">No save folder</span>
+      <button id="settings-gear" class="ml-auto text-white/20 hover:text-white/50 transition-colors">⚙</button>
+    </div>
+  </div>
+
+  <!-- Library view (full page overlay, toggled) -->
+  <div id="view-library" class="hidden fixed inset-0 z-30 bg-black p-4 overflow-y-auto">
+    <div class="max-w-4xl mx-auto">
       <div class="flex items-center justify-between mb-4">
-        <button id="to-capture-btn" class="text-xs text-white/40 hover:text-white/80 transition-colors">← Back to Capture</button>
-        <button id="export-catalog-btn" class="text-xs text-white/40 hover:text-white/80 transition-colors">Export catalog.json</button>
+        <button id="to-capture-btn" class="text-xs text-white/40 hover:text-white/80">← Back to Capture</button>
+        <button id="export-catalog-btn" class="text-xs text-white/40 hover:text-white/80">Export catalog.json</button>
       </div>
-      <div id="library-grid" class="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <!-- Populated by library.js -->
-      </div>
+      <div id="library-grid" class="grid grid-cols-2 md:grid-cols-3 gap-4"></div>
       <p id="library-empty" class="text-gray-500 text-sm text-center py-12">No clips captured yet.</p>
     </div>
   </div>
 
-  <!-- Settings panel -->
-  <div id="settings-panel" class="hidden fixed inset-0 z-30 bg-black/90 flex items-center justify-center p-8">
-    <div class="max-w-md w-full border border-white/20 p-6">
-      <div class="flex items-center justify-between mb-6">
-        <p class="text-sm">Settings</p>
-        <button id="settings-close" class="text-white/40 hover:text-white/80 text-xs">Close</button>
+  <!-- Settings popover (hidden, triggered by gear icon) -->
+  <div id="settings-popover" class="hidden fixed bottom-10 right-4 z-30 bg-black/95 border border-white/20 p-3 w-56 text-xs">
+    <div class="space-y-3">
+      <div>
+        <label class="text-gray-500 block mb-1">Recording Quality</label>
+        <select id="setting-quality" class="w-full bg-black border border-white/20 text-white text-xs p-1">
+          <option value="8000000">Archival (8 Mbps)</option>
+          <option value="5000000" selected>High (5 Mbps)</option>
+          <option value="2500000">Standard (2.5 Mbps)</option>
+        </select>
       </div>
-
-      <div class="space-y-4 text-xs">
-        <div>
-          <label class="text-gray-400 block mb-1">Video Source</label>
-          <select id="setting-video" class="w-full bg-black border border-white/30 text-white text-xs p-2 focus:outline-none focus:border-white/60"></select>
-        </div>
-        <div>
-          <label class="text-gray-400 block mb-1">Audio Source</label>
-          <select id="setting-audio" class="w-full bg-black border border-white/30 text-white text-xs p-2 focus:outline-none focus:border-white/60"></select>
-        </div>
-        <div>
-          <label class="text-gray-400 block mb-1">Webcam Source</label>
-          <select id="setting-webcam" class="w-full bg-black border border-white/30 text-white text-xs p-2 focus:outline-none focus:border-white/60"></select>
-        </div>
-        <div>
-          <label class="text-gray-400 block mb-1">Save Location</label>
-          <button id="setting-pick-dir" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-left px-2">
-            <span id="setting-dir-name">Choose folder...</span>
-          </button>
-        </div>
-        <div>
-          <label class="text-gray-400 block mb-1">Recording Quality</label>
-          <select id="setting-quality" class="w-full bg-black border border-white/30 text-white text-xs p-2 focus:outline-none focus:border-white/60">
-            <option value="8000000">Archival (8 Mbps)</option>
-            <option value="5000000" selected>High (5 Mbps)</option>
-            <option value="2500000">Standard (2.5 Mbps)</option>
-          </select>
-        </div>
-        <div>
-          <label class="text-gray-400 block mb-1">Auto-name Format</label>
-          <select id="setting-name-format" class="w-full bg-black border border-white/30 text-white text-xs p-2 focus:outline-none focus:border-white/60">
-            <option value="title">Title + timestamp</option>
-            <option value="timestamp">Timestamp only</option>
-          </select>
-        </div>
+      <div>
+        <label class="text-gray-500 block mb-1">File naming</label>
+        <select id="setting-name-format" class="w-full bg-black border border-white/20 text-white text-xs p-1">
+          <option value="title">Title + timestamp</option>
+          <option value="timestamp">Timestamp only</option>
+        </select>
       </div>
-    </div>
-  </div>
-
-  <!-- Sleeve photo modal -->
-  <div id="sleeve-modal" class="hidden fixed inset-0 z-30 bg-black/95 flex items-center justify-center p-8">
-    <div class="max-w-lg w-full">
-      <p class="text-sm mb-4">Snap VHS Sleeve</p>
-      <div class="relative mb-4 bg-[#141214] border border-white/10 aspect-[4/3] overflow-hidden">
-        <video id="sleeve-webcam" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
+      <div>
+        <button id="setting-pick-dir" class="w-full py-1 border border-white/20 text-white/40 hover:text-white text-left px-2">
+          <span id="setting-dir-name">Choose save folder...</span>
+        </button>
       </div>
-      <div class="flex gap-4 mb-4">
-        <button id="snap-front" class="flex-1 py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs">Capture Front</button>
-        <button id="snap-back" class="flex-1 py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs">Capture Back</button>
-      </div>
-      <div class="grid grid-cols-2 gap-4 mb-4">
-        <div>
-          <p class="text-xs text-gray-400 mb-1">Front</p>
-          <div id="sleeve-front-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-xs">—</div>
-        </div>
-        <div>
-          <p class="text-xs text-gray-400 mb-1">Back</p>
-          <div id="sleeve-back-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-xs">—</div>
-        </div>
-      </div>
-      <button id="sleeve-done" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs">Done</button>
     </div>
   </div>
 

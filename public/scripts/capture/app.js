@@ -9,13 +9,11 @@ import {
   getClips, addClip, deleteClip, createClipEntry, captureThumbnail, exportCatalog, renderLibrary
 } from './library.js';
 import {
-  openSleeveModal, closeSleeveModal, capturePhoto, showPreview, clearPreviews, saveSleevePhoto
+  initWebcam, stopWebcam, handleSleeveCapture, getSleeveData, resetSleeve, saveSleevePhotos
 } from './sleeve.js';
 
 let directoryHandle = null;
 let captureStream = null;
-let currentSleeveFront = null;
-let currentSleeveBack = null;
 let currentFilename = null;
 
 async function init() {
@@ -25,75 +23,13 @@ async function init() {
     return;
   }
 
-  const settings = loadSettings();
-
-  // Check if first run
-  if (!settings.videoDeviceLabel) {
-    await showSetupWizard();
-  } else {
-    await startApp();
-  }
-}
-
-async function showSetupWizard() {
-  const wizard = document.getElementById('setup-wizard');
-  wizard.classList.remove('hidden');
-
-  try {
-    await requestPermissions();
-  } catch {
-    // Permission denied — wizard will show empty dropdowns
-  }
-
-  const { video, audio } = await enumerateDevices();
-  populateSelect('wizard-video', video);
-  populateSelect('wizard-audio', audio);
-  populateSelect('wizard-webcam', video);
-
-  document.getElementById('wizard-next').addEventListener('click', () => {
-    const videoSel = document.getElementById('wizard-video');
-    const audioSel = document.getElementById('wizard-audio');
-    const webcamSel = document.getElementById('wizard-webcam');
-
-    if (!videoSel.value) return;
-
-    const videoDevice = video.find(d => d.deviceId === videoSel.value);
-    const audioDevice = audio.find(d => d.deviceId === audioSel.value);
-    const webcamDevice = video.find(d => d.deviceId === webcamSel.value);
-
-    saveSettings({
-      videoDeviceId: videoSel.value,
-      videoDeviceLabel: videoDevice?.label || '',
-      audioDeviceId: audioSel.value || '',
-      audioDeviceLabel: audioDevice?.label || '',
-      webcamDeviceId: webcamSel.value || '',
-      webcamDeviceLabel: webcamDevice?.label || '',
-      bitrate: 5000000,
-      nameFormat: 'title',
-    });
-
-    document.getElementById('wizard-step-1').classList.add('hidden');
-    document.getElementById('wizard-step-2').classList.remove('hidden');
-  });
-
-  document.getElementById('wizard-pick-dir').addEventListener('click', async () => {
-    try {
-      directoryHandle = await window.showDirectoryPicker();
-      document.getElementById('wizard-dir-name').textContent = directoryHandle.name;
-      document.getElementById('wizard-finish').classList.remove('hidden');
-    } catch {}
-  });
-
-  document.getElementById('wizard-finish').addEventListener('click', () => {
-    wizard.classList.add('hidden');
-    startApp();
-  });
+  await startApp();
 }
 
 async function startApp() {
   const settings = loadSettings();
 
-  // Try to open capture stream
+  // Try to open capture stream with saved devices
   try {
     await requestPermissions();
     const { video, audio } = await enumerateDevices();
@@ -114,7 +50,14 @@ async function startApp() {
       document.getElementById('no-signal').classList.add('hidden');
     }
 
-    populateSettingsDropdowns(video, audio, settings);
+    // Auto-connect webcam if saved
+    if (webcamDevice) {
+      await initWebcam(webcamDevice.deviceId);
+    }
+
+    // Load settings into popover
+    if (settings.bitrate) document.getElementById('setting-quality').value = String(settings.bitrate);
+    if (settings.nameFormat) document.getElementById('setting-name-format').value = settings.nameFormat;
   } catch (err) {
     console.warn('Could not open capture stream:', err);
   }
@@ -133,13 +76,118 @@ async function startApp() {
   });
 
   // Wire up all UI
+  wireDeviceSelectors();
+  wireWebcamSelector();
   wireRecordButton();
+  wireSleeveCapture();
   wireViewToggle();
-  wireSettings();
-  wireSleeve();
+  wireSettingsGear();
   wireLibrary();
   wireBeforeUnload();
 }
+
+// --- Inline device selection (capture card) ---
+
+function wireDeviceSelectors() {
+  const container = document.getElementById('preview-container');
+  const selector = document.getElementById('device-selector');
+  const okBtn = document.getElementById('select-video-ok');
+
+  container.addEventListener('click', async (e) => {
+    // Don't open selector if stream is active or already showing selector
+    if (captureStream || !selector.classList.contains('hidden')) return;
+    // Don't trigger from child button clicks inside selector
+    if (e.target.closest('#device-selector')) return;
+
+    try {
+      await requestPermissions();
+    } catch {}
+    const { video, audio } = await enumerateDevices();
+    populateSelect('select-video', video);
+    populateSelect('select-audio', audio);
+    selector.classList.remove('hidden');
+  });
+
+  okBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const videoId = document.getElementById('select-video').value;
+    const audioId = document.getElementById('select-audio').value;
+    if (!videoId) return;
+
+    const videoLabel = document.getElementById('select-video').options[document.getElementById('select-video').selectedIndex]?.textContent || '';
+    const audioLabel = document.getElementById('select-audio').options[document.getElementById('select-audio').selectedIndex]?.textContent || '';
+
+    try {
+      captureStream = await openStream(videoId, audioId);
+      const preview = document.getElementById('preview');
+      preview.srcObject = captureStream;
+      document.getElementById('no-signal').classList.add('hidden');
+      selector.classList.add('hidden');
+
+      saveSettings({
+        ...loadSettings(),
+        videoDeviceId: videoId,
+        videoDeviceLabel: videoLabel,
+        audioDeviceId: audioId,
+        audioDeviceLabel: audioLabel,
+      });
+
+      updateStatus('video', { label: videoLabel, deviceId: videoId });
+      updateStatus('audio', audioId ? { label: audioLabel, deviceId: audioId } : null);
+    } catch (err) {
+      console.warn('Could not open capture stream:', err);
+    }
+  });
+}
+
+// --- Inline webcam selection ---
+
+function wireWebcamSelector() {
+  const container = document.getElementById('webcam-container');
+  const selector = document.getElementById('webcam-selector');
+  const okBtn = document.getElementById('select-webcam-ok');
+
+  container.addEventListener('click', async (e) => {
+    if (!selector.classList.contains('hidden')) return;
+    if (e.target.closest('#webcam-selector')) return;
+
+    try {
+      await requestPermissions();
+    } catch {}
+    const { video } = await enumerateDevices();
+    populateSelect('select-webcam', video);
+    selector.classList.remove('hidden');
+  });
+
+  okBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const webcamId = document.getElementById('select-webcam').value;
+    if (!webcamId) return;
+
+    const webcamLabel = document.getElementById('select-webcam').options[document.getElementById('select-webcam').selectedIndex]?.textContent || '';
+
+    await initWebcam(webcamId);
+    selector.classList.add('hidden');
+
+    saveSettings({
+      ...loadSettings(),
+      webcamDeviceId: webcamId,
+      webcamDeviceLabel: webcamLabel,
+    });
+
+    updateStatusWebcam({ label: webcamLabel, deviceId: webcamId });
+  });
+}
+
+// --- Sleeve capture ---
+
+function wireSleeveCapture() {
+  document.getElementById('sleeve-capture-btn').addEventListener('click', () => {
+    handleSleeveCapture();
+  });
+}
+
+// --- Record button ---
 
 function wireRecordButton() {
   const btn = document.getElementById('rec-btn');
@@ -158,6 +206,8 @@ function wireRecordButton() {
     if (!directoryHandle) {
       try {
         directoryHandle = await window.showDirectoryPicker();
+        document.getElementById('setting-dir-name').textContent = directoryHandle.name;
+        document.getElementById('status-dir-label').textContent = directoryHandle.name;
       } catch {
         return;
       }
@@ -185,8 +235,7 @@ function wireRecordButton() {
 
     titleInput.readOnly = true;
     btn.classList.add('recording');
-    currentSleeveFront = null;
-    currentSleeveBack = null;
+    resetSleeve();
 
     await startRecording(captureStream, directoryHandle, currentFilename, bitrate, {
       onTick: ({ elapsed, bytes }) => {
@@ -200,19 +249,27 @@ function wireRecordButton() {
         const thumbnail = captureThumbnail(document.getElementById('preview'));
         const basename = currentFilename.replace('.webm', '');
 
+        // Read metadata fields
+        const description = document.getElementById('clip-description')?.value || '';
+        const tags = document.getElementById('clip-tags')?.value || '';
+        const tape = document.getElementById('clip-tape')?.value || '';
+        const notes = document.getElementById('clip-notes')?.value || '';
+
         const entry = createClipEntry(title || 'Untitled', currentFilename, duration, fileSize, bitrate);
         entry.thumbnail = thumbnail;
-        entry.sleeveFront = currentSleeveFront;
-        entry.sleeveBack = currentSleeveBack;
+        entry.description = description;
+        entry.tags = tags;
+        entry.tape = tape;
+        entry.notes = notes;
+
+        // Attach sleeve data
+        const sleeveData = getSleeveData();
+        entry.sleeveFront = sleeveData.front;
+        entry.sleeveBack = sleeveData.back;
         addClip(entry);
 
         // Save sleeve photos to disk if captured
-        if (currentSleeveFront) {
-          saveSleevePhoto(directoryHandle, basename, 'front', currentSleeveFront).catch(() => {});
-        }
-        if (currentSleeveBack) {
-          saveSleevePhoto(directoryHandle, basename, 'back', currentSleeveBack).catch(() => {});
-        }
+        saveSleevePhotos(directoryHandle, basename).catch(() => {});
 
         currentFilename = null;
       },
@@ -225,57 +282,47 @@ function wireRecordButton() {
   });
 }
 
+// --- View toggle (library overlay) ---
+
 function wireViewToggle() {
-  const captureBtn = document.getElementById('mode-capture');
-  const libraryBtn = document.getElementById('mode-library');
-  const captureView = document.getElementById('view-capture');
   const libraryView = document.getElementById('view-library');
   const toLibrary = document.getElementById('to-library-btn');
   const toCapture = document.getElementById('to-capture-btn');
 
-  function showCapture() {
-    captureView.classList.remove('hidden');
-    libraryView.classList.add('hidden');
-    captureBtn.classList.add('border-b', 'border-white');
-    captureBtn.classList.remove('text-white/40');
-    captureBtn.classList.add('text-white');
-    libraryBtn.classList.remove('border-b', 'border-white', 'text-white');
-    libraryBtn.classList.add('text-white/40');
-  }
-
-  function showLibrary() {
-    captureView.classList.add('hidden');
+  toLibrary.addEventListener('click', () => {
     libraryView.classList.remove('hidden');
-    libraryBtn.classList.add('border-b', 'border-white');
-    libraryBtn.classList.remove('text-white/40');
-    libraryBtn.classList.add('text-white');
-    captureBtn.classList.remove('border-b', 'border-white', 'text-white');
-    captureBtn.classList.add('text-white/40');
     refreshLibrary();
-  }
+  });
 
-  captureBtn.addEventListener('click', showCapture);
-  libraryBtn.addEventListener('click', showLibrary);
-  toLibrary.addEventListener('click', showLibrary);
-  toCapture.addEventListener('click', showCapture);
+  toCapture.addEventListener('click', () => {
+    libraryView.classList.add('hidden');
+  });
 }
 
-function wireSettings() {
-  const btn = document.getElementById('settings-btn');
-  const panel = document.getElementById('settings-panel');
-  const close = document.getElementById('settings-close');
+// --- Settings gear popover ---
+
+function wireSettingsGear() {
+  const gear = document.getElementById('settings-gear');
+  const popover = document.getElementById('settings-popover');
   const pickDir = document.getElementById('setting-pick-dir');
 
-  btn.addEventListener('click', () => panel.classList.remove('hidden'));
-  close.addEventListener('click', () => {
-    panel.classList.add('hidden');
-    applySettings();
+  gear.addEventListener('click', () => {
+    popover.classList.toggle('hidden');
+  });
+
+  // Close popover when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!popover.classList.contains('hidden') && !popover.contains(e.target) && e.target !== gear) {
+      popover.classList.add('hidden');
+      applySettings();
+    }
   });
 
   pickDir.addEventListener('click', async () => {
     try {
       directoryHandle = await window.showDirectoryPicker();
       document.getElementById('setting-dir-name').textContent = directoryHandle.name;
+      document.getElementById('status-dir-label').textContent = directoryHandle.name;
     } catch {}
   });
 
@@ -286,59 +333,13 @@ function wireSettings() {
 }
 
 function applySettings() {
-  const settings = {
-    bitrate: parseInt(document.getElementById('setting-quality').value),
-    nameFormat: document.getElementById('setting-name-format').value,
-  };
-
-  const videoSel = document.getElementById('setting-video');
-  const audioSel = document.getElementById('setting-audio');
-  const webcamSel = document.getElementById('setting-webcam');
-
-  if (videoSel.value) {
-    const opt = videoSel.options[videoSel.selectedIndex];
-    settings.videoDeviceId = videoSel.value;
-    settings.videoDeviceLabel = opt.textContent;
-  }
-  if (audioSel.value) {
-    const opt = audioSel.options[audioSel.selectedIndex];
-    settings.audioDeviceId = audioSel.value;
-    settings.audioDeviceLabel = opt.textContent;
-  }
-  if (webcamSel.value) {
-    const opt = webcamSel.options[webcamSel.selectedIndex];
-    settings.webcamDeviceId = webcamSel.value;
-    settings.webcamDeviceLabel = opt.textContent;
-  }
-
+  const settings = loadSettings();
+  settings.bitrate = parseInt(document.getElementById('setting-quality').value);
+  settings.nameFormat = document.getElementById('setting-name-format').value;
   saveSettings(settings);
 }
 
-function wireSleeve() {
-  document.getElementById('snap-sleeve-btn').addEventListener('click', () => {
-    const s = loadSettings();
-    if (!s.webcamDeviceId) {
-      alert('No webcam configured. Set one in Settings.');
-      return;
-    }
-    clearPreviews();
-    openSleeveModal(s.webcamDeviceId);
-  });
-
-  document.getElementById('snap-front').addEventListener('click', () => {
-    currentSleeveFront = capturePhoto();
-    showPreview('front', currentSleeveFront);
-  });
-
-  document.getElementById('snap-back').addEventListener('click', () => {
-    currentSleeveBack = capturePhoto();
-    showPreview('back', currentSleeveBack);
-  });
-
-  document.getElementById('sleeve-done').addEventListener('click', () => {
-    closeSleeveModal();
-  });
-}
+// --- Library ---
 
 function wireLibrary() {
   document.getElementById('export-catalog-btn').addEventListener('click', async () => {
@@ -362,6 +363,8 @@ function refreshLibrary() {
   });
 }
 
+// --- Before unload ---
+
 function wireBeforeUnload() {
   window.addEventListener('beforeunload', (e) => {
     if (isRecording()) {
@@ -371,27 +374,17 @@ function wireBeforeUnload() {
   });
 }
 
-// Helpers
+// --- Helpers ---
+
 function populateSelect(id, devices) {
   const sel = document.getElementById(id);
+  sel.innerHTML = '';
   devices.forEach(d => {
     const opt = document.createElement('option');
     opt.value = d.deviceId;
     opt.textContent = d.label || `Device ${d.deviceId.slice(0, 8)}`;
     sel.appendChild(opt);
   });
-}
-
-function populateSettingsDropdowns(videoDevices, audioDevices, settings) {
-  populateSelect('setting-video', videoDevices);
-  populateSelect('setting-audio', audioDevices);
-  populateSelect('setting-webcam', videoDevices);
-
-  if (settings.videoDeviceId) document.getElementById('setting-video').value = settings.videoDeviceId;
-  if (settings.audioDeviceId) document.getElementById('setting-audio').value = settings.audioDeviceId;
-  if (settings.webcamDeviceId) document.getElementById('setting-webcam').value = settings.webcamDeviceId;
-  if (settings.bitrate) document.getElementById('setting-quality').value = String(settings.bitrate);
-  if (settings.nameFormat) document.getElementById('setting-name-format').value = settings.nameFormat;
 }
 
 function updateStatus(type, device) {
