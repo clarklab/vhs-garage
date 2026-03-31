@@ -1,0 +1,187 @@
+---
+import Base from '../layouts/Base.astro';
+import Flicker from '../components/Flicker.astro';
+---
+
+<Base
+  title="VHS Garage"
+  description="Two dudes on a mission to rewind the clock and bring analog vibes back to a digital world. VHS swap meets, found footage, and IRL events."
+>
+  <style>
+    #video-loader::after {
+      content: '░░░';
+      animation: vhs-dots 0.9s steps(1) infinite;
+    }
+  </style>
+
+  <!-- Hero -->
+  <section class="relative md:h-screen md:overflow-hidden md:flex md:items-center cursor-pointer">
+    <Flicker>
+      <div id="video-loader" class="absolute top-[44.5%] left-[20.5%] w-[24%] z-0 rotate-[2.5deg] flex items-center justify-center text-white/40 text-sm"></div>
+      <video
+        id="hero-video"
+        src="/video/vhs-garage-loop.mp4"
+        autoplay
+        loop
+        muted
+        playsinline
+        class="absolute top-[40.5%] left-[20.5%] w-[24%] z-0 rotate-[2.5deg] opacity-0 transition-opacity duration-500"
+      ></video>
+    </Flicker>
+
+    <p id="sound-hint" class="absolute top-4 right-4 text-white text-xs z-20 opacity-60">Sound On</p>
+
+    <div class="absolute bottom-8 left-1/2 -translate-x-1/2 animate-bounce z-20">
+      <svg class="w-8 h-8 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+      </svg>
+    </div>
+  </section>
+
+  <!-- Content -->
+  <section class="max-w-5xl mx-auto px-6 py-24 text-left">
+    <h2 class="text-7xl mb-6 tracking-tight">Welcome to the Garage</h2>
+    <p class="text-lg text-gray-300 mb-4 leading-relaxed">
+      VHS Garage is a lo-fi love letter to the golden age of video. Two dudes on a mission to rewind the clock and bring analog vibes back to a digital world.
+    </p>
+    <p class="text-lg text-gray-300 mb-12 leading-relaxed">
+      Hosted by <a href="https://x.com/oracrest" target="_blank" class="text-white underline hover:text-gray-300">Matt Manchester</a>. Co-hosted by <a href="https://x.com/clarklab" target="_blank" class="text-white underline hover:text-gray-300">Clark Wimberly</a>.
+    </p>
+
+    <!-- What We're Into -->
+    <div class="mb-12">
+      <h3 class="text-2xl mb-6">#What We're Into</h3>
+      <div class="grid md:grid-cols-3 gap-6 text-sm text-gray-300">
+        <fieldset class="border border-white/20 px-5 pb-5 pt-3">
+          <legend class="text-white/50 text-xs px-2">░ VHS Swap Meets ░</legend>
+          <p class="mb-4">We buy, sell, and trade tapes in person. Bring your doubles.</p>
+          <a href="#upcoming-events" class="text-[#39ff14] text-xs hover:underline">Find us IRL →</a>
+        </fieldset>
+        <fieldset class="border border-white/20 px-5 pb-5 pt-3">
+          <legend class="text-white/50 text-xs px-2">░ Found Footage ░</legend>
+          <p class="mb-4">Random clips from old tapes. Stuff nobody was supposed to keep.</p>
+          <a href="/watch" class="text-[#39ff14] text-xs hover:underline block mb-1">Watch in the Garage →</a>
+          <a href="https://www.youtube.com/user/oracrest" target="_blank" class="text-[#39ff14] text-xs hover:underline block">Watch on YouTube →</a>
+        </fieldset>
+        <fieldset class="border border-white/20 px-5 pb-5 pt-3">
+          <legend class="text-white/50 text-xs px-2">░ Limited Drops ░</legend>
+          <p class="mb-4">Small-batch merch and curated tape packs. When they're gone, they're gone.</p>
+          <a href="#signup" class="text-[#39ff14] text-xs hover:underline">Coming soon →</a>
+        </fieldset>
+      </div>
+    </div>
+
+    <!-- Upcoming Events -->
+    <div id="upcoming-events" class="mb-12">
+      <h3 class="text-2xl mb-6">#Upcoming Events</h3>
+      <div class="border border-white/20 p-5 mb-6">
+        <p class="text-white text-lg mb-1">ABW Sunday Funday</p>
+        <p class="text-gray-400 text-sm mb-3">Sunday, April 19 — 4:30pm · Sprinkle Valley at Austin Beerworks · Austin, TX</p>
+        <p class="text-gray-300 text-sm mb-3">Vintage and retro vendors, VHS swap, video screenings, and good hangs.</p>
+        <a href="https://www.instagram.com/p/DWeZWoICXg8/" target="_blank" class="text-[#39ff14] text-xs hover:underline">See the post on Instagram →</a>
+      </div>
+      <p class="text-gray-400">Follow <a href="https://x.com/oracrest" target="_blank" class="text-white underline hover:text-gray-300">Matt on Twitter</a> for more event announcements, or send us an invite to your event. We'll probably show up!</p>
+    </div>
+
+    <!-- Signup -->
+    <div id="signup">
+      <h3 class="text-2xl mb-2">#Join us in the Garage</h3>
+      <p class="text-gray-400 mb-6">Drop your email and we'll give you a <strong class="text-white">free mystery VHS</strong> at an upcoming event. No spam. Just tapes.</p>
+      <form id="garage-form" name="garage-signup" method="POST" data-netlify="true" class="flex gap-3">
+        <input type="hidden" name="form-name" value="garage-signup" />
+        <input
+          id="garage-email"
+          type="email"
+          name="email"
+          placeholder="your@email.com"
+          required
+          class="flex-1 px-4 py-3 rounded-lg bg-black border border-white/30 text-white placeholder-gray-500 focus:outline-none focus:border-white"
+        />
+        <button id="garage-submit-btn" type="submit" class="px-6 py-3 bg-white text-black rounded-lg hover:bg-gray-200 transition-colors shrink-0 min-w-[100px]">
+          Sign Up
+        </button>
+      </form>
+      <p id="garage-confirm" class="hidden text-lg mt-4"></p>
+    </div>
+  </section>
+
+  <footer class="text-left text-gray-600 text-sm pb-8 max-w-2xl mx-auto px-6">&copy; 2026 VHS Garage</footer>
+
+  <script is:inline>
+    (() => {
+      const vid = document.getElementById('hero-video');
+      const loader = document.getElementById('video-loader');
+      vid.addEventListener('canplaythrough', () => {
+        vid.classList.remove('opacity-0');
+        loader.classList.add('hidden');
+      }, { once: true });
+    })();
+  </script>
+
+  <script is:inline>
+    (() => {
+      const section = document.querySelector('section');
+      const vid = document.getElementById('hero-video');
+      const hint = document.getElementById('sound-hint');
+
+      section.addEventListener('click', () => {
+        vid.muted = !vid.muted;
+        hint.textContent = vid.muted ? 'Sound On' : 'Sound Off';
+      });
+    })();
+  </script>
+
+  <script is:inline>
+    (() => {
+      const form = document.getElementById('garage-form');
+      const btn = document.getElementById('garage-submit-btn');
+      const email = document.getElementById('garage-email');
+      const confirm = document.getElementById('garage-confirm');
+      const frames = ['░░░', '▒░░', '▓▒░', '▓▓▒', '▓▓▓', '▓▓▒', '▓▒░', '▒░░'];
+      let tick;
+
+      function startLoader() {
+        let i = 0;
+        btn.disabled = true;
+        btn.textContent = frames[0];
+        tick = setInterval(() => {
+          i = (i + 1) % frames.length;
+          btn.textContent = frames[i];
+        }, 120);
+      }
+
+      function stopLoader() {
+        clearInterval(tick);
+        btn.disabled = false;
+        btn.textContent = 'Sign Up';
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        startLoader();
+        try {
+          const res = await fetch('/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(new FormData(form)).toString()
+          });
+          stopLoader();
+          if (res.ok) {
+            form.classList.add('hidden');
+            confirm.classList.remove('hidden');
+            confirm.textContent = '▓ You\'re in. See you at the next event.';
+          } else {
+            confirm.classList.remove('hidden');
+            confirm.textContent = '░ Something went wrong. Try again.';
+            confirm.classList.add('text-red-400');
+          }
+        } catch {
+          stopLoader();
+          confirm.classList.remove('hidden');
+          confirm.textContent = '░ Network error. Try again.';
+          confirm.classList.add('text-red-400');
+        }
+      });
+    })();
+  </script>
+</Base>
