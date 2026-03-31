@@ -1,0 +1,14 @@
+# Astro build output
+dist/
+.astro/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+
+# Env files
+.env
+.env.*
+!.env.example
