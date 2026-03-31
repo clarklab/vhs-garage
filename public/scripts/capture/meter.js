@@ -4,33 +4,63 @@ let dataArray = null;
 let animId = null;
 let canvas = null;
 let ctx = null;
+let currentSource = null;
+
+function setupAnalyser() {
+  if (!audioCtx) audioCtx = new AudioContext();
+  if (analyser) {
+    if (currentSource) currentSource.disconnect();
+  }
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 128;
+  analyser.smoothingTimeConstant = 0.8;
+  dataArray = new Uint8Array(analyser.frequencyBinCount);
+}
 
 export function initMeter(stream) {
   canvas = document.getElementById('audio-meter');
   if (!canvas) return;
   ctx = canvas.getContext('2d');
 
-  audioCtx = new AudioContext();
-  const source = audioCtx.createMediaStreamSource(stream);
-  analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 128;
-  analyser.smoothingTimeConstant = 0.8;
-  source.connect(analyser);
+  setupAnalyser();
+  currentSource = audioCtx.createMediaStreamSource(stream);
+  currentSource.connect(analyser);
 
-  dataArray = new Uint8Array(analyser.frequencyBinCount);
-  draw();
+  if (!animId) draw();
+}
+
+export function initMeterFromElement(videoEl) {
+  canvas = document.getElementById('audio-meter');
+  if (!canvas) return;
+  ctx = canvas.getContext('2d');
+
+  setupAnalyser();
+  currentSource = audioCtx.createMediaElementSource(videoEl);
+  currentSource.connect(analyser);
+  currentSource.connect(audioCtx.destination);
+
+  if (!animId) draw();
+}
+
+export function pauseMeter() {
+  if (animId) cancelAnimationFrame(animId);
+  animId = null;
+  if (ctx && canvas) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
 }
 
 export function stopMeter() {
-  if (animId) cancelAnimationFrame(animId);
-  animId = null;
+  pauseMeter();
+  if (currentSource) {
+    currentSource.disconnect();
+    currentSource = null;
+  }
   if (audioCtx) {
     audioCtx.close().catch(() => {});
     audioCtx = null;
   }
-  if (ctx && canvas) {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  }
+  analyser = null;
 }
 
 function draw() {

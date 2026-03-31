@@ -11,7 +11,7 @@ import {
 import {
   initWebcam, stopWebcam, handleSleeveCapture, handleSleeveRetake, getSleeveData, resetSleeve, saveSleevePhotos
 } from './sleeve.js';
-import { initMeter, stopMeter } from './meter.js';
+import { initMeter, initMeterFromElement, pauseMeter, stopMeter } from './meter.js';
 
 let directoryHandle = null;
 let captureStream = null;
@@ -608,6 +608,12 @@ function showPlaybackTab() {
   preview.classList.add('hidden');
   playback.classList.remove('hidden');
   deleteBtn.classList.remove('hidden');
+
+  // Switch meter to playback audio
+  pauseMeter();
+  try {
+    initMeterFromElement(playback);
+  } catch {}
 }
 
 function showLiveTab() {
@@ -629,6 +635,14 @@ function showLiveTab() {
   playback.classList.add('hidden');
   preview.classList.remove('hidden');
   deleteBtn.classList.add('hidden');
+
+  // Switch meter back to live capture stream
+  pauseMeter();
+  if (captureStream) {
+    try {
+      initMeter(captureStream);
+    } catch {}
+  }
 }
 
 // --- Helpers ---
