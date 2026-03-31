@@ -83,7 +83,7 @@ async function startApp() {
   wireRecordButton();
   wireSleeveCapture();
   wireViewToggle();
-  wireSettingsGear();
+  wireDevicePopover();
   wireLibrary();
   wireBeforeUnload();
 }
@@ -303,40 +303,125 @@ function wireViewToggle() {
   });
 }
 
-// --- Settings gear popover ---
+// --- Device popover (triggered by clicking status bar) ---
 
-function wireSettingsGear() {
-  const gear = document.getElementById('settings-gear');
-  const popover = document.getElementById('settings-popover');
-  const pickDir = document.getElementById('setting-pick-dir');
+function wireDevicePopover() {
+  const statusBar = document.getElementById('status-bar');
+  const popover = document.getElementById('device-popover');
+  const closeBtn = document.getElementById('device-popover-close');
+  const applyBtn = document.getElementById('dp-apply');
+  const pickDir = document.getElementById('dp-pick-dir');
+  const settingsPopover = document.getElementById('settings-popover');
 
-  gear.addEventListener('click', () => {
-    popover.classList.toggle('hidden');
+  statusBar.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    // Close settings popover if open
+    if (settingsPopover) settingsPopover.classList.add('hidden');
+
+    if (!popover.classList.contains('hidden')) {
+      popover.classList.add('hidden');
+      return;
+    }
+
+    // Populate device dropdowns
+    try {
+      const { video, audio } = await enumerateDevices();
+      const settings = loadSettings();
+
+      populateSelect('dp-video', video);
+      populateSelect('dp-audio', audio);
+      populateSelect('dp-webcam', video);
+
+      if (settings.videoDeviceId) document.getElementById('dp-video').value = settings.videoDeviceId;
+      if (settings.audioDeviceId) document.getElementById('dp-audio').value = settings.audioDeviceId;
+      if (settings.webcamDeviceId) document.getElementById('dp-webcam').value = settings.webcamDeviceId;
+      if (directoryHandle) document.getElementById('dp-dir-name').textContent = directoryHandle.name;
+    } catch {}
+
+    popover.classList.remove('hidden');
   });
 
-  // Close popover when clicking outside
+  closeBtn.addEventListener('click', () => {
+    popover.classList.add('hidden');
+  });
+
   document.addEventListener('click', (e) => {
-    if (!popover.classList.contains('hidden') && !popover.contains(e.target) && e.target !== gear) {
+    if (!popover.classList.contains('hidden') && !popover.contains(e.target) && !statusBar.contains(e.target)) {
       popover.classList.add('hidden');
-      applySettings();
     }
   });
 
   pickDir.addEventListener('click', async () => {
     try {
       directoryHandle = await window.showDirectoryPicker();
-      document.getElementById('setting-dir-name').textContent = directoryHandle.name;
+      document.getElementById('dp-dir-name').textContent = directoryHandle.name;
       document.getElementById('status-dir-label').textContent = directoryHandle.name;
     } catch {}
   });
 
-  // Load current directory name
-  if (directoryHandle) {
-    document.getElementById('setting-dir-name').textContent = directoryHandle.name;
+  applyBtn.addEventListener('click', async () => {
+    const videoSel = document.getElementById('dp-video');
+    const audioSel = document.getElementById('dp-audio');
+    const webcamSel = document.getElementById('dp-webcam');
+
+    const videoId = videoSel.value;
+    const audioId = audioSel.value;
+    const webcamId = webcamSel.value;
+
+    const videoLabel = videoSel.options[videoSel.selectedIndex]?.textContent || '';
+    const audioLabel = audioSel.options[audioSel.selectedIndex]?.textContent || '';
+    const webcamLabel = webcamSel.options[webcamSel.selectedIndex]?.textContent || '';
+
+    // Save device preferences
+    saveSettings({
+      ...loadSettings(),
+      videoDeviceId: videoId,
+      videoDeviceLabel: videoLabel,
+      audioDeviceId: audioId,
+      audioDeviceLabel: audioLabel,
+      webcamDeviceId: webcamId,
+      webcamDeviceLabel: webcamLabel,
+    });
+
+    // Reopen capture stream if device changed
+    if (videoId && audioId) {
+      try {
+        if (captureStream) captureStream.getTracks().forEach(t => t.stop());
+        captureStream = await openStream(videoId, audioId);
+        document.getElementById('preview').srcObject = captureStream;
+        document.getElementById('no-signal').classList.add('hidden');
+        stopMeter();
+        initMeter(captureStream);
+        updateStatus('video', { label: videoLabel });
+        updateStatus('audio', { label: audioLabel });
+      } catch (err) {
+        console.warn('Could not open stream:', err);
+      }
+    }
+
+    // Reopen webcam if changed
+    if (webcamId) {
+      await initWebcam(webcamId);
+      updateStatusWebcam({ label: webcamLabel });
+    }
+
+    popover.classList.add('hidden');
+  });
+
+  // Also wire the settings popover gear for quality/format
+  const settingsGear = statusBar; // gear is inside status bar, handled above
+  if (settingsPopover) {
+    // Settings popover close on outside click
+    document.addEventListener('click', (e) => {
+      if (!settingsPopover.classList.contains('hidden') && !settingsPopover.contains(e.target)) {
+        settingsPopover.classList.add('hidden');
+        applyQualitySettings();
+      }
+    });
   }
 }
 
-function applySettings() {
+function applyQualitySettings() {
   const settings = loadSettings();
   settings.bitrate = parseInt(document.getElementById('setting-quality').value);
   settings.nameFormat = document.getElementById('setting-name-format').value;
