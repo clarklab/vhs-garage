@@ -33,12 +33,10 @@ export default async (req) => {
 Extract the following information from the image and return ONLY valid JSON with these fields:
 
 {
-  "title": "The title of the movie, show, or content on the tape",
-  "year": "The release year if visible, otherwise your best estimate based on the content",
-  "description": "A brief 1-2 sentence description of the content",
+  "tape": "The title of the movie, show, or content on this VHS tape",
+  "year": "The release year if visible, otherwise your best estimate",
   "tags": "Comma-separated relevant tags (genre, era, format, studio, etc.)",
-  "tape": "The VHS tape brand/label if visible (e.g. 'Sony', 'Maxell', 'TDK'), or the distributor/studio",
-  "cassetteNotes": "Any special release notes visible on the cover — director's cut, widescreen, special edition, rental copy, screener, EP/SP/SLP recording speed, or other notable details about this specific release"
+  "cassetteNotes": "Two parts: (1) A brief 1-2 sentence summary of what this movie/show is about. (2) Anything unique about THIS specific VHS release — special edition, director's cut, widescreen, rental copy stickers, screener markings, EP/SP/SLP recording speed, distributor/studio label, ex-library, clamshell case, or any other notable physical details you can spot. Separate the summary and the release details with a line break."
 }
 
 If you cannot determine a field, use an empty string. Return ONLY the JSON object, no markdown formatting.`;

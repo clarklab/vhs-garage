@@ -243,11 +243,8 @@ async function analyzeSleevePhoto(imageData) {
     if (!res.ok) {
       console.error('Sleeve AI error:', res.status, info);
     } else if (!info.error) {
-      if (info.title) document.getElementById('clip-title').value = info.title;
-      if (info.year) document.getElementById('clip-year').value = info.year;
-      if (info.description) document.getElementById('clip-description').value = info.description;
+      if (info.tape) document.getElementById('clip-tape').value = info.tape + (info.year ? ` (${info.year})` : '');
       if (info.tags) document.getElementById('clip-tags').value = info.tags;
-      if (info.tape) document.getElementById('clip-tape').value = info.tape;
       if (info.cassetteNotes) document.getElementById('clip-notes').value = info.cassetteNotes;
     }
   } catch (e) {
