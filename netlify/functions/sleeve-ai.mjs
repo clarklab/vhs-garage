@@ -8,17 +8,22 @@ export default async (req) => {
   }
 
   if (!GEMINI_API_KEY || !GEMINI_BASE_URL) {
+    console.error('Missing env vars:', { hasKey: !!GEMINI_API_KEY, hasBase: !!GEMINI_BASE_URL });
     return json({ error: 'Gemini API not configured' }, 500);
   }
 
-  let image;
+  let body;
   try {
-    ({ image } = await req.json());
+    body = await req.json();
   } catch (e) {
-    return json({ error: 'Invalid request body' }, 400);
+    console.error('JSON parse error:', e.message);
+    return json({ error: 'Invalid request body', detail: e.message }, 400);
   }
+
+  const image = body?.image;
   if (!image) {
-    return json({ error: 'Missing image data' }, 400);
+    console.error('No image in body. Keys received:', Object.keys(body || {}));
+    return json({ error: 'Missing image data', keys: Object.keys(body || {}) }, 400);
   }
 
   // Strip data URL prefix if present

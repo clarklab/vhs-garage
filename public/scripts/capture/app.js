@@ -231,14 +231,18 @@ async function analyzeSleevePhoto(imageData) {
 
   try {
     const smallImage = await resizeForAI(imageData);
+    // Send only base64 data, strip the data URL prefix
+    const base64 = smallImage.replace(/^data:image\/\w+;base64,/, '');
     const res = await fetch('/.netlify/functions/sleeve-ai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: smallImage }),
+      body: JSON.stringify({ image: base64 }),
     });
     const info = await res.json();
 
-    if (!info.error) {
+    if (!res.ok) {
+      console.error('Sleeve AI error:', res.status, info);
+    } else if (!info.error) {
       if (info.title) document.getElementById('clip-title').value = info.title;
       if (info.year) document.getElementById('clip-year').value = info.year;
       if (info.description) document.getElementById('clip-description').value = info.description;
