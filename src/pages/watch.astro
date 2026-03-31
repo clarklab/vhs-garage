@@ -70,13 +70,17 @@ import { GARAGES } from '../data/garages.js';
     <div class="absolute top-4 right-4 pointer-events-auto text-right">
       <button id="channel-btn" class="panel-btn text-white/40 text-xs">CH ░ <span id="channel-name">oracrest</span></button>
       <div id="channel-panel" class="hidden mt-2 bg-black/90 border border-white/20 p-3 w-64 text-xs text-left">
-        <p class="text-white/60 mb-2">Channel</p>
-        <div class="flex gap-2 mb-3">
-          <input id="channel-input" type="text" placeholder="YouTube channel URL or ID"
+        <p class="text-white/60 mb-3">Channel</p>
+        <div class="space-y-1 mb-3">
+          <button class="channel-preset w-full text-left p-2 border border-white/15 text-white/50 hover:border-white/30 hover:text-white/80 transition-colors" data-channel="oracrest">Oracrest</button>
+          <button class="channel-preset w-full text-left p-2 border border-white/15 text-white/50 hover:border-white/30 hover:text-white/80 transition-colors" data-channel="vintagevhs">Vintage VHS Videos</button>
+        </div>
+        <p class="text-white/40 text-[10px] mb-2">Or load a custom channel:</p>
+        <div class="flex gap-2">
+          <input id="channel-input" type="text" placeholder="YouTube channel URL"
             class="flex-1 px-2 py-1 bg-black border border-white/30 text-white text-xs placeholder-white/30 focus:outline-none focus:border-white/60" />
           <button id="channel-load" class="px-3 py-1 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors">Load</button>
         </div>
-        <p class="text-white/30 text-[10px]">Paste a youtube.com/user/ or youtube.com/channel/ URL</p>
       </div>
     </div>
 
@@ -116,13 +120,36 @@ import { GARAGES } from '../data/garages.js';
     const GARAGES = JSON.parse(GARAGES_JSON);
     const DEFAULT_CHANNEL_ID = GARAGES[0].channelId;
 
-    // Hardcoded oracrest video IDs (fallback when no API key)
-    const SEED_VIDEOS = [
-      '7NoPy_y1ENM', 'CQiDcue0Mwg', 'argK6e8sZrc', 'hkFqZGpX2aI',
-      'T5y2jcGYZj4', 'V1ETmE426Xc', 'R7o9aGdz92o', '2_kFa7Prp4A',
-      'mthwgR-cqWk', 'skaEO-fUeIo', 'YblSGYjPugQ', 'edum1muSs7s',
-      '3StHm3JtTlo', 'bq5ASTfWWLQ', 'l3tKnOaGjfg'
-    ];
+    const CHANNELS = {
+      oracrest: {
+        name: 'Oracrest',
+        id: 'UC-wMG2tGhmeBOCO9IVbu4kg',
+        videos: [
+          '1Gdp9w004nE','1O8w3200AVM','2WSNKJ_Ptzc','2_kFa7Prp4A','4eliEspmqoI',
+          '5LxZSYg8JSs','7NoPy_y1ENM','9Jh1s2w4NcA','Bmx7wuU-4gA','CQiDcue0Mwg',
+          'DQ9lv76pOBg','Ds5qi_kGU3s','F41_toRYffU','FFDA-Nj-udU','HMSa88O3JXc',
+          'Iy7VHCOQBHk','J3qldM6Qg7Q','L7yGUTnFhfA','MpsLRrUywMg','OImhhirAFmg',
+          'OTOYO6jbR7Q','P9r7jTIe628','R7o9aGdz92o','Rnak1-QLrJ0','T5y2jcGYZj4',
+          'V1ETmE426Xc','Vbth0K5EyLI','WuhVd5zNTgc','YblSGYjPugQ','YhNkc6axCR4',
+          '_xFuxZZm06w','aqWr9wwfjKo','argK6e8sZrc','cxMS0PEWkIU','edum1muSs7s',
+          'hkFqZGpX2aI','iBAASna0Tgs','jw61byADQS0','kdyGCYCD1I4','lCexOx5_oM8',
+          'mthwgR-cqWk','novMVa7Oa4Q','p9z6EIwg3LI','s9yc0z599u0','scrfKwj4jpQ',
+          'skaEO-fUeIo','t97zLFjpl0g','uEQMTtmeLY8','uL7jB05PV1k','xwNPvh2T8lM'
+        ]
+      },
+      vintagevhs: {
+        name: 'Vintage VHS Videos',
+        id: null,
+        videos: [
+          '0Skmli0GLAQ','1IiT9UZb1bk','1ZrdFXQVk7o','5YuxsNB_HL4','AXTIZRSOKps',
+          'B-jkKAmOnL0','IhDiB4jxRrA','NQNCklrUTs8','Tam4KgTogsA','ZFrsAzwLQqY',
+          'dKH5wEvzdR8','i0O1F2hh37o','iMiC11Iu57Y','q7V0mJnwNFA','qMhUrrStIEg',
+          'tZjppMDe9WI','xNUz9KYdnfQ','zat72vyJiR0'
+        ]
+      }
+    };
+
+    const SEED_VIDEOS = CHANNELS.oracrest.videos;
 
     const STORAGE_KEY = 'vhsg_watch';
 
@@ -183,10 +210,11 @@ import { GARAGES } from '../data/garages.js';
       },
 
       async onPlayerReady() {
-        // If no custom channel loaded, fetch the default channel's full listing
+        // Try to fetch channel videos, but don't block playback
         if (!App.channelId) {
-          await App.fetchChannelVideos(DEFAULT_CHANNEL_ID, App.channelName);
+          App.fetchChannelVideos(DEFAULT_CHANNEL_ID, App.channelName).catch(() => {});
         }
+        // Always start playing immediately from whatever playlist we have
         App.playRandom();
         if (App.sleepTimerMs > 0) App.startSleepTimer();
       },
@@ -246,6 +274,17 @@ import { GARAGES } from '../data/garages.js';
         App.startSleepTimer();
       },
 
+      loadPreset(key) {
+        const ch = CHANNELS[key];
+        if (!ch) return;
+        App.channelName = ch.name;
+        App.channelId = ch.id || '';
+        App.playlist = [...ch.videos];
+        document.getElementById('channel-name').textContent = ch.name;
+        App.saveSettings();
+        App.playRandom();
+      },
+
       async loadChannel(input) {
         let channelId = '';
         let channelName = input;
@@ -273,12 +312,15 @@ import { GARAGES } from '../data/garages.js';
       },
 
       async fetchChannelVideos(channelId, channelName) {
+        const ctrl = new AbortController();
+        const timeout = setTimeout(() => ctrl.abort(), 5000);
+
         try {
           // Resolve channel ID if we only have a username
           if (!channelId) {
-            const res = await fetch(`/.netlify/functions/youtube?action=resolve&name=${encodeURIComponent(channelName)}`);
+            const res = await fetch(`/.netlify/functions/youtube?action=resolve&name=${encodeURIComponent(channelName)}`, { signal: ctrl.signal });
             const data = await res.json();
-            if (data.error) return;
+            if (data.error) { clearTimeout(timeout); return; }
             channelId = data.channelId;
             if (data.channelName) {
               App.channelName = data.channelName;
@@ -286,7 +328,7 @@ import { GARAGES } from '../data/garages.js';
             }
           }
 
-          if (!channelId) return;
+          if (!channelId) { clearTimeout(timeout); return; }
           App.channelId = channelId;
 
           // Check cache (1 hour)
@@ -296,12 +338,13 @@ import { GARAGES } from '../data/garages.js';
             const { videos, ts } = JSON.parse(cached);
             if (Date.now() - ts < 3600000) {
               App.playlist = videos;
+              clearTimeout(timeout);
               return;
             }
           }
 
           // Fetch videos via serverless function
-          const res = await fetch(`/.netlify/functions/youtube?action=videos&channelId=${encodeURIComponent(channelId)}`);
+          const res = await fetch(`/.netlify/functions/youtube?action=videos&channelId=${encodeURIComponent(channelId)}`, { signal: ctrl.signal });
           const data = await res.json();
           if (data.videos && data.videos.length) {
             App.playlist = data.videos;
@@ -311,7 +354,9 @@ import { GARAGES } from '../data/garages.js';
             }));
           }
         } catch (e) {
-          console.warn('Channel fetch failed, using existing playlist');
+          console.warn('Channel fetch failed, using seed playlist:', e.message);
+        } finally {
+          clearTimeout(timeout);
         }
       }
     };
@@ -391,7 +436,15 @@ import { GARAGES } from '../data/garages.js';
       });
       document.getElementById('channel-name').textContent = App.channelName;
 
-      // Channel load
+      // Channel presets
+      document.querySelectorAll('.channel-preset').forEach(btn => {
+        btn.addEventListener('click', () => {
+          App.loadPreset(btn.dataset.channel);
+          document.getElementById('channel-panel').classList.add('hidden');
+        });
+      });
+
+      // Custom channel load
       document.getElementById('channel-load').addEventListener('click', () => {
         const val = document.getElementById('channel-input').value.trim();
         if (val) {
