@@ -31,4 +31,20 @@ export const GARAGES = [
       rotate: 0,
     },
   },
+  {
+    id: 'munozj145-01',
+    name: 'munozj145 from r/VHS',
+    channel: 'oracrest',
+    channelId: 'UC-wMG2tGhmeBOCO9IVbu4kg',
+    images: {
+      light: '/images/bg-munozj145-01.webp',
+      dark: '/images/bg-munozj145-01-dark.webp',
+    },
+    screen: {
+      top: 30.2,
+      left: 35.5,
+      width: 34.2,
+      rotate: 0,
+    },
+  },
 ];
