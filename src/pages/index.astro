@@ -17,7 +17,7 @@ const g = GARAGES[0];
   </style>
 
   <!-- Hero -->
-  <section class="relative h-screen overflow-hidden flex items-center justify-center cursor-pointer">
+  <section class="relative h-dvh overflow-hidden flex items-center justify-center cursor-pointer">
     <Flicker dark={g.images.dark} light={g.images.light}>
       <div id="video-loader" class="absolute z-0 flex items-center justify-center text-white/40 text-sm"
         style={`top:${g.screen.top + 4}%;left:${g.screen.left}%;width:${g.screen.width}%;transform:rotate(${g.screen.rotate}deg);`}></div>
@@ -106,6 +106,7 @@ const g = GARAGES[0];
         </button>
       </form>
       <p id="garage-confirm" class="hidden text-lg mt-4"></p>
+      <p id="signup-count" class="text-white/30 text-xs mt-4"></p>
     </div>
   </section>
 
@@ -187,5 +188,16 @@ const g = GARAGES[0];
         }
       });
     })();
+  </script>
+
+  <script is:inline>
+    fetch('/.netlify/functions/signup-count')
+      .then(r => r.json())
+      .then(d => {
+        if (d.count > 0) {
+          document.getElementById('signup-count').textContent = d.count + ' people have joined the garage';
+        }
+      })
+      .catch(() => {});
   </script>
 </Base>
