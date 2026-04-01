@@ -43,7 +43,7 @@ import { GARAGES } from '../data/garages.js';
   </style>
 
   <!-- Screen container -->
-  <div id="screen" class="relative w-full h-screen flex items-center overflow-hidden">
+  <div id="screen" class="relative w-full h-screen flex items-center justify-center overflow-hidden">
     <Flicker dark={GARAGES[0].images.dark} light={GARAGES[0].images.light}>
       <div id="yt-power" class="absolute z-20 aspect-[4/3] flex items-center justify-center cursor-pointer group"
         style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}>
