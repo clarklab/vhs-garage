@@ -9,10 +9,10 @@ export const GARAGES = [
       dark: '/images/bg-manchester-01-dark.webp',
     },
     screen: {
-      top: 40.5,
-      left: 20.5,
-      width: 24,
-      rotate: 2.5,
+      top: 45.7,
+      left: 40.9,
+      width: 18.2,
+      rotate: 0,
     },
   },
   {
@@ -25,10 +25,10 @@ export const GARAGES = [
       dark: '/images/bg-manchester-02-dark.webp',
     },
     screen: {
-      top: 45.7,
-      left: 40.9,
-      width: 18.2,
-      rotate: 0,
+      top: 40.5,
+      left: 20.5,
+      width: 24,
+      rotate: 2.5,
     },
   },
   {
@@ -41,9 +41,9 @@ export const GARAGES = [
       dark: '/images/bg-munozj145-01-dark.webp',
     },
     screen: {
-      top: 30.2,
-      left: 35.5,
-      width: 34.2,
+      top: 35.0,
+      left: 30.5,
+      width: 45.0,
       rotate: 0,
     },
   },

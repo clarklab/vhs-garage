@@ -1,6 +1,8 @@
 ---
 import Base from '../layouts/Base.astro';
 import Flicker from '../components/Flicker.astro';
+import { GARAGES } from '../data/garages.js';
+const g = GARAGES[0];
 ---
 
 <Base
@@ -15,9 +17,10 @@ import Flicker from '../components/Flicker.astro';
   </style>
 
   <!-- Hero -->
-  <section class="relative md:h-screen md:overflow-hidden md:flex md:items-center cursor-pointer">
-    <Flicker>
-      <div id="video-loader" class="absolute top-[44.5%] left-[20.5%] w-[24%] z-0 rotate-[2.5deg] flex items-center justify-center text-white/40 text-sm"></div>
+  <section class="relative h-screen overflow-hidden flex items-center cursor-pointer">
+    <Flicker dark={g.images.dark} light={g.images.light}>
+      <div id="video-loader" class="absolute z-0 flex items-center justify-center text-white/40 text-sm"
+        style={`top:${g.screen.top + 4}%;left:${g.screen.left}%;width:${g.screen.width}%;transform:rotate(${g.screen.rotate}deg);`}></div>
       <video
         id="hero-video"
         src="/video/vhs-garage-loop.mp4"
@@ -25,7 +28,8 @@ import Flicker from '../components/Flicker.astro';
         loop
         muted
         playsinline
-        class="absolute top-[40.5%] left-[20.5%] w-[24%] z-0 rotate-[2.5deg] opacity-0 transition-opacity duration-500"
+        class="absolute z-0 opacity-0 transition-opacity duration-500"
+        style={`top:${g.screen.top}%;left:${g.screen.left}%;width:${g.screen.width}%;transform:rotate(${g.screen.rotate}deg);`}
       ></video>
     </Flicker>
 
