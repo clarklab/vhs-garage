@@ -78,14 +78,14 @@ import Base from '../layouts/Base.astro';
     </div>
   </div>
 
-  <!-- Two-column grid -->
-  <div id="capture-app" class="h-screen flex flex-col p-4 max-w-7xl mx-auto">
-    <div class="flex-1 grid md:grid-cols-[1fr_340px] gap-4 min-h-0">
+  <!-- Three-column grid -->
+  <div id="capture-app" class="h-screen flex flex-col p-4 max-w-[1400px] mx-auto">
+    <div class="flex-1 grid md:grid-cols-[1fr_300px] lg:grid-cols-[1fr_280px_280px] gap-3 min-h-0">
 
       <!-- Left: Main Capture -->
       <div class="flex flex-col min-h-0">
         <!-- Preview tabs -->
-        <div id="preview-tabs" class="flex gap-0 text-xs mb-0">
+        <div id="preview-tabs" class="flex gap-0 text-[10px] uppercase tracking-wider mb-0">
           <button id="tab-live" class="px-3 py-1 border border-white/20 border-b-0 text-white/70 bg-[#141214]">Live</button>
           <button id="tab-playback" class="hidden px-3 py-1 border border-white/10 border-b-0 text-white/30 bg-black hover:text-white/50">Last Recording</button>
         </div>
@@ -116,121 +116,119 @@ import Base from '../layouts/Base.astro';
         </div>
 
         <!-- Audio spectrum meter -->
-        <canvas id="audio-meter" class="w-full h-6 mt-1" style="image-rendering: pixelated;"></canvas>
+        <canvas id="audio-meter" class="w-full h-6 mt-0" style="image-rendering: pixelated;"></canvas>
 
         <!-- Controls below preview -->
-        <div class="py-3">
-          <div class="flex items-center gap-4 mb-3">
-            <button id="rec-btn" class="rec-btn shrink-0" title="Record">
-              <span class="rec-dot"></span><span class="rec-label">REC</span>
-            </button>
-            <div class="flex-1">
-              <div class="flex items-baseline gap-3">
-                <span id="rec-timer" class="text-xl tabular-nums">00:00:00</span>
-                <span id="rec-size" class="text-xs text-gray-400">0.0 MB</span>
-              </div>
-            </div>
-          </div>
-          <div class="flex items-center text-xs gap-3">
-            <button id="to-library-btn" class="text-white/60 hover:text-white/80 transition-colors">View Library →</button>
-            <button id="delete-recording-btn" class="hidden text-red-500 hover:text-red-400 transition-colors">Delete Recording</button>
-          </div>
+        <div class="flex items-center gap-3 py-2">
+          <button id="rec-btn" class="rec-btn shrink-0" title="Record">
+            <span class="rec-dot"></span><span class="rec-label">REC</span>
+          </button>
+          <span id="rec-timer" class="text-lg tabular-nums">00:00:00</span>
+          <span id="rec-size" class="text-xs text-white/40">0.0 MB</span>
+          <div class="flex-1"></div>
+          <button id="delete-recording-btn" class="hidden text-red-500 hover:text-red-400 transition-colors text-xs">Delete</button>
+          <button id="to-library-btn" class="text-white/60 hover:text-white/80 transition-colors text-xs">Library →</button>
         </div>
       </div>
 
-      <!-- Right: Sidebar -->
-      <div class="flex flex-col gap-4 min-h-0 overflow-y-auto">
+      <!-- Columns 2+3: stacked at md, side-by-side at lg -->
+      <div class="md:flex md:flex-col md:gap-3 md:min-h-0 md:overflow-y-auto lg:contents">
 
-        <!-- Sleeve Capture -->
-        <fieldset class="border border-white/20 p-3">
-          <legend class="text-white/70 text-xs px-2">░ VHS Sleeve ░</legend>
+        <!-- Column 2: Cover Snap -->
+        <div class="min-h-0 lg:overflow-y-auto">
+          <fieldset class="border border-white/20 p-3">
+            <legend class="text-white/70 text-[11px] tracking-wider px-2">░ VHS Sleeve ░</legend>
 
-          <!-- Capture view: webcam + shutter -->
-          <div id="sleeve-capture-view">
-            <div id="webcam-container" class="relative bg-[#141214] border border-white/10 aspect-[4/3] overflow-hidden cursor-pointer mb-3">
-              <video id="sleeve-webcam" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
-              <!-- Translucent VHS case target overlay -->
-              <div id="sleeve-target" class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div class="aspect-[17/30] h-[70%] border-2 border-white/25 rounded-lg flex items-end justify-center pb-2">
-                  <span class="text-white/20 text-[10px]">Position sleeve here</span>
+            <!-- Capture view: webcam + shutter -->
+            <div id="sleeve-capture-view">
+              <div id="webcam-container" class="relative bg-[#141214] border border-white/10 aspect-[4/3] overflow-hidden cursor-pointer mb-3">
+                <video id="sleeve-webcam" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
+                <!-- Translucent VHS case target overlay -->
+                <div id="sleeve-target" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div class="aspect-[17/30] h-[70%] border-2 border-white/25 rounded-lg flex items-end justify-center pb-2">
+                    <span class="text-white/20 text-[10px]">Position sleeve here</span>
+                  </div>
+                </div>
+                <!-- No webcam placeholder -->
+                <div id="no-webcam" class="absolute inset-0 flex items-center justify-center">
+                  <div class="text-center">
+                    <p class="text-white/50 text-xs mb-1">No webcam</p>
+                    <p class="text-white/70 text-[10px]">Click to select</p>
+                  </div>
+                </div>
+                <!-- Inline webcam selector -->
+                <div id="webcam-selector" class="hidden absolute inset-0 bg-black/90 flex items-center justify-center">
+                  <div class="w-48">
+                    <p class="text-xs mb-2">Select webcam</p>
+                    <select id="select-webcam" class="w-full bg-black border border-white/30 text-white text-xs p-2 mb-2"></select>
+                    <button id="select-webcam-ok" class="w-full py-1 border border-white/30 text-white/60 hover:text-white text-xs">Connect</button>
+                  </div>
                 </div>
               </div>
-              <!-- No webcam placeholder -->
-              <div id="no-webcam" class="absolute inset-0 flex items-center justify-center">
+              <button id="sleeve-capture-btn" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs">
+                <span id="sleeve-capture-label">Capture Front</span>
+              </button>
+            </div>
+
+            <!-- Review view: side-by-side previews + retake -->
+            <div id="sleeve-review-view" class="hidden">
+              <div class="grid grid-cols-2 gap-2 mb-2">
                 <div class="text-center">
-                  <p class="text-white/50 text-xs mb-1">No webcam</p>
-                  <p class="text-white/70 text-[10px]">Click to select</p>
+                  <div id="sleeve-front-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-[10px] mb-1">--</div>
+                  <span id="sleeve-front-status" class="text-[10px] text-white/50">Front</span>
+                </div>
+                <div class="text-center">
+                  <div id="sleeve-back-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-[10px] mb-1">--</div>
+                  <span id="sleeve-back-status" class="text-[10px] text-white/50">Back</span>
                 </div>
               </div>
-              <!-- Inline webcam selector -->
-              <div id="webcam-selector" class="hidden absolute inset-0 bg-black/90 flex items-center justify-center">
-                <div class="w-48">
-                  <p class="text-xs mb-2">Select webcam</p>
-                  <select id="select-webcam" class="w-full bg-black border border-white/30 text-white text-xs p-2 mb-2"></select>
-                  <button id="select-webcam-ok" class="w-full py-1 border border-white/30 text-white/60 hover:text-white text-xs">Connect</button>
+              <button id="sleeve-retake-btn" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs">Retake</button>
+            </div>
+          </fieldset>
+        </div>
+
+        <!-- Column 3: Details -->
+        <div class="min-h-0 lg:overflow-y-auto">
+          <fieldset class="border border-white/20 p-3">
+            <legend class="text-white/70 text-[11px] tracking-wider px-2">░ Clip Info ░</legend>
+            <div id="clip-info-fields" class="space-y-2 text-xs">
+              <div>
+                <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Title</label>
+                <input id="clip-title" type="text" placeholder="My Home Videos 1994"
+                  class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+              </div>
+              <div>
+                <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Description</label>
+                <textarea id="clip-description" rows="2" placeholder="What's on this clip..."
+                  class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
+              </div>
+              <div id="ai-fields" class="space-y-2">
+                <div id="clip-info-loader" class="hidden py-4 text-center text-white/40 text-sm ai-loader"></div>
+                <div>
+                  <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Year</label>
+                  <input id="clip-year" type="text" placeholder="1994"
+                    class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                </div>
+                <div>
+                  <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tags</label>
+                  <input id="clip-tags" type="text" placeholder="home video, 90s, family"
+                    class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                </div>
+                <div>
+                  <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">VHS Tape</label>
+                  <input id="clip-tape" type="text" placeholder="Which tape is this from?"
+                    class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                </div>
+                <div>
+                  <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Cassette Notes</label>
+                  <textarea id="clip-notes" rows="2" placeholder="Special edition, director's cut, recording speed..."
+                    class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
                 </div>
               </div>
             </div>
-            <button id="sleeve-capture-btn" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs">
-              <span id="sleeve-capture-label">Capture Front</span>
-            </button>
-          </div>
+          </fieldset>
+        </div>
 
-          <!-- Review view: side-by-side previews + retake -->
-          <div id="sleeve-review-view" class="hidden">
-            <div class="grid grid-cols-2 gap-2 mb-2">
-              <div class="text-center">
-                <div id="sleeve-front-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-[10px] mb-1">--</div>
-                <span id="sleeve-front-status" class="text-[10px] text-white/50">Front</span>
-              </div>
-              <div class="text-center">
-                <div id="sleeve-back-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-[10px] mb-1">--</div>
-                <span id="sleeve-back-status" class="text-[10px] text-white/50">Back</span>
-              </div>
-            </div>
-            <button id="sleeve-retake-btn" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs">Retake</button>
-          </div>
-        </fieldset>
-
-        <!-- Clip Info -->
-        <fieldset class="border border-white/20 p-3">
-          <legend class="text-white/70 text-xs px-2">░ Clip Info ░</legend>
-          <div id="clip-info-fields" class="space-y-2 text-xs">
-            <div>
-              <label class="text-gray-400 block mb-1">Title</label>
-              <input id="clip-title" type="text" placeholder="My Home Videos 1994"
-                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
-            </div>
-            <div>
-              <label class="text-gray-400 block mb-1">Description</label>
-              <textarea id="clip-description" rows="2" placeholder="What's on this clip..."
-                class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
-            </div>
-            <div id="ai-fields" class="space-y-2">
-              <div id="clip-info-loader" class="hidden py-4 text-center text-white/40 text-sm ai-loader"></div>
-              <div>
-                <label class="text-gray-400 block mb-1">Year</label>
-                <input id="clip-year" type="text" placeholder="1994"
-                  class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
-              </div>
-              <div>
-                <label class="text-gray-400 block mb-1">Tags</label>
-                <input id="clip-tags" type="text" placeholder="home video, 90s, family"
-                  class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
-              </div>
-              <div>
-                <label class="text-gray-400 block mb-1">VHS Tape</label>
-                <input id="clip-tape" type="text" placeholder="Which tape is this from?"
-                  class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
-              </div>
-              <div>
-                <label class="text-gray-400 block mb-1">Cassette Notes</label>
-                <textarea id="clip-notes" rows="2" placeholder="Special edition, director's cut, recording speed..."
-                  class="w-full px-2 py-1 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
-              </div>
-            </div>
-          </div>
-        </fieldset>
       </div>
     </div>
 

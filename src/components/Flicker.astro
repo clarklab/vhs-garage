@@ -1,6 +1,14 @@
+---
+interface Props {
+  dark?: string;
+  light?: string;
+}
+const { dark = '/images/bg-manchester-01-dark.webp', light = '/images/bg-manchester-01.webp' } = Astro.props;
+---
+
 <div class="relative w-full">
-  <img id="bg-dark" src="/images/bg-vertical-dark.webp" alt="" class="w-full block relative z-10" />
-  <img id="bg-light" src="/images/bg-vertical.webp" alt="" class="absolute inset-0 w-full block z-10 transition-opacity duration-150" />
+  <img id="bg-dark" src={dark} alt="" class="w-full block relative z-10" />
+  <img id="bg-light" src={light} alt="" class="absolute inset-0 w-full block z-10 transition-opacity duration-150" />
   <slot />
 </div>
 

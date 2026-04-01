@@ -44,9 +44,15 @@ import { GARAGES } from '../data/garages.js';
 
   <!-- Screen container -->
   <div id="screen" class="relative w-full md:h-screen md:flex md:items-center md:overflow-hidden">
-    <Flicker>
-      <div id="yt-loader" class="absolute top-[44.5%] left-[20.5%] w-[24%] z-0 rotate-[2.5deg] flex items-center justify-center text-white/40 text-sm"></div>
-      <div id="yt-player-wrap" class="absolute top-[40.5%] left-[20.5%] w-[24%] z-0 rotate-[2.5deg] opacity-0 transition-opacity duration-500">
+    <Flicker dark={GARAGES[0].images.dark} light={GARAGES[0].images.light}>
+      <div id="yt-power" class="absolute z-20 aspect-[4/3] flex items-center justify-center cursor-pointer group"
+        style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}>
+        <span class="text-red-500 group-hover:text-red-400 transition-colors text-5xl font-sans ml-2" style="text-shadow: 0 0 10px rgba(239,68,68,0.7), 0 0 20px rgba(239,68,68,0.4);">⏻</span>
+      </div>
+      <div id="yt-loader" class="hidden absolute z-0 flex items-center justify-center text-white/40 text-sm"
+        style={`top:${GARAGES[0].screen.top + 4}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}></div>
+      <div id="yt-player-wrap" class="absolute z-0 opacity-0 transition-opacity duration-500"
+        style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}>
         <div id="yt-player"></div>
       </div>
     </Flicker>
@@ -157,6 +163,7 @@ import { GARAGES } from '../data/garages.js';
 
     const App = {
       player: null,
+      apiReady: false,
       playlist: [...SEED_VIDEOS],
       currentIndex: -1,
       clipLimitMs: 0,
@@ -369,11 +376,26 @@ import { GARAGES } from '../data/garages.js';
     // YouTube API callback — must be on window (Astro's define:vars wraps in IIFE)
     window.onYouTubeIframeAPIReady = function() {
       App.loadSettings();
-      App.initPlayer();
+      App.apiReady = true;
     };
 
     // --- UI Wiring ---
     document.addEventListener('DOMContentLoaded', () => {
+      // Power on — user click gives us gesture for unmuted autoplay
+      document.getElementById('yt-power').addEventListener('click', () => {
+        document.getElementById('yt-power').classList.add('hidden');
+        document.getElementById('yt-loader').classList.remove('hidden');
+        if (App.apiReady) {
+          App.initPlayer();
+        } else {
+          // API still loading — override the callback to init on ready
+          const orig = window.onYouTubeIframeAPIReady;
+          window.onYouTubeIframeAPIReady = function() {
+            orig();
+            App.initPlayer();
+          };
+        }
+      });
       // Panel toggles
       function togglePanel(btnId, panelId) {
         const btn = document.getElementById(btnId);
@@ -403,6 +425,45 @@ import { GARAGES } from '../data/garages.js';
       // Stop propagation on panels themselves
       ['garage-panel', 'channel-panel', 'settings-panel'].forEach(id => {
         document.getElementById(id).addEventListener('click', e => e.stopPropagation());
+      });
+
+      // Garage switching
+      document.querySelectorAll('.garage-opt').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.garageIdx);
+          const g = GARAGES[idx];
+          if (!g) return;
+
+          // Update images
+          document.getElementById('bg-dark').src = g.images.dark;
+          document.getElementById('bg-light').src = g.images.light;
+
+          // Reposition TV elements
+          const s = g.screen;
+          ['yt-power', 'yt-player-wrap'].forEach(id => {
+            const el = document.getElementById(id);
+            el.style.top = s.top + '%';
+            el.style.left = s.left + '%';
+            el.style.width = s.width + '%';
+            el.style.transform = 'rotate(' + s.rotate + 'deg)';
+          });
+          const loader = document.getElementById('yt-loader');
+          loader.style.top = (s.top + 4) + '%';
+          loader.style.left = s.left + '%';
+          loader.style.width = s.width + '%';
+          loader.style.transform = 'rotate(' + s.rotate + 'deg)';
+
+          // Update garage name + button states
+          document.getElementById('garage-name').textContent = g.name;
+          document.querySelectorAll('.garage-opt').forEach(b => {
+            b.classList.remove('text-white/80', 'border-white/30', 'bg-white/10');
+            b.classList.add('text-white/50', 'border-white/15');
+          });
+          btn.classList.remove('text-white/50', 'border-white/15');
+          btn.classList.add('text-white/80', 'border-white/30', 'bg-white/10');
+
+          document.getElementById('garage-panel').classList.add('hidden');
+        });
       });
 
       // Settings: clip limit
