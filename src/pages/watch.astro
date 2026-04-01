@@ -47,7 +47,9 @@ import { GARAGES } from '../data/garages.js';
     <Flicker dark={GARAGES[0].images.dark} light={GARAGES[0].images.light}>
       <div id="yt-power" class="absolute z-20 aspect-[4/3] flex items-center justify-center cursor-pointer group"
         style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}>
-        <span class="text-red-500 group-hover:text-red-400 transition-colors text-5xl font-sans ml-2" style="text-shadow: 0 0 10px rgba(239,68,68,0.7), 0 0 20px rgba(239,68,68,0.4);">⏻</span>
+        <svg class="w-12 h-12 ml-2 text-red-500 group-hover:text-red-400 transition-colors drop-shadow-[0_0_10px_rgba(239,68,68,0.7)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M12 2v6" /><path d="M16.24 5.76a8 8 0 1 1-8.48 0" />
+        </svg>
       </div>
       <div id="yt-loader" class="hidden absolute z-0 flex items-center justify-center text-white/40 text-sm"
         style={`top:${GARAGES[0].screen.top + 4}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}></div>
