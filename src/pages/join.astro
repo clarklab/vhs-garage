@@ -1,0 +1,98 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Join" description="Sign up for VHS Garage. Free mystery VHS at our next event.">
+
+  <div class="min-h-screen flex flex-col items-center justify-center px-6 py-12">
+    <img src="/unfurl.png" alt="VHS Garage" class="w-64 mb-10" />
+
+    <p id="join-count" class="text-white/40 text-xs uppercase tracking-widest mb-6"></p>
+
+    <h1 class="text-3xl mb-3 text-center">Join us in the Garage</h1>
+    <p class="text-gray-400 text-center max-w-md mb-8">Drop your email and we'll give you a <strong class="text-white">free mystery VHS</strong> at an upcoming event. No spam. Just tapes.</p>
+
+    <form id="join-form" name="garage-signup" method="POST" data-netlify="true" class="flex gap-3 w-full max-w-md">
+      <input type="hidden" name="form-name" value="garage-signup" />
+      <input
+        id="join-email"
+        type="email"
+        name="email"
+        placeholder="your@email.com"
+        required
+        class="flex-1 px-4 py-3 bg-black border border-white/30 text-white placeholder-gray-500 focus:outline-none focus:border-white"
+      />
+      <button id="join-submit-btn" type="submit" class="px-6 py-3 bg-white text-black hover:bg-gray-200 transition-colors shrink-0 min-w-[100px]">
+        Sign Up
+      </button>
+    </form>
+    <p id="join-confirm" class="hidden text-lg mt-4"></p>
+
+    <a href="/" class="text-white/30 text-xs mt-12 hover:text-white/50 transition-colors">← vhsgarage.com</a>
+  </div>
+
+  <script is:inline>
+    (() => {
+      const form = document.getElementById('join-form');
+      const btn = document.getElementById('join-submit-btn');
+      const confirm = document.getElementById('join-confirm');
+      const frames = ['░░░', '▒░░', '▓▒░', '▓▓▒', '▓▓▓', '▓▓▒', '▓▒░', '▒░░'];
+      let tick;
+
+      function startLoader() {
+        let i = 0;
+        btn.disabled = true;
+        btn.textContent = frames[0];
+        tick = setInterval(() => {
+          i = (i + 1) % frames.length;
+          btn.textContent = frames[i];
+        }, 120);
+      }
+
+      function stopLoader() {
+        clearInterval(tick);
+        btn.disabled = false;
+        btn.textContent = 'Sign Up';
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        startLoader();
+        try {
+          const res = await fetch('/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(new FormData(form)).toString()
+          });
+          stopLoader();
+          if (res.ok) {
+            form.classList.add('hidden');
+            confirm.classList.remove('hidden');
+            confirm.textContent = '▓ You\'re in. See you at the next event.';
+          } else {
+            confirm.classList.remove('hidden');
+            confirm.textContent = '░ Something went wrong. Try again.';
+            confirm.classList.add('text-red-400');
+          }
+        } catch {
+          stopLoader();
+          confirm.classList.remove('hidden');
+          confirm.textContent = '░ Network error. Try again.';
+          confirm.classList.add('text-red-400');
+        }
+      });
+    })();
+  </script>
+
+  <script is:inline>
+    fetch('/.netlify/functions/signup-count')
+      .then(r => r.json())
+      .then(d => {
+        if (d.count > 0) {
+          document.getElementById('join-count').textContent = 'Join ' + d.count + ' other VHS fans';
+        }
+      })
+      .catch(() => {});
+  </script>
+
+</Base>

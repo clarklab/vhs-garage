@@ -43,16 +43,16 @@ import { GARAGES } from '../data/garages.js';
   </style>
 
   <!-- Screen container -->
-  <div id="screen" class="relative w-full h-dvh flex items-center justify-center overflow-hidden">
+  <div id="screen" class="relative w-full h-lvh flex items-center justify-center overflow-hidden">
     <Flicker dark={GARAGES[0].images.dark} light={GARAGES[0].images.light}>
       <div id="yt-power" class="absolute z-20 aspect-[4/3] flex items-center justify-center cursor-pointer group"
         style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}>
-        <svg class="w-12 h-12 ml-2 text-red-500 group-hover:text-red-400 transition-colors drop-shadow-[0_0_10px_rgba(239,68,68,0.7)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <svg class="w-[15%] text-red-500 group-hover:text-red-400 transition-colors drop-shadow-[0_0_10px_rgba(239,68,68,0.7)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M12 2v6" /><path d="M16.24 5.76a8 8 0 1 1-8.48 0" />
         </svg>
       </div>
-      <div id="yt-loader" class="hidden absolute z-0 flex items-center justify-center text-white/40 text-sm"
-        style={`top:${GARAGES[0].screen.top + 4}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}></div>
+      <div id="yt-loader" class="hidden absolute z-0 aspect-[4/3] flex items-center justify-center text-white/40 text-sm"
+        style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}></div>
       <div id="yt-player-wrap" class="absolute z-0 opacity-0 transition-opacity duration-500"
         style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}>
         <div id="yt-player"></div>
@@ -450,7 +450,7 @@ import { GARAGES } from '../data/garages.js';
             el.style.transform = 'rotate(' + s.rotate + 'deg)';
           });
           const loader = document.getElementById('yt-loader');
-          loader.style.top = (s.top + 4) + '%';
+          loader.style.top = s.top + '%';
           loader.style.left = s.left + '%';
           loader.style.width = s.width + '%';
           loader.style.transform = 'rotate(' + s.rotate + 'deg)';

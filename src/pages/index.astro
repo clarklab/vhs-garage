@@ -16,11 +16,16 @@ const g = GARAGES[0];
     }
   </style>
 
+  <!-- Top bar -->
+  <a id="top-bar" href="/join" class="block bg-[#0000ee] text-white text-center text-xs py-2 px-4 hover:bg-[#0000cc] transition-colors">
+    CLICK HERE TO SIGN UP. <span id="top-bar-count">JOIN OTHERS.</span> WE'RE COOL.
+  </a>
+
   <!-- Hero -->
-  <section class="relative h-dvh overflow-hidden flex items-center justify-center cursor-pointer">
+  <section class="relative h-lvh overflow-hidden flex items-center justify-center cursor-pointer">
     <Flicker dark={g.images.dark} light={g.images.light}>
-      <div id="video-loader" class="absolute z-0 flex items-center justify-center text-white/40 text-sm"
-        style={`top:${g.screen.top + 4}%;left:${g.screen.left}%;width:${g.screen.width}%;transform:rotate(${g.screen.rotate}deg);`}></div>
+      <div id="video-loader" class="absolute z-0 aspect-[4/3] flex items-center justify-center text-white/40 text-sm"
+        style={`top:${g.screen.top}%;left:${g.screen.left}%;width:${g.screen.width}%;transform:rotate(${g.screen.rotate}deg);`}></div>
       <video
         id="hero-video"
         src="/video/vhs-garage-loop.mp4"
@@ -196,6 +201,7 @@ const g = GARAGES[0];
       .then(d => {
         if (d.count > 0) {
           document.getElementById('signup-count').textContent = d.count + ' people have joined the garage';
+          document.getElementById('top-bar-count').textContent = 'JOIN ' + d.count + ' OTHERS.';
         }
       })
       .catch(() => {});

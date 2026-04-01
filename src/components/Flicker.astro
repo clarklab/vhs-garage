@@ -6,9 +6,9 @@ interface Props {
 const { dark = '/images/bg-manchester-01-dark.webp', light = '/images/bg-manchester-01.webp' } = Astro.props;
 ---
 
-<div class="relative min-w-full">
-  <img id="bg-dark" src={dark} alt="" class="min-w-full min-h-dvh block relative z-10" />
-  <img id="bg-light" src={light} alt="" class="absolute top-0 left-0 min-w-full min-h-dvh block z-10 transition-opacity duration-150" />
+<div class="relative inline-block">
+  <img id="bg-dark" src={dark} alt="" class="min-w-full min-h-lvh block relative z-10" />
+  <img id="bg-light" src={light} alt="" class="absolute top-0 left-0 min-w-full min-h-lvh block z-10 transition-opacity duration-150" />
   <slot />
 </div>
 
