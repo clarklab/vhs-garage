@@ -46,15 +46,15 @@ import { GARAGES } from '../data/garages.js';
   <div id="screen" class="relative w-full h-lvh flex items-center justify-center overflow-hidden">
     <Flicker dark={GARAGES[0].images.dark} light={GARAGES[0].images.light}>
       <div id="yt-power" class="absolute z-20 aspect-[4/3] flex items-center justify-center cursor-pointer group"
-        style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}>
+        style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:${GARAGES[0].screen.transform};`}>
         <svg class="w-[15%] text-red-500 group-hover:text-red-400 transition-colors drop-shadow-[0_0_10px_rgba(239,68,68,0.7)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M12 2v6" /><path d="M16.24 5.76a8 8 0 1 1-8.48 0" />
         </svg>
       </div>
       <div id="yt-loader" class="hidden absolute z-0 aspect-[4/3] flex items-center justify-center text-white/40 text-sm"
-        style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}></div>
+        style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:${GARAGES[0].screen.transform};`}></div>
       <div id="yt-player-wrap" class="absolute z-0 opacity-0 transition-opacity duration-500"
-        style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:rotate(${GARAGES[0].screen.rotate}deg);`}>
+        style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:${GARAGES[0].screen.transform};`}>
         <div id="yt-player"></div>
       </div>
     </Flicker>
@@ -442,18 +442,13 @@ import { GARAGES } from '../data/garages.js';
 
           // Reposition TV elements
           const s = g.screen;
-          ['yt-power', 'yt-player-wrap'].forEach(id => {
+          ['yt-power', 'yt-player-wrap', 'yt-loader'].forEach(id => {
             const el = document.getElementById(id);
             el.style.top = s.top + '%';
             el.style.left = s.left + '%';
             el.style.width = s.width + '%';
-            el.style.transform = 'rotate(' + s.rotate + 'deg)';
+            el.style.transform = s.transform || '';
           });
-          const loader = document.getElementById('yt-loader');
-          loader.style.top = s.top + '%';
-          loader.style.left = s.left + '%';
-          loader.style.width = s.width + '%';
-          loader.style.transform = 'rotate(' + s.rotate + 'deg)';
 
           // Update garage name + button states
           document.getElementById('garage-name').textContent = g.name;

@@ -12,7 +12,7 @@ export const GARAGES = [
       top: 45.7,
       left: 40.9,
       width: 18.2,
-      rotate: 0,
+      transform: '',
     },
   },
   {
@@ -28,7 +28,7 @@ export const GARAGES = [
       top: 40.5,
       left: 20.5,
       width: 24,
-      rotate: 2.5,
+      transform: 'rotate(2.5deg)',
     },
   },
   {
@@ -44,7 +44,23 @@ export const GARAGES = [
       top: 35.0,
       left: 30.5,
       width: 45.0,
-      rotate: 0,
+      transform: '',
+    },
+  },
+  {
+    id: 'vintage-sony-01',
+    name: 'Vintage Sony',
+    channel: 'oracrest',
+    channelId: 'UC-wMG2tGhmeBOCO9IVbu4kg',
+    images: {
+      light: '/images/bg-vintage-sony-01.webp',
+      dark: '/images/bg-vintage-sony-01-dark.webp',
+    },
+    screen: {
+      top: 45.5,
+      left: 45.6,
+      width: 11.2,
+      transform: 'skewY(2deg)',
     },
   },
 ];

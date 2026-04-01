@@ -25,7 +25,7 @@ const g = GARAGES[0];
   <section class="relative h-lvh overflow-hidden flex items-center justify-center cursor-pointer">
     <Flicker dark={g.images.dark} light={g.images.light}>
       <div id="video-loader" class="absolute z-0 aspect-[4/3] flex items-center justify-center text-white/40 text-sm"
-        style={`top:${g.screen.top}%;left:${g.screen.left}%;width:${g.screen.width}%;transform:rotate(${g.screen.rotate}deg);`}></div>
+        style={`top:${g.screen.top}%;left:${g.screen.left}%;width:${g.screen.width}%;transform:${g.screen.transform};`}></div>
       <video
         id="hero-video"
         src="/video/vhs-garage-loop.mp4"
@@ -34,7 +34,7 @@ const g = GARAGES[0];
         muted
         playsinline
         class="absolute z-0 opacity-0 transition-opacity duration-500"
-        style={`top:${g.screen.top}%;left:${g.screen.left}%;width:${g.screen.width}%;transform:rotate(${g.screen.rotate}deg);`}
+        style={`top:${g.screen.top}%;left:${g.screen.left}%;width:${g.screen.width}%;transform:${g.screen.transform};`}
       ></video>
     </Flicker>
 
