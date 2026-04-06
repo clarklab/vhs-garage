@@ -6,17 +6,45 @@ interface Props {
 const { dark = '/images/bg-manchester-01-dark.webp', light = '/images/bg-manchester-01.webp' } = Astro.props;
 ---
 
-<div class="relative inline-block">
-  <img id="bg-dark" src={dark} alt="" class="min-w-full min-h-lvh block relative z-10" />
-  <img id="bg-light" src={light} alt="" class="absolute top-0 left-0 min-w-full min-h-lvh block z-10 transition-opacity duration-150" />
+<div id="flicker-wrap" class="relative" style="min-width:100%;min-height:100vh;">
+  <img id="bg-dark" src={dark} alt="" class="w-full h-full block relative z-10" style="object-fit:cover;" />
+  <img id="bg-light" src={light} alt="" class="absolute inset-0 w-full h-full block z-10 transition-opacity duration-150" style="object-fit:cover;" />
   <slot />
 </div>
 
 <script>
-  const light = document.getElementById('bg-light');
+  const wrap = document.getElementById('flicker-wrap');
   const dark = document.getElementById('bg-dark');
-  let ready = 0;
+  const light = document.getElementById('bg-light');
 
+  // --- Cover sizing: measure actual viewport, compute image cover dims ---
+  function sizeScene() {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const nw = dark.naturalWidth;
+    const nh = dark.naturalHeight;
+    if (!nw || !nh) return;
+
+    const imgRatio = nw / nh;
+    let w, h;
+    if (vw / vh > imgRatio) {
+      w = vw; h = vw / imgRatio;
+    } else {
+      h = vh; w = vh * imgRatio;
+    }
+
+    wrap.style.width = w + 'px';
+    wrap.style.height = h + 'px';
+    wrap.style.minWidth = '';
+    wrap.style.minHeight = '';
+
+    // Match the screen container to the real viewport
+    const screen = wrap.parentElement;
+    if (screen) screen.style.height = vh + 'px';
+  }
+
+  // --- Flicker animation ---
+  let ready = 0;
   function startFlicker() {
     let t = 0;
     function tick() {
@@ -31,9 +59,23 @@ const { dark = '/images/bg-manchester-01-dark.webp', light = '/images/bg-manches
     tick();
   }
 
-  [light, dark].forEach(img => {
-    if (img.complete) { ready++; }
-    else { img.addEventListener('load', () => { ready++; if (ready === 2) startFlicker(); }, { once: true }); }
+  function onImageReady() {
+    ready++;
+    if (ready >= 2) {
+      startFlicker();
+      sizeScene();
+    }
+  }
+
+  [dark, light].forEach(img => {
+    if (img.complete && img.naturalWidth) onImageReady();
+    else img.addEventListener('load', onImageReady, { once: true });
   });
-  if (ready === 2) startFlicker();
+
+  // Re-measure on resize, orientation, and fullscreen changes
+  window.addEventListener('resize', sizeScene);
+  document.addEventListener('fullscreenchange', () => setTimeout(sizeScene, 100));
+
+  // Also size on dark image load (for garage switching)
+  dark.addEventListener('load', sizeScene);
 </script>
