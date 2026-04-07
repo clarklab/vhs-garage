@@ -9,6 +9,45 @@ export function getSleeveData() {
   return { front: frontData, back: backData };
 }
 
+export function getSleeveState() {
+  return sleeveState;
+}
+
+export function getVideoElement() {
+  return document.getElementById('sleeve-webcam');
+}
+
+// Shutter click via Web Audio API — no external files needed
+export function playShutter() {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = ac.createBuffer(1, ac.sampleRate * 0.08, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      const t = i / ac.sampleRate;
+      data[i] = (Math.random() * 2 - 1) * Math.exp(-t * 80) * 0.3;
+    }
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    src.connect(ac.destination);
+    src.start();
+    src.onended = () => ac.close();
+  } catch (e) {}
+}
+
+// Compute target zone pixel coordinates from video dimensions
+export function getTargetRect() {
+  const video = document.getElementById('sleeve-webcam');
+  if (!video || !video.videoWidth || !video.videoHeight) return null;
+  const vh = video.videoHeight;
+  const vw = video.videoWidth;
+  const h = vh * 0.7;
+  const w = h * (17 / 30);
+  const x = (vw - w) / 2;
+  const y = (vh - h) / 2;
+  return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
+}
+
 export function resetSleeve() {
   sleeveState = 'idle';
   frontData = null;

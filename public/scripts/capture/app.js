@@ -9,8 +9,10 @@ import {
   getClips, addClip, deleteClip, createClipEntry, captureThumbnail, exportCatalog, renderLibrary
 } from './library.js';
 import {
-  initWebcam, stopWebcam, handleSleeveCapture, handleSleeveRetake, getSleeveData, resetSleeve, saveSleevePhotos
+  initWebcam, stopWebcam, handleSleeveCapture, handleSleeveRetake, getSleeveData, getSleeveState,
+  getVideoElement, getTargetRect, playShutter, resetSleeve, saveSleevePhotos
 } from './sleeve.js';
+import { startDetection, stopDetection, pauseDetection, resumeDetection } from './detector.js';
 import { initMeter, initMeterFromElement, pauseMeter, stopMeter } from './meter.js';
 
 let directoryHandle = null;
@@ -240,16 +242,77 @@ async function saveSidecarFiles(dirHandle, basename, entry) {
 
 // --- Sleeve capture ---
 
-function wireSleeveCapture() {
-  document.getElementById('sleeve-capture-btn').addEventListener('click', () => {
+function updateTargetOverlay(state) {
+  const target = document.getElementById('sleeve-target');
+  const inner = target?.querySelector('div');
+  const label = target?.querySelector('span');
+  if (!inner || !label) return;
+
+  inner.style.transition = 'border-color 0.2s';
+  switch (state) {
+    case 'idle':
+      inner.style.borderColor = 'rgba(255,255,255,0.25)';
+      label.textContent = getSleeveState() === 'front_captured' ? 'Flip & position back' : 'Position sleeve here';
+      break;
+    case 'detected':
+      inner.style.borderColor = 'rgba(234,179,8,0.5)';
+      label.textContent = 'Hold steady...';
+      break;
+    case 'capturing':
+      inner.style.borderColor = 'rgba(34,197,94,0.6)';
+      label.textContent = 'Capturing...';
+      break;
+    case 'snapped':
+      inner.style.borderColor = 'rgba(34,197,94,0.9)';
+      label.textContent = '';
+      break;
+  }
+}
+
+function tryStartDetection() {
+  const video = getVideoElement();
+  const rect = getTargetRect();
+  if (!video || !rect || !video.srcObject) return;
+  const state = getSleeveState();
+  if (state === 'done') return;
+
+  startDetection(video, rect, () => {
+    // Auto-snap triggered
+    playShutter();
     const result = handleSleeveCapture();
     if (result && result.captured === 'front') {
       analyzeSleevePhoto(result.data);
+      // Restart detection for back after a short pause
+      setTimeout(() => tryStartDetection(), 1500);
+    }
+    // If back was captured (result.captured === 'back'), detection stays paused (state is 'done')
+  }, updateTargetOverlay);
+}
+
+function wireSleeveCapture() {
+  // Manual button click — still works as override
+  document.getElementById('sleeve-capture-btn').addEventListener('click', () => {
+    pauseDetection();
+    playShutter();
+    const result = handleSleeveCapture();
+    if (result && result.captured === 'front') {
+      analyzeSleevePhoto(result.data);
+      setTimeout(() => tryStartDetection(), 1500);
     }
   });
   document.getElementById('sleeve-retake-btn').addEventListener('click', () => {
     handleSleeveRetake();
+    tryStartDetection();
   });
+
+  // Start detection once webcam video is playing
+  const video = getVideoElement();
+  if (video) {
+    video.addEventListener('playing', () => {
+      // Small delay to let video dimensions stabilize
+      setTimeout(() => tryStartDetection(), 500);
+    });
+  }
 }
 
 function resizeForAI(dataUrl) {
