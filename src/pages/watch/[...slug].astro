@@ -75,13 +75,15 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
   <!-- Corner UI -->
   <div id="corner-ui" class="fixed inset-0 z-30 pointer-events-none transition-opacity duration-300">
     <!-- Top-left: Garage + Share -->
-    <div class="absolute top-4 left-4 pointer-events-auto flex items-center gap-3">
-      <button id="garage-sel-btn" class="panel-btn text-white/40 text-xs">▓ <span id="garage-name">{GARAGES[garageIdx].name}</span></button>
-      <button id="share-btn" class="panel-btn text-white/30 hover:text-white/60" title="Share">
-        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>
-        </svg>
-      </button>
+    <div class="absolute top-4 left-4 pointer-events-auto">
+      <div class="flex items-center gap-2">
+        <button id="garage-sel-btn" class="panel-btn text-white/40 text-xs flex items-center gap-1">▓ <span id="garage-name" class="truncate" style="max-width:28vw;">{GARAGES[garageIdx].name}</span></button>
+        <button id="share-btn" class="panel-btn text-white/30 hover:text-white/60" title="Share">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>
+          </svg>
+        </button>
+      </div>
       <div id="garage-panel" class="hidden mt-2 bg-black/90 border border-white/20 p-3 w-56 text-xs">
         <p class="text-white/60 mb-2">Garage</p>
         {GARAGES.map((g, i) => (
@@ -96,7 +98,7 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
 
     <!-- Top-right: Channel -->
     <div class="absolute top-4 right-4 pointer-events-auto text-right">
-      <button id="channel-btn" class="panel-btn text-white/40 text-xs">CH ░ <span id="channel-name">oracrest</span></button>
+      <button id="channel-btn" class="panel-btn text-white/40 text-xs flex items-center gap-1">CH ░ <span id="channel-name" class="truncate" style="max-width:28vw;">oracrest</span></button>
       <div id="channel-panel" class="hidden mt-2 bg-black/90 border border-white/20 p-3 w-64 text-xs text-left">
         <p class="text-white/60 mb-3">Channel</p>
         <div class="space-y-1 mb-3">
