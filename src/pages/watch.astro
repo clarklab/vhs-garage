@@ -42,19 +42,16 @@ import { GARAGES } from '../data/garages.js';
     }
   </style>
 
-  <!-- Screen container -->
-  <div id="screen" class="relative w-full flex items-center justify-center overflow-hidden" style="height:100vh;">
+  <!-- Screen container — fixed inset-0 fills actual visible viewport, no CSS viewport units -->
+  <div id="screen" class="fixed inset-0">
     <Flicker dark={GARAGES[0].images.dark} light={GARAGES[0].images.light}>
-      <div id="yt-power" class="absolute z-20 aspect-[4/3] flex items-center justify-center cursor-pointer group"
-        style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:${GARAGES[0].screen.transform};`}>
+      <div id="yt-power" class="absolute z-20 aspect-[4/3] flex items-center justify-center cursor-pointer group opacity-0">
         <svg class="w-[15%] text-red-500 group-hover:text-red-400 transition-colors drop-shadow-[0_0_10px_rgba(239,68,68,0.7)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M12 2v6" /><path d="M16.24 5.76a8 8 0 1 1-8.48 0" />
         </svg>
       </div>
-      <div id="yt-loader" class="hidden absolute z-0 aspect-[4/3] flex items-center justify-center text-white/40 text-sm"
-        style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:${GARAGES[0].screen.transform};`}></div>
-      <div id="yt-player-wrap" class="absolute z-0 opacity-0 transition-opacity duration-500"
-        style={`top:${GARAGES[0].screen.top}%;left:${GARAGES[0].screen.left}%;width:${GARAGES[0].screen.width}%;transform:${GARAGES[0].screen.transform};`}>
+      <div id="yt-loader" class="hidden absolute z-0 aspect-[4/3] flex items-center justify-center text-white/40 text-sm"></div>
+      <div id="yt-player-wrap" class="absolute z-0 opacity-0 transition-opacity duration-500">
         <div id="yt-player"></div>
       </div>
     </Flicker>
@@ -129,6 +126,32 @@ import { GARAGES } from '../data/garages.js';
   <script is:inline define:vars={{ GARAGES_JSON: JSON.stringify(GARAGES) }}>
     const GARAGES = JSON.parse(GARAGES_JSON);
     const DEFAULT_CHANNEL_ID = GARAGES[0].channelId;
+
+    // --- Scene positioning: compute pixel positions from cover math ---
+    let currentGarageIdx = 0;
+
+    function placeTV(detail, screenCfg) {
+      const { scale, offX, offY, imgW, imgH } = detail;
+      const x = offX + (screenCfg.left / 100) * imgW * scale;
+      const y = offY + (screenCfg.top / 100) * imgH * scale;
+      const w = (screenCfg.width / 100) * imgW * scale;
+
+      ['yt-power', 'yt-loader', 'yt-player-wrap'].forEach(id => {
+        const el = document.getElementById(id);
+        el.style.left = x + 'px';
+        el.style.top = y + 'px';
+        el.style.width = w + 'px';
+        el.style.transform = screenCfg.transform || '';
+      });
+      // Show power button once positioned (starts opacity-0 to prevent flash)
+      const power = document.getElementById('yt-power');
+      if (!power.classList.contains('hidden')) power.style.opacity = '1';
+    }
+
+    // Listen for cover-math updates from Flicker
+    document.addEventListener('scene-sized', (e) => {
+      placeTV(e.detail, GARAGES[currentGarageIdx].screen);
+    });
 
     const CHANNELS = {
       oracrest: {
@@ -436,19 +459,11 @@ import { GARAGES } from '../data/garages.js';
           const g = GARAGES[idx];
           if (!g) return;
 
-          // Update images
+          currentGarageIdx = idx;
+
+          // Update images — positionOverlays fires via dark image load event
           document.getElementById('bg-dark').src = g.images.dark;
           document.getElementById('bg-light').src = g.images.light;
-
-          // Reposition TV elements
-          const s = g.screen;
-          ['yt-power', 'yt-player-wrap', 'yt-loader'].forEach(id => {
-            const el = document.getElementById(id);
-            el.style.top = s.top + '%';
-            el.style.left = s.left + '%';
-            el.style.width = s.width + '%';
-            el.style.transform = s.transform || '';
-          });
 
           // Update garage name + button states
           document.getElementById('garage-name').textContent = g.name;

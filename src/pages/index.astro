@@ -22,10 +22,9 @@ const g = GARAGES[0];
   </a>
 
   <!-- Hero -->
-  <section class="relative overflow-hidden flex items-center justify-center cursor-pointer" style="height:100vh;">
+  <section class="relative overflow-hidden cursor-pointer" style="height:100svh;">
     <Flicker dark={g.images.dark} light={g.images.light}>
-      <div id="video-loader" class="absolute z-0 aspect-[4/3] flex items-center justify-center text-white/40 text-sm"
-        style={`top:${g.screen.top}%;left:${g.screen.left}%;width:${g.screen.width}%;transform:${g.screen.transform};`}></div>
+      <div id="video-loader" class="absolute z-0 aspect-[4/3] flex items-center justify-center text-white/40 text-sm opacity-0"></div>
       <video
         id="hero-video"
         src="/video/vhs-garage-loop.mp4"
@@ -34,7 +33,6 @@ const g = GARAGES[0];
         muted
         playsinline
         class="absolute z-0 opacity-0 transition-opacity duration-500"
-        style={`top:${g.screen.top}%;left:${g.screen.left}%;width:${g.screen.width}%;transform:${g.screen.transform};`}
       ></video>
     </Flicker>
 
@@ -117,8 +115,27 @@ const g = GARAGES[0];
 
   <footer class="text-left text-gray-600 text-sm pb-8 max-w-2xl mx-auto px-6">&copy; 2026 VHS Garage</footer>
 
-  <script is:inline>
+  <script is:inline define:vars={{ heroScreen: JSON.stringify(g.screen) }}>
     (() => {
+      const screenCfg = JSON.parse(heroScreen);
+
+      // Position hero video + loader using cover math from Flicker
+      document.addEventListener('scene-sized', (e) => {
+        const { scale, offX, offY, imgW, imgH } = e.detail;
+        const x = offX + (screenCfg.left / 100) * imgW * scale;
+        const y = offY + (screenCfg.top / 100) * imgH * scale;
+        const w = (screenCfg.width / 100) * imgW * scale;
+
+        ['video-loader', 'hero-video'].forEach(id => {
+          const el = document.getElementById(id);
+          el.style.left = x + 'px';
+          el.style.top = y + 'px';
+          el.style.width = w + 'px';
+          el.style.transform = screenCfg.transform || '';
+        });
+        document.getElementById('video-loader').style.opacity = '1';
+      });
+
       const vid = document.getElementById('hero-video');
       const loader = document.getElementById('video-loader');
       vid.addEventListener('canplaythrough', () => {

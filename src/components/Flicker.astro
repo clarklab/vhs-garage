@@ -6,9 +6,9 @@ interface Props {
 const { dark = '/images/bg-manchester-01-dark.webp', light = '/images/bg-manchester-01.webp' } = Astro.props;
 ---
 
-<div id="flicker-wrap" class="relative" style="min-width:100%;min-height:100vh;">
-  <img id="bg-dark" src={dark} alt="" class="w-full h-full block relative z-10" style="object-fit:cover;" />
-  <img id="bg-light" src={light} alt="" class="absolute inset-0 w-full h-full block z-10 transition-opacity duration-150" style="object-fit:cover;" />
+<div id="flicker-wrap" class="absolute inset-0 overflow-hidden">
+  <img id="bg-dark" src={dark} alt="" class="w-full h-full block relative z-10 object-cover" />
+  <img id="bg-light" src={light} alt="" class="absolute inset-0 w-full h-full block z-10 object-cover transition-opacity duration-150" />
   <slot />
 </div>
 
@@ -17,30 +17,22 @@ const { dark = '/images/bg-manchester-01-dark.webp', light = '/images/bg-manches
   const dark = document.getElementById('bg-dark');
   const light = document.getElementById('bg-light');
 
-  // --- Cover sizing: measure actual viewport, compute image cover dims ---
-  function sizeScene() {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+  // --- Compute where image pixels land on screen (cover math) ---
+  function positionOverlays() {
+    const vw = wrap.clientWidth;
+    const vh = wrap.clientHeight;
     const nw = dark.naturalWidth;
     const nh = dark.naturalHeight;
-    if (!nw || !nh) return;
+    if (!nw || !nh || !vw || !vh) return;
 
-    const imgRatio = nw / nh;
-    let w, h;
-    if (vw / vh > imgRatio) {
-      w = vw; h = vw / imgRatio;
-    } else {
-      h = vh; w = vh * imgRatio;
-    }
+    const scale = Math.max(vw / nw, vh / nh);
+    const offX = (vw - nw * scale) / 2;
+    const offY = (vh - nh * scale) / 2;
 
-    wrap.style.width = w + 'px';
-    wrap.style.height = h + 'px';
-    wrap.style.minWidth = '';
-    wrap.style.minHeight = '';
-
-    // Match the screen container to the real viewport
-    const screen = wrap.parentElement;
-    if (screen) screen.style.height = vh + 'px';
+    wrap.dispatchEvent(new CustomEvent('scene-sized', {
+      detail: { scale, offX, offY, imgW: nw, imgH: nh },
+      bubbles: true
+    }));
   }
 
   // --- Flicker animation ---
@@ -63,7 +55,7 @@ const { dark = '/images/bg-manchester-01-dark.webp', light = '/images/bg-manches
     ready++;
     if (ready >= 2) {
       startFlicker();
-      sizeScene();
+      positionOverlays();
     }
   }
 
@@ -72,10 +64,9 @@ const { dark = '/images/bg-manchester-01-dark.webp', light = '/images/bg-manches
     else img.addEventListener('load', onImageReady, { once: true });
   });
 
-  // Re-measure on resize, orientation, and fullscreen changes
-  window.addEventListener('resize', sizeScene);
-  document.addEventListener('fullscreenchange', () => setTimeout(sizeScene, 100));
+  // ResizeObserver catches ALL size changes: viewport, fullscreen, orientation, browser bar
+  new ResizeObserver(positionOverlays).observe(wrap);
 
-  // Also size on dark image load (for garage switching)
-  dark.addEventListener('load', sizeScene);
+  // Re-position on dark image load (for garage switching)
+  dark.addEventListener('load', positionOverlays);
 </script>

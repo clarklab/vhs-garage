@@ -1,0 +1,218 @@
+---
+import Base from '../../layouts/Base.astro';
+import Flicker from '../../components/Flicker.astro';
+import { GARAGES } from '../../data/garages.js';
+---
+
+<Base title="Calibrate" description="TV screen position calibration tool.">
+  <style>
+    #controls {
+      font-family: monospace;
+      font-size: 12px;
+    }
+    #controls input[type="range"] {
+      width: 100%;
+      accent-color: #e53935;
+    }
+    #controls input[type="number"] {
+      width: 70px;
+      background: black;
+      border: 1px solid rgba(255,255,255,0.3);
+      color: white;
+      padding: 2px 4px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    #tv-overlay {
+      border: 2px solid rgba(239, 68, 68, 0.6);
+      background: rgba(239, 68, 68, 0.15);
+    }
+  </style>
+
+  <!-- Scene -->
+  <div id="screen" class="fixed inset-0">
+    <Flicker dark={GARAGES[0].images.dark} light={GARAGES[0].images.light}>
+      <div id="tv-overlay" class="absolute z-20 aspect-[4/3] pointer-events-none"></div>
+    </Flicker>
+  </div>
+
+  <!-- Controls panel -->
+  <div id="controls" class="fixed bottom-0 left-0 right-0 z-40 bg-black/95 border-t border-white/20 p-4 text-white">
+    <div class="max-w-2xl mx-auto">
+      <!-- Garage selector -->
+      <div class="flex items-center gap-3 mb-3">
+        <label class="text-white/50 text-xs uppercase tracking-wider shrink-0">Garage</label>
+        <select id="garage-select" class="flex-1 bg-black border border-white/30 text-white text-xs p-1.5">
+          {GARAGES.map((g, i) => (
+            <option value={i}>{g.name}</option>
+          ))}
+        </select>
+        <button id="copy-btn" class="px-3 py-1.5 border border-white/30 text-white/60 hover:text-white hover:border-white/60 text-xs transition-colors">Copy JSON</button>
+      </div>
+
+      <!-- Sliders grid -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2">
+        <div>
+          <label class="text-white/40 text-[10px] uppercase tracking-wider block">Top %</label>
+          <div class="flex items-center gap-2">
+            <input type="range" id="s-top" min="0" max="100" step="0.1" />
+            <input type="number" id="n-top" step="0.1" />
+          </div>
+        </div>
+        <div>
+          <label class="text-white/40 text-[10px] uppercase tracking-wider block">Left %</label>
+          <div class="flex items-center gap-2">
+            <input type="range" id="s-left" min="0" max="100" step="0.1" />
+            <input type="number" id="n-left" step="0.1" />
+          </div>
+        </div>
+        <div>
+          <label class="text-white/40 text-[10px] uppercase tracking-wider block">Width %</label>
+          <div class="flex items-center gap-2">
+            <input type="range" id="s-width" min="1" max="100" step="0.1" />
+            <input type="number" id="n-width" step="0.1" />
+          </div>
+        </div>
+        <div>
+          <label class="text-white/40 text-[10px] uppercase tracking-wider block">Transform</label>
+          <input type="text" id="n-transform" value="" placeholder="e.g. rotate(2deg)"
+            class="w-full bg-black border border-white/30 text-white text-xs p-1.5 font-mono" />
+        </div>
+      </div>
+
+      <!-- JSON output -->
+      <pre id="json-output" class="mt-3 text-[10px] text-white/40 bg-black/50 border border-white/10 p-2 overflow-x-auto"></pre>
+
+      <p class="text-white/20 text-[10px] mt-2">Arrow keys: nudge top/left ±0.1 (shift: ±1) &nbsp; +/−: width ±0.1</p>
+    </div>
+  </div>
+
+  <script is:inline define:vars={{ GARAGES_JSON: JSON.stringify(GARAGES) }}>
+    const GARAGES = JSON.parse(GARAGES_JSON);
+
+    const state = { top: 0, left: 0, width: 0, transform: '' };
+    let sceneDetail = null;
+
+    const overlay = document.getElementById('tv-overlay');
+    const sTop = document.getElementById('s-top');
+    const sLeft = document.getElementById('s-left');
+    const sWidth = document.getElementById('s-width');
+    const nTop = document.getElementById('n-top');
+    const nLeft = document.getElementById('n-left');
+    const nWidth = document.getElementById('n-width');
+    const nTransform = document.getElementById('n-transform');
+    const jsonOutput = document.getElementById('json-output');
+    const garageSelect = document.getElementById('garage-select');
+
+    function loadGarage(idx) {
+      const g = GARAGES[idx];
+      document.getElementById('bg-dark').src = g.images.dark;
+      document.getElementById('bg-light').src = g.images.light;
+      state.top = g.screen.top;
+      state.left = g.screen.left;
+      state.width = g.screen.width;
+      state.transform = g.screen.transform || '';
+      syncControls();
+    }
+
+    function syncControls() {
+      sTop.value = nTop.value = state.top;
+      sLeft.value = nLeft.value = state.left;
+      sWidth.value = nWidth.value = state.width;
+      nTransform.value = state.transform;
+      updateOverlay();
+      updateJSON();
+    }
+
+    function updateOverlay() {
+      if (!sceneDetail) return;
+      const { scale, offX, offY, imgW, imgH } = sceneDetail;
+      const x = offX + (state.left / 100) * imgW * scale;
+      const y = offY + (state.top / 100) * imgH * scale;
+      const w = (state.width / 100) * imgW * scale;
+      overlay.style.left = x + 'px';
+      overlay.style.top = y + 'px';
+      overlay.style.width = w + 'px';
+      overlay.style.transform = state.transform;
+    }
+
+    function updateJSON() {
+      const obj = {
+        top: parseFloat(state.top),
+        left: parseFloat(state.left),
+        width: parseFloat(state.width),
+        transform: state.transform
+      };
+      jsonOutput.textContent = JSON.stringify(obj, null, 2);
+    }
+
+    // Listen for cover-math from Flicker
+    document.addEventListener('scene-sized', (e) => {
+      sceneDetail = e.detail;
+      updateOverlay();
+    });
+
+    // Wire up controls
+    function onSlider(slider, num, key) {
+      slider.addEventListener('input', () => {
+        state[key] = parseFloat(slider.value);
+        num.value = slider.value;
+        updateOverlay();
+        updateJSON();
+      });
+      num.addEventListener('input', () => {
+        state[key] = parseFloat(num.value);
+        slider.value = num.value;
+        updateOverlay();
+        updateJSON();
+      });
+    }
+    onSlider(sTop, nTop, 'top');
+    onSlider(sLeft, nLeft, 'left');
+    onSlider(sWidth, nWidth, 'width');
+
+    nTransform.addEventListener('input', () => {
+      state.transform = nTransform.value;
+      updateOverlay();
+      updateJSON();
+    });
+
+    garageSelect.addEventListener('change', () => {
+      loadGarage(parseInt(garageSelect.value));
+    });
+
+    document.getElementById('copy-btn').addEventListener('click', () => {
+      navigator.clipboard.writeText(jsonOutput.textContent).then(() => {
+        const btn = document.getElementById('copy-btn');
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy JSON', 1500);
+      });
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      const step = e.shiftKey ? 1 : 0.1;
+      let handled = true;
+      switch (e.key) {
+        case 'ArrowUp':    state.top = Math.max(0, parseFloat(state.top) - step); break;
+        case 'ArrowDown':  state.top = Math.min(100, parseFloat(state.top) + step); break;
+        case 'ArrowLeft':  state.left = Math.max(0, parseFloat(state.left) - step); break;
+        case 'ArrowRight': state.left = Math.min(100, parseFloat(state.left) + step); break;
+        case '=': case '+': state.width = Math.min(100, parseFloat(state.width) + step); break;
+        case '-':           state.width = Math.max(1, parseFloat(state.width) - step); break;
+        default: handled = false;
+      }
+      if (handled) {
+        e.preventDefault();
+        state.top = Math.round(state.top * 10) / 10;
+        state.left = Math.round(state.left * 10) / 10;
+        state.width = Math.round(state.width * 10) / 10;
+        syncControls();
+      }
+    });
+
+    // Init
+    loadGarage(0);
+  </script>
+</Base>
