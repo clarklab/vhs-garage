@@ -430,6 +430,8 @@ function wireRecordButton() {
       titleInput.readOnly = false;
       document.getElementById('preview-container').classList.remove('recording-active');
       document.getElementById('rec-overlay-timer').classList.add('hidden');
+      const legend = document.getElementById('preview-legend');
+      if (legend) legend.textContent = '░ Live ░';
       stopRecording();
       return;
     }
@@ -470,6 +472,8 @@ function wireRecordButton() {
     btn.querySelector('.rec-label').textContent = 'STOP';
     document.getElementById('preview-container').classList.add('recording-active');
     document.getElementById('rec-overlay-timer').classList.remove('hidden');
+    const legend = document.getElementById('preview-legend');
+    if (legend) legend.textContent = '░ Recording ░';
     resetSleeve();
 
     await startRecording(captureStream, directoryHandle, currentFilename, bitrate, videoFormat, {
@@ -838,6 +842,10 @@ function showPlaybackTab() {
   playback.classList.remove('hidden');
   deleteBtn.classList.remove('hidden');
 
+  // Update legend
+  const legend = document.getElementById('preview-legend');
+  if (legend) legend.textContent = '░ Last Recording ░';
+
   // Switch meter to playback audio
   pauseMeter();
   try {
@@ -864,6 +872,10 @@ function showLiveTab() {
   playback.classList.add('hidden');
   preview.classList.remove('hidden');
   deleteBtn.classList.add('hidden');
+
+  // Update legend
+  const legend = document.getElementById('preview-legend');
+  if (legend) legend.textContent = '░ Live ░';
 
   // Switch meter back to live capture stream
   pauseMeter();

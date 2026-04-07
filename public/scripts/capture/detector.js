@@ -5,7 +5,7 @@
 const INTERVAL_MS = 120;
 const CONSECUTIVE_REQUIRED = 5;    // ~600ms of all-pass before snap
 const STABILITY_THRESHOLD = 5;     // mean pixel diff between frames
-const MIN_CONTOUR_AREA_RATIO = 0.05; // contour must fill at least 5% of full frame
+const MIN_CONTOUR_AREA_RATIO = 0.15; // contour must fill at least 15% of frame (a real box held up)
 const SAMPLE_W = 300;
 const SAMPLE_H = 520;
 
@@ -114,19 +114,37 @@ function detectRectangle() {
       const contour = contours.get(i);
       const area = cv.contourArea(contour);
 
-      // Must fill a significant portion of the target zone
+      // Must fill a significant portion of the frame
       if (area < targetArea * MIN_CONTOUR_AREA_RATIO) continue;
 
-      // Approximate to polygon — is it a quadrilateral?
+      // Approximate to polygon — must be exactly 4 corners (quadrilateral)
       const approx = new cv.Mat();
       const peri = cv.arcLength(contour, true);
-      cv.approxPolyDP(contour, approx, 0.04 * peri, true);
+      cv.approxPolyDP(contour, approx, 0.03 * peri, true);
 
-      if (approx.rows >= 4 && approx.rows <= 6) {
-        // Found a roughly rectangular shape filling the target zone
-        found = true;
-        approx.delete();
-        break;
+      if (approx.rows === 4 && cv.isContourConvex(approx)) {
+        // Check that angles are roughly 90° (rectangle, not a random quad)
+        const pts = [];
+        for (let j = 0; j < 4; j++) {
+          pts.push({ x: approx.data32S[j * 2], y: approx.data32S[j * 2 + 1] });
+        }
+        const anglesOk = pts.every((_, j) => {
+          const a = pts[j];
+          const b = pts[(j + 1) % 4];
+          const c = pts[(j + 2) % 4];
+          const ab = { x: a.x - b.x, y: a.y - b.y };
+          const cb = { x: c.x - b.x, y: c.y - b.y };
+          const dot = ab.x * cb.x + ab.y * cb.y;
+          const cross = Math.abs(ab.x * cb.y - ab.y * cb.x);
+          const angle = Math.atan2(cross, Math.abs(dot)) * (180 / Math.PI);
+          return angle > 60 && angle < 120; // within 30° of a right angle
+        });
+
+        if (anglesOk) {
+          found = true;
+          approx.delete();
+          break;
+        }
       }
       approx.delete();
     }

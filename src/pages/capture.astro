@@ -99,51 +99,54 @@ import Base from '../layouts/Base.astro';
 
       <!-- Left: Main Capture -->
       <div class="flex flex-col min-h-0">
-        <!-- Preview tabs -->
-        <div id="preview-tabs" class="flex gap-0 text-[10px] uppercase tracking-wider mb-0">
-          <button id="tab-live" class="px-3 py-1 border border-white/20 border-b-0 text-white/70 bg-[#141214]">Live</button>
-          <button id="tab-playback" class="hidden px-3 py-1 border border-white/10 border-b-0 text-white/30 bg-black hover:text-white/50">Last Recording</button>
-        </div>
-        <!-- Preview -->
-        <div id="preview-container" class="relative flex-1 bg-[#141214] border border-white/10 overflow-hidden cursor-pointer">
-          <video id="preview" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
-          <video id="playback" controls class="hidden w-full h-full object-contain bg-black"></video>
-          <div class="scanlines absolute inset-0"></div>
-          <div id="rec-overlay-timer" class="hidden absolute top-3 right-4 text-red-500 tabular-nums z-10" style="text-shadow: 0 0 10px rgba(229,57,53,0.7), 0 0 20px rgba(229,57,53,0.4);">
-            00:00:00
+        <fieldset class="flex-1 flex flex-col min-h-0 border border-white/20 p-3">
+          <legend id="preview-legend" class="text-white/70 text-[11px] tracking-wider px-2">░ Live ░</legend>
+          <!-- Preview tabs -->
+          <div id="preview-tabs" class="flex gap-0 text-[10px] uppercase tracking-wider mb-0">
+            <button id="tab-live" class="px-3 py-1 border border-white/20 border-b-0 text-white/70 bg-[#141214]">Live</button>
+            <button id="tab-playback" class="hidden px-3 py-1 border border-white/10 border-b-0 text-white/30 bg-black hover:text-white/50">Last Recording</button>
           </div>
-          <!-- Shown when no device selected -->
-          <div id="no-signal" class="absolute inset-0 flex items-center justify-center">
-            <div class="text-center">
-              <p class="text-white/50 text-sm mb-2">No capture device</p>
-              <p class="text-white/70 text-xs">Click to select</p>
+          <!-- Preview -->
+          <div id="preview-container" class="relative flex-1 bg-[#141214] border border-white/10 overflow-hidden cursor-pointer">
+            <video id="preview" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
+            <video id="playback" controls class="hidden w-full h-full object-contain bg-black"></video>
+            <div class="scanlines absolute inset-0"></div>
+            <div id="rec-overlay-timer" class="hidden absolute top-3 right-4 text-red-500 tabular-nums z-10" style="text-shadow: 0 0 10px rgba(229,57,53,0.7), 0 0 20px rgba(229,57,53,0.4);">
+              00:00:00
+            </div>
+            <!-- Shown when no device selected -->
+            <div id="no-signal" class="absolute inset-0 flex items-center justify-center">
+              <div class="text-center">
+                <p class="text-white/50 text-sm mb-2">No capture device</p>
+                <p class="text-white/70 text-xs">Click to select</p>
+              </div>
+            </div>
+            <!-- Inline device selector (hidden by default) -->
+            <div id="device-selector" class="hidden absolute inset-0 bg-black/90 flex items-center justify-center">
+              <div class="w-64">
+                <p class="text-sm mb-3">Select capture device</p>
+                <select id="select-video" class="w-full bg-black border border-white/30 text-white text-xs p-2 mb-2"></select>
+                <select id="select-audio" class="w-full bg-black border border-white/30 text-white text-xs p-2 mb-3"></select>
+                <button id="select-video-ok" class="w-full py-2 border border-white/30 text-white/60 hover:text-white text-xs">Connect</button>
+              </div>
             </div>
           </div>
-          <!-- Inline device selector (hidden by default) -->
-          <div id="device-selector" class="hidden absolute inset-0 bg-black/90 flex items-center justify-center">
-            <div class="w-64">
-              <p class="text-sm mb-3">Select capture device</p>
-              <select id="select-video" class="w-full bg-black border border-white/30 text-white text-xs p-2 mb-2"></select>
-              <select id="select-audio" class="w-full bg-black border border-white/30 text-white text-xs p-2 mb-3"></select>
-              <button id="select-video-ok" class="w-full py-2 border border-white/30 text-white/60 hover:text-white text-xs">Connect</button>
-            </div>
+
+          <!-- Audio spectrum meter -->
+          <canvas id="audio-meter" class="w-full h-6 mt-0" style="image-rendering: pixelated;"></canvas>
+
+          <!-- Controls below preview -->
+          <div class="flex items-center gap-3 py-2">
+            <button id="rec-btn" class="rec-btn shrink-0" title="Record">
+              <span class="rec-dot"></span><span class="rec-label">REC</span>
+            </button>
+            <span id="rec-timer" class="text-lg tabular-nums">00:00:00</span>
+            <span id="rec-size" class="text-xs text-white/40">0.0 MB</span>
+            <div class="flex-1"></div>
+            <button id="delete-recording-btn" class="hidden text-red-500 hover:text-red-400 transition-colors text-xs">Delete</button>
+            <button id="to-library-btn" class="text-white/60 hover:text-white/80 transition-colors text-xs">Library →</button>
           </div>
-        </div>
-
-        <!-- Audio spectrum meter -->
-        <canvas id="audio-meter" class="w-full h-6 mt-0" style="image-rendering: pixelated;"></canvas>
-
-        <!-- Controls below preview -->
-        <div class="flex items-center gap-3 py-2">
-          <button id="rec-btn" class="rec-btn shrink-0" title="Record">
-            <span class="rec-dot"></span><span class="rec-label">REC</span>
-          </button>
-          <span id="rec-timer" class="text-lg tabular-nums">00:00:00</span>
-          <span id="rec-size" class="text-xs text-white/40">0.0 MB</span>
-          <div class="flex-1"></div>
-          <button id="delete-recording-btn" class="hidden text-red-500 hover:text-red-400 transition-colors text-xs">Delete</button>
-          <button id="to-library-btn" class="text-white/60 hover:text-white/80 transition-colors text-xs">Library →</button>
-        </div>
+        </fieldset>
       </div>
 
       <!-- Columns 2+3: stacked at md, side-by-side at lg -->
@@ -154,9 +157,17 @@ import Base from '../layouts/Base.astro';
           <fieldset class="border border-white/20 p-3">
             <legend class="text-white/70 text-[11px] tracking-wider px-2">░ VHS Sleeve ░</legend>
 
-            <!-- Capture view: webcam + shutter -->
+            <!-- Front capture/preview -->
+            <div id="sleeve-front-section">
+              <p class="text-white/40 text-[10px] uppercase tracking-widest mb-1">Front</p>
+              <div id="sleeve-front-preview" class="hidden aspect-[4/3] bg-[#141214] border border-white/10 mb-2 overflow-hidden">
+                <span class="flex items-center justify-center w-full h-full text-white/10 text-[10px]">--</span>
+              </div>
+            </div>
+
+            <!-- Webcam + capture view -->
             <div id="sleeve-capture-view">
-              <div id="webcam-container" class="relative bg-[#141214] border border-white/10 aspect-[4/3] overflow-hidden cursor-pointer mb-3">
+              <div id="webcam-container" class="relative bg-[#141214] border border-white/10 aspect-[4/3] overflow-hidden cursor-pointer mb-2">
                 <video id="sleeve-webcam" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
                 <!-- Detection status -->
                 <div id="detect-hud" class="absolute top-2 left-2 right-2 flex items-center gap-2 pointer-events-none z-10">
@@ -197,18 +208,16 @@ import Base from '../layouts/Base.astro';
               </button>
             </div>
 
-            <!-- Review view: side-by-side previews + retake -->
-            <div id="sleeve-review-view" class="hidden">
-              <div class="grid grid-cols-2 gap-2 mb-2">
-                <div class="text-center">
-                  <div id="sleeve-front-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-[10px] mb-1">--</div>
-                  <span id="sleeve-front-status" class="text-[10px] text-white/50">Front</span>
-                </div>
-                <div class="text-center">
-                  <div id="sleeve-back-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 flex items-center justify-center text-white/10 text-[10px] mb-1">--</div>
-                  <span id="sleeve-back-status" class="text-[10px] text-white/50">Back</span>
-                </div>
+            <!-- Back preview (shown after back captured) -->
+            <div id="sleeve-back-section" class="hidden" style="margin-top:0.5rem;">
+              <p class="text-white/40 text-[10px] uppercase tracking-widest mb-1">Back</p>
+              <div id="sleeve-back-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 mb-2 overflow-hidden">
+                <span class="flex items-center justify-center w-full h-full text-white/10 text-[10px]">--</span>
               </div>
+            </div>
+
+            <!-- Retake (shown when both captured) -->
+            <div id="sleeve-review-view" class="hidden">
               <button id="sleeve-retake-btn" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs">Retake</button>
             </div>
           </fieldset>

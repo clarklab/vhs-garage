@@ -53,19 +53,32 @@ export function resetSleeve() {
   frontData = null;
   backData = null;
 
-  // Show capture view, hide review view
+  // Reset UI — show webcam for front capture
   const captureView = document.getElementById('sleeve-capture-view');
   const reviewView = document.getElementById('sleeve-review-view');
+  const frontSection = document.getElementById('sleeve-front-section');
+  const backSection = document.getElementById('sleeve-back-section');
+
   if (captureView) captureView.classList.remove('hidden');
   if (reviewView) reviewView.classList.add('hidden');
+
+  // Reset front preview
+  const frontPreview = document.getElementById('sleeve-front-preview');
+  frontPreview.innerHTML = '<span class="flex items-center justify-center w-full h-full text-white/10 text-[10px]">--</span>';
+  frontPreview.classList.add('hidden');
+
+  // Hide back section
+  if (backSection) backSection.classList.add('hidden');
+  const backPreview = document.getElementById('sleeve-back-preview');
+  backPreview.innerHTML = '<span class="flex items-center justify-center w-full h-full text-white/10 text-[10px]">--</span>';
 
   const label = document.getElementById('sleeve-capture-label');
   if (label) label.textContent = 'Capture Front';
 
-  document.getElementById('sleeve-front-preview').innerHTML = '<span class="text-white/10 text-[10px]">--</span>';
-  document.getElementById('sleeve-back-preview').innerHTML = '<span class="text-white/10 text-[10px]">--</span>';
-  document.getElementById('sleeve-front-status').textContent = 'Front';
-  document.getElementById('sleeve-back-status').textContent = 'Back';
+  // Move webcam section above (front section has no preview yet)
+  if (frontSection && captureView) {
+    frontSection.parentNode.insertBefore(captureView, frontSection.nextSibling);
+  }
 }
 
 export async function initWebcam(deviceId) {
@@ -103,26 +116,41 @@ export function capturePhoto() {
 export function handleSleeveCapture() {
   const captureView = document.getElementById('sleeve-capture-view');
   const reviewView = document.getElementById('sleeve-review-view');
+  const frontSection = document.getElementById('sleeve-front-section');
+  const backSection = document.getElementById('sleeve-back-section');
   const label = document.getElementById('sleeve-capture-label');
 
   if (sleeveState === 'idle') {
     // Capture front photo
     frontData = capturePhoto();
-    document.getElementById('sleeve-front-preview').innerHTML = `<img src="${frontData}" class="w-full h-full object-contain" alt="Front">`;
-    document.getElementById('sleeve-front-status').textContent = 'Front \u2713';
+
+    // Show front preview above webcam
+    const frontPreview = document.getElementById('sleeve-front-preview');
+    frontPreview.innerHTML = `<img src="${frontData}" class="w-full h-full object-contain" alt="Front">`;
+    frontPreview.classList.remove('hidden');
+
     sleeveState = 'front_captured';
-    label.textContent = 'Flip & Capture Back';
+    label.textContent = 'Capture Back';
+
+    // Move webcam below front preview for back capture
+    if (backSection) {
+      frontSection.parentNode.insertBefore(captureView, backSection);
+    }
+
     return { captured: 'front', data: frontData };
   } else if (sleeveState === 'front_captured') {
-    // Capture back photo, then switch to review view
+    // Capture back photo
     backData = capturePhoto();
-    document.getElementById('sleeve-back-preview').innerHTML = `<img src="${backData}" class="w-full h-full object-contain" alt="Back">`;
-    document.getElementById('sleeve-back-status').textContent = 'Back \u2713';
-    sleeveState = 'done';
 
-    // Switch to review view
+    // Show back preview, hide webcam, show retake
+    const backPreview = document.getElementById('sleeve-back-preview');
+    backPreview.innerHTML = `<img src="${backData}" class="w-full h-full object-contain" alt="Back">`;
+    backSection.classList.remove('hidden');
+
     captureView.classList.add('hidden');
     reviewView.classList.remove('hidden');
+    sleeveState = 'done';
+
     return { captured: 'back', data: backData };
   }
   return null;
