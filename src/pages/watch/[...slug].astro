@@ -69,6 +69,7 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
       <div id="yt-player-wrap" class="absolute z-0 opacity-0 transition-opacity duration-500">
         <div id="yt-player"></div>
       </div>
+      <video id="yt-transition" src="/video/channel-change.mp4" preload="auto" playsinline class="absolute z-10 hidden object-cover" style="aspect-ratio:4/3;"></video>
     </Flicker>
   </div>
 
@@ -160,6 +161,11 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
           <button id="share-copy" class="text-xs text-white/80 hover:text-white shrink-0 px-2 py-1 bg-white/10 rounded transition-colors">Copy</button>
         </div>
       </div>
+      <!-- Garage name + credit -->
+      <div class="px-4 pb-3">
+        <p id="share-name" class="text-xs text-white/70"></p>
+        <p id="share-credit" class="text-[9px] text-white/30 mt-0.5"></p>
+      </div>
       <!-- Native share (if available) -->
       <div class="px-4 pb-4">
         <button id="share-native" class="hidden w-full py-2.5 bg-white/10 hover:bg-white/15 rounded-lg text-xs text-white/70 transition-colors">Share via...</button>
@@ -187,7 +193,7 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
       const y = offY + (screenCfg.top / 100) * imgH * scale;
       const w = (screenCfg.width / 100) * imgW * scale;
 
-      ['yt-power', 'yt-loader', 'yt-player-wrap'].forEach(id => {
+      ['yt-power', 'yt-loader', 'yt-player-wrap', 'yt-transition'].forEach(id => {
         const el = document.getElementById(id);
         el.style.left = x + 'px';
         el.style.top = y + 'px';
@@ -319,11 +325,12 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
       },
 
       onError() {
-        // Skip errored videos
-        App.playRandom();
+        // Skip errored videos — no transition on errors, just skip
+        App.skipToRandom();
       },
 
-      playRandom() {
+      // Direct skip without transition (for errors)
+      skipToRandom() {
         if (!App.player || !App.playlist.length) return;
         let idx;
         do {
@@ -332,6 +339,39 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
         App.currentIndex = idx;
         App.player.loadVideoById(App.playlist[idx]);
       },
+
+      // Play transition clip, then switch to next video
+      playRandom() {
+        if (!App.player || !App.playlist.length || App.transitioning) return;
+        App.transitioning = true;
+
+        const trans = document.getElementById('yt-transition');
+        trans.currentTime = 0;
+        trans.volume = 0.5;
+        trans.classList.remove('hidden');
+        trans.play().catch(() => {});
+
+        // Pick the next video while transition plays
+        let idx;
+        do {
+          idx = Math.floor(Math.random() * App.playlist.length);
+        } while (idx === App.currentIndex && App.playlist.length > 1);
+        App.currentIndex = idx;
+        App.player.loadVideoById(App.playlist[idx]);
+
+        trans.addEventListener('ended', () => {
+          trans.classList.add('hidden');
+          App.transitioning = false;
+        }, { once: true });
+
+        // Safety fallback if transition doesn't end
+        setTimeout(() => {
+          trans.classList.add('hidden');
+          App.transitioning = false;
+        }, 3000);
+      },
+
+      transitioning: false,
 
       startClipTimer() {
         clearTimeout(App.clipTimeout);
@@ -457,8 +497,19 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
 
     // --- UI Wiring ---
     document.addEventListener('DOMContentLoaded', () => {
+      // Click screen to skip to next video (only when playing)
+      document.getElementById('screen').addEventListener('click', () => {
+        if (App.player && typeof App.player.getPlayerState === 'function') {
+          const state = App.player.getPlayerState();
+          if (state === YT.PlayerState.PLAYING || state === YT.PlayerState.PAUSED || state === YT.PlayerState.BUFFERING) {
+            App.playRandom();
+          }
+        }
+      });
+
       // Power on — user click gives us gesture for unmuted autoplay
-      document.getElementById('yt-power').addEventListener('click', () => {
+      document.getElementById('yt-power').addEventListener('click', (e) => {
+        e.stopPropagation();
         document.getElementById('yt-power').classList.add('hidden');
         document.getElementById('yt-loader').classList.remove('hidden');
         if (App.apiReady) {
@@ -635,6 +686,10 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
         const url = window.location.origin + '/watch/' + g.id;
         shareUrl.textContent = url;
         shareUnfurl.src = '/images/unfurls/unfurl-' + g.id + '.png';
+        document.getElementById('share-name').textContent = g.name;
+        const creditEl = document.getElementById('share-credit');
+        creditEl.innerHTML = g.credit || '';
+        creditEl.style.display = g.credit ? '' : 'none';
 
         // Show native share button if available
         if (navigator.share) shareNative.classList.remove('hidden');
