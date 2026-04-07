@@ -68,6 +68,34 @@ export async function exportCatalog(directoryHandle) {
   await writable.close();
 }
 
+function clipToYouTubeText(clip) {
+  const lines = [];
+  if (clip.description) lines.push(clip.description);
+  lines.push('');
+  lines.push('Home video captured from VHS tape.');
+  lines.push('');
+  if (clip.year) lines.push('Year: ' + clip.year);
+  if (clip.tape) lines.push('Tape: ' + clip.tape);
+  if (clip.distributor) lines.push('Distributor: ' + clip.distributor);
+  if (clip.tapeLength) lines.push('Tape Length: ' + clip.tapeLength);
+  if (clip.recordingSpeed) lines.push('Recording Speed: ' + clip.recordingSpeed);
+  if (clip.condition) lines.push('Condition: ' + clip.condition);
+  if (clip.tags) lines.push('\nTags: ' + clip.tags);
+  if (clip.cassetteNotes) lines.push('\n' + clip.cassetteNotes);
+  lines.push('');
+  lines.push('Captured with VHS Garage');
+  lines.push('https://vhsgarage.com');
+  return 'TITLE: ' + (clip.title || 'Untitled') + '\n\n---\n\n' + lines.join('\n');
+}
+
+function clipToJSON(clip) {
+  const obj = { ...clip };
+  delete obj.thumbnail;
+  delete obj.sleeveFront;
+  delete obj.sleeveBack;
+  return JSON.stringify(obj, null, 2);
+}
+
 export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen) {
   if (!clips.length) {
     container.innerHTML = '';
@@ -85,13 +113,42 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen) {
       <p class="text-gray-500">${new Date(clip.date).toLocaleDateString()} · ${formatDuration(clip.duration)} · ${formatLibSize(clip.fileSize)}</p>
       <p class="text-gray-600 truncate text-[10px] mt-1">${clip.filename || ''}</p>
       ${clip.sleeveFront ? '<p class="text-gray-500 mt-1">Sleeve: Front' + (clip.sleeveBack ? ' + Back' : '') + '</p>' : ''}
-      <button class="delete-clip text-red-400/50 hover:text-red-400 mt-2 transition-colors" data-id="${clip.id}">Delete</button>
+      <div class="flex gap-3 mt-2">
+        <button class="copy-yt text-white/40 hover:text-white/70 transition-colors" data-id="${clip.id}" title="Copy YouTube text">YT ░</button>
+        <button class="copy-json text-white/40 hover:text-white/70 transition-colors" data-id="${clip.id}" title="Copy JSON">JSON ░</button>
+        <span class="flex-1"></span>
+        <button class="delete-clip text-red-400/50 hover:text-red-400 transition-colors" data-id="${clip.id}">Delete</button>
+      </div>
     </div>
   `).join('');
 
   container.querySelectorAll('.open-clip').forEach(el => {
     el.addEventListener('click', () => {
       if (onOpen) onOpen(el.dataset.id, el.dataset.filename);
+    });
+  });
+
+  container.querySelectorAll('.copy-yt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const clip = clips.find(c => c.id === btn.dataset.id);
+      if (clip) {
+        navigator.clipboard.writeText(clipToYouTubeText(clip)).then(() => {
+          btn.textContent = 'Copied!';
+          setTimeout(() => btn.textContent = 'YT ░', 1500);
+        });
+      }
+    });
+  });
+
+  container.querySelectorAll('.copy-json').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const clip = clips.find(c => c.id === btn.dataset.id);
+      if (clip) {
+        navigator.clipboard.writeText(clipToJSON(clip)).then(() => {
+          btn.textContent = 'Copied!';
+          setTimeout(() => btn.textContent = 'JSON ░', 1500);
+        });
+      }
     });
   });
 

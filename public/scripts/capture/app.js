@@ -187,6 +187,57 @@ function wireWebcamSelector() {
   });
 }
 
+// --- Sidecar file saving ---
+
+function generateYouTubeText(entry) {
+  const lines = [];
+  if (entry.description) lines.push(entry.description);
+  lines.push('');
+  lines.push('Home video captured from VHS tape.');
+  lines.push('');
+  if (entry.year) lines.push('Year: ' + entry.year);
+  if (entry.tape) lines.push('Tape: ' + entry.tape);
+  if (entry.distributor) lines.push('Distributor: ' + entry.distributor);
+  if (entry.tapeLength) lines.push('Tape Length: ' + entry.tapeLength);
+  if (entry.recordingSpeed) lines.push('Recording Speed: ' + entry.recordingSpeed);
+  if (entry.condition) lines.push('Condition: ' + entry.condition);
+  if (entry.tags) lines.push('\nTags: ' + entry.tags);
+  if (entry.cassetteNotes) lines.push('\n' + entry.cassetteNotes);
+  lines.push('');
+  lines.push('Captured with VHS Garage');
+  lines.push('https://vhsgarage.com');
+  return lines.join('\n');
+}
+
+async function saveSidecarFiles(dirHandle, basename, entry) {
+  if (!dirHandle) return;
+
+  // Strip sleeve image data from JSON (too large for sidecar)
+  const jsonEntry = { ...entry };
+  delete jsonEntry.thumbnail;
+  delete jsonEntry.sleeveFront;
+  delete jsonEntry.sleeveBack;
+
+  // Save JSON sidecar
+  try {
+    const jsonHandle = await dirHandle.getFileHandle(basename + '.json', { create: true });
+    const w1 = await jsonHandle.createWritable();
+    await w1.write(JSON.stringify(jsonEntry, null, 2));
+    await w1.close();
+  } catch (e) { console.warn('Could not save JSON sidecar:', e); }
+
+  // Save YouTube plaintext
+  try {
+    const ytTitle = entry.title || 'Untitled';
+    const ytBody = generateYouTubeText(entry);
+    const ytText = 'TITLE: ' + ytTitle + '\n\n---\n\n' + ytBody;
+    const txtHandle = await dirHandle.getFileHandle(basename + '_youtube.txt', { create: true });
+    const w2 = await txtHandle.createWritable();
+    await w2.write(ytText);
+    await w2.close();
+  } catch (e) { console.warn('Could not save YouTube text:', e); }
+}
+
 // --- Sleeve capture ---
 
 function wireSleeveCapture() {
@@ -247,6 +298,10 @@ async function analyzeSleevePhoto(imageData) {
       if (info.tape) document.getElementById('clip-tape').value = info.tape;
       if (info.year) document.getElementById('clip-year').value = info.year;
       if (info.tags) document.getElementById('clip-tags').value = info.tags;
+      if (info.distributor) document.getElementById('clip-distributor').value = info.distributor;
+      if (info.tapeLength) document.getElementById('clip-tape-length').value = info.tapeLength;
+      if (info.recordingSpeed) document.getElementById('clip-speed').value = info.recordingSpeed;
+      if (info.condition) document.getElementById('clip-condition').value = info.condition;
       if (info.cassetteNotes) document.getElementById('clip-notes').value = info.cassetteNotes;
     }
   } catch (e) {
@@ -335,6 +390,10 @@ function wireRecordButton() {
         const tags = document.getElementById('clip-tags')?.value || '';
         const tape = document.getElementById('clip-tape')?.value || '';
         const notes = document.getElementById('clip-notes')?.value || '';
+        const distributor = document.getElementById('clip-distributor')?.value || '';
+        const tapeLength = document.getElementById('clip-tape-length')?.value || '';
+        const speed = document.getElementById('clip-speed')?.value || '';
+        const condition = document.getElementById('clip-condition')?.value || '';
 
         const entry = createClipEntry(title || 'Untitled', currentFilename, duration, fileSize, bitrate);
         entry.thumbnail = thumbnail;
@@ -343,6 +402,10 @@ function wireRecordButton() {
         entry.tags = tags;
         entry.tape = tape;
         entry.cassetteNotes = notes;
+        entry.distributor = distributor;
+        entry.tapeLength = tapeLength;
+        entry.recordingSpeed = speed;
+        entry.condition = condition;
 
         // Attach sleeve data
         const sleeveData = getSleeveData();
@@ -353,6 +416,9 @@ function wireRecordButton() {
 
         // Save sleeve photos to disk if captured
         saveSleevePhotos(directoryHandle, basename).catch(() => {});
+
+        // Save sidecar JSON + YouTube plaintext to disk
+        saveSidecarFiles(directoryHandle, basename, entry).catch(() => {});
 
         // Create blob URL from the recorded file for playback
         try {
@@ -599,9 +665,27 @@ function wirePlaybackTabs() {
   tabLive.addEventListener('click', () => showLiveTab());
   tabPlayback.addEventListener('click', () => showPlaybackTab());
 
+  let deleteConfirmPending = false;
   deleteBtn.addEventListener('click', async () => {
     if (!lastClipId) return;
-    if (!confirm('Delete this recording? The file and catalog entry will be removed.')) return;
+
+    // Two-click confirm: first click shows "ARE YOU SURE?", second click deletes
+    if (!deleteConfirmPending) {
+      deleteConfirmPending = true;
+      deleteBtn.textContent = 'ARE YOU SURE?';
+      deleteBtn.classList.add('text-red-400');
+      // Reset after 3 seconds if not confirmed
+      setTimeout(() => {
+        if (deleteConfirmPending) {
+          deleteConfirmPending = false;
+          deleteBtn.textContent = 'Delete';
+          deleteBtn.classList.remove('text-red-400');
+        }
+      }, 3000);
+      return;
+    }
+
+    deleteConfirmPending = false;
 
     // Remove from catalog
     deleteClip(lastClipId);
@@ -616,7 +700,7 @@ function wirePlaybackTabs() {
       console.warn('Could not delete file:', err);
     }
 
-    // Clean up playback
+    // Clean up playback — but do NOT clear form fields
     const playbackVideo = document.getElementById('playback');
     playbackVideo.src = '';
     if (playbackBlobUrl) {
@@ -628,6 +712,8 @@ function wirePlaybackTabs() {
     showLiveTab();
     document.getElementById('tab-playback').classList.add('hidden');
     deleteBtn.classList.add('hidden');
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.classList.remove('text-red-400');
   });
 }
 

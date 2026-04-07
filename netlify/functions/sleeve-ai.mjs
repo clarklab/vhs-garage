@@ -36,7 +36,11 @@ Extract the following information from the image and return ONLY valid JSON with
   "tape": "The title of the movie, show, or content on this VHS tape",
   "year": "The release year if visible, otherwise your best estimate",
   "tags": "Comma-separated relevant tags (genre, era, format, studio, etc.)",
-  "cassetteNotes": "Two parts: (1) A brief 1-2 sentence summary of what this movie/show is about. (2) Anything unique about THIS specific VHS release — special edition, director's cut, widescreen, rental copy stickers, screener markings, EP/SP/SLP recording speed, distributor/studio label, ex-library, clamshell case, or any other notable physical details you can spot. Separate the summary and the release details with a line break."
+  "distributor": "The distributor or studio label visible on the sleeve (e.g., Warner Home Video, Paramount, Sony, etc.). Empty string if not visible.",
+  "tapeLength": "Tape length if visible (e.g., T-120, T-160, T-60). Empty string if not visible.",
+  "recordingSpeed": "Recording speed if indicated (SP, LP, EP, SLP). Empty string if not visible.",
+  "condition": "Estimate tape condition from sleeve appearance: Excellent, Good, Fair, or Poor. Empty string if unclear.",
+  "cassetteNotes": "Two parts: (1) A brief 1-2 sentence summary of what this movie/show is about. (2) Anything unique about THIS specific VHS release — special edition, director's cut, widescreen, rental copy stickers, screener markings, ex-library, clamshell case, or any other notable physical details you can spot. Separate the summary and the release details with a line break."
 }
 
 If you cannot determine a field, use an empty string. Return ONLY the JSON object, no markdown formatting.`;
