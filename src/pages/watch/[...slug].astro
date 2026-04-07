@@ -1,10 +1,25 @@
 ---
-import Base from '../layouts/Base.astro';
-import Flicker from '../components/Flicker.astro';
-import { GARAGES } from '../data/garages.js';
+import Base from '../../layouts/Base.astro';
+import Flicker from '../../components/Flicker.astro';
+import { GARAGES } from '../../data/garages.js';
+
+export function getStaticPaths() {
+  return [
+    { params: { slug: undefined } },
+    ...GARAGES.map(g => ({ params: { slug: g.id } })),
+  ];
+}
+
+const { slug } = Astro.params;
+const initialIdx = slug ? GARAGES.findIndex(g => g.id === slug) : 0;
+const garageIdx = initialIdx >= 0 ? initialIdx : 0;
 ---
 
-<Base title="Watch" description="A VHS screen saver. Random clips from the garage.">
+<Base
+  title={`Watch — ${GARAGES[garageIdx].name}`}
+  description={`Watch random VHS clips in ${GARAGES[garageIdx].name}. A VHS screen saver.`}
+  ogImage={`https://vhsgarage.com/images/unfurls/unfurl-${GARAGES[garageIdx].id}.png`}
+>
   <Fragment slot="head">
     <script is:inline src="https://www.youtube.com/iframe_api"></script>
   </Fragment>
@@ -44,7 +59,7 @@ import { GARAGES } from '../data/garages.js';
 
   <!-- Screen container — fixed inset-0 fills actual visible viewport, no CSS viewport units -->
   <div id="screen" class="fixed inset-0">
-    <Flicker dark={GARAGES[0].images.dark} light={GARAGES[0].images.light}>
+    <Flicker dark={GARAGES[garageIdx].images.dark} light={GARAGES[garageIdx].images.light}>
       <div id="yt-power" class="absolute z-20 aspect-[4/3] flex items-center justify-center cursor-pointer group opacity-0">
         <svg class="w-[15%] text-red-500 group-hover:text-red-400 transition-colors drop-shadow-[0_0_10px_rgba(239,68,68,0.7)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M12 2v6" /><path d="M16.24 5.76a8 8 0 1 1-8.48 0" />
@@ -61,11 +76,11 @@ import { GARAGES } from '../data/garages.js';
   <div id="corner-ui" class="fixed inset-0 z-30 pointer-events-none transition-opacity duration-300">
     <!-- Top-left: Garage -->
     <div class="absolute top-4 left-4 pointer-events-auto">
-      <button id="garage-sel-btn" class="panel-btn text-white/40 text-xs">▓ <span id="garage-name">{GARAGES[0].name}</span></button>
+      <button id="garage-sel-btn" class="panel-btn text-white/40 text-xs">▓ <span id="garage-name">{GARAGES[garageIdx].name}</span></button>
       <div id="garage-panel" class="hidden mt-2 bg-black/90 border border-white/20 p-3 w-56 text-xs">
         <p class="text-white/60 mb-2">Garage</p>
         {GARAGES.map((g, i) => (
-          <button data-garage-idx={i} class:list={["garage-opt w-full text-left p-2 border mb-1 transition-colors", i === 0 ? "text-white/80 border-white/30 bg-white/10" : "text-white/50 border-white/15 hover:border-white/30"]}>
+          <button data-garage-idx={i} class:list={["garage-opt w-full text-left p-2 border mb-1 transition-colors", i === garageIdx ? "text-white/80 border-white/30 bg-white/10" : "text-white/50 border-white/15 hover:border-white/30"]}>
             <span>{g.name}</span>
             {g.credit && <span class="block text-[9px] text-white/30 mt-0.5" set:html={g.credit} />}
           </button>
@@ -124,12 +139,10 @@ import { GARAGES } from '../data/garages.js';
     <p class="text-white/30 text-sm">░ paused ░ click to resume</p>
   </div>
 
-  <script is:inline define:vars={{ GARAGES_JSON: JSON.stringify(GARAGES) }}>
+  <script is:inline define:vars={{ GARAGES_JSON: JSON.stringify(GARAGES), INITIAL_GARAGE_IDX: garageIdx }}>
     const GARAGES = JSON.parse(GARAGES_JSON);
-    const DEFAULT_CHANNEL_ID = GARAGES[0].channelId;
-
-    // --- Scene positioning: compute pixel positions from cover math ---
-    let currentGarageIdx = 0;
+    let currentGarageIdx = INITIAL_GARAGE_IDX;
+    const DEFAULT_CHANNEL_ID = GARAGES[currentGarageIdx].channelId;
 
     function placeTV(detail, screenCfg) {
       const { scale, offX, offY, imgW, imgH } = detail;
@@ -197,7 +210,7 @@ import { GARAGES } from '../data/garages.js';
       sleepTimeout: null,
       clipTimeout: null,
       channelId: '',
-      channelName: GARAGES[0].channel,
+      channelName: GARAGES[currentGarageIdx].channel,
 
       loadSettings() {
         try {
@@ -474,6 +487,9 @@ import { GARAGES } from '../data/garages.js';
           });
           btn.classList.remove('text-white/50', 'border-white/15');
           btn.classList.add('text-white/80', 'border-white/30', 'bg-white/10');
+
+          // Update URL
+          history.pushState(null, '', '/watch/' + g.id);
 
           document.getElementById('garage-panel').classList.add('hidden');
         });
