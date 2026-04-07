@@ -35,6 +35,7 @@ function setState(state) {
 }
 
 export function startDetection(video, rect, onSnap, onState) {
+  console.log('[detector] startDetection', { videoW: video.videoWidth, videoH: video.videoHeight, rect });
   videoEl = video;
   targetRect = rect;
   onSnapCallback = onSnap;
@@ -105,8 +106,8 @@ function loop(timestamp) {
   const stableOk = stability < STABILITY_THRESHOLD;
   const sharpOk = sharpness > SHARPNESS_THRESHOLD;
 
-  // Debug (uncomment to tune thresholds):
-  // console.log(`edge:${edgeDensity.toFixed(3)} stable:${stability.toFixed(1)} sharp:${sharpness.toFixed(0)} pass:${presenceOk&&stableOk&&sharpOk}`);
+  // Debug — tune thresholds with these values
+  console.log(`edge:${edgeDensity.toFixed(3)} stable:${stability.toFixed(1)} sharp:${sharpness.toFixed(0)} | presence:${presenceOk} stable:${stableOk} sharp:${sharpOk}`);
 
   if (presenceOk && stableOk && sharpOk) {
     consecutivePasses++;

@@ -58,6 +58,21 @@ import Base from '../layouts/Base.astro';
       font-size: 2rem;
       letter-spacing: 0.05em;
     }
+    @keyframes scan-trace {
+      0% { background-position: 0% 0%; }
+      100% { background-position: 300% 0%; }
+    }
+    #sleeve-target .scan-border {
+      transition: border-color 0.3s, box-shadow 0.3s;
+    }
+    #sleeve-target .scan-border.scanning {
+      box-shadow: 0 0 12px rgba(34,197,94,0.3), inset 0 0 12px rgba(34,197,94,0.1);
+      animation: scan-pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes scan-pulse {
+      0%, 100% { box-shadow: 0 0 8px rgba(34,197,94,0.2), inset 0 0 8px rgba(34,197,94,0.05); }
+      50% { box-shadow: 0 0 18px rgba(34,197,94,0.5), inset 0 0 18px rgba(34,197,94,0.15); }
+    }
     .scanlines {
       background: repeating-linear-gradient(
         0deg,
@@ -145,8 +160,9 @@ import Base from '../layouts/Base.astro';
                 <video id="sleeve-webcam" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
                 <!-- Translucent VHS case target overlay -->
                 <div id="sleeve-target" class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div class="aspect-[17/30] h-[70%] border-2 border-white/25 rounded-lg flex items-end justify-center pb-2">
-                    <span class="text-white/20 text-[10px]">Position sleeve here</span>
+                  <div class="scan-border aspect-[17/30] h-[70%] border-2 border-white/25 rounded-lg flex flex-col items-center justify-end pb-2 gap-1">
+                    <span id="scan-status" class="text-white/30 text-[10px]">Scanning</span>
+                    <span class="text-white/15 text-[10px]">Position sleeve here</span>
                   </div>
                 </div>
                 <!-- No webcam placeholder -->

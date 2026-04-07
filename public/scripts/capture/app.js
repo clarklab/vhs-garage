@@ -244,27 +244,34 @@ async function saveSidecarFiles(dirHandle, basename, entry) {
 
 function updateTargetOverlay(state) {
   const target = document.getElementById('sleeve-target');
-  const inner = target?.querySelector('div');
-  const label = target?.querySelector('span');
-  if (!inner || !label) return;
+  const inner = target?.querySelector('.scan-border');
+  const status = document.getElementById('scan-status');
+  if (!inner || !status) return;
 
-  inner.style.transition = 'border-color 0.2s';
   switch (state) {
     case 'idle':
       inner.style.borderColor = 'rgba(255,255,255,0.25)';
-      label.textContent = getSleeveState() === 'front_captured' ? 'Flip & position back' : 'Position sleeve here';
+      inner.classList.add('scanning');
+      status.textContent = getSleeveState() === 'front_captured' ? 'Flip & scan back' : 'Scanning';
+      status.style.color = 'rgba(255,255,255,0.3)';
       break;
     case 'detected':
       inner.style.borderColor = 'rgba(234,179,8,0.5)';
-      label.textContent = 'Hold steady...';
+      inner.classList.add('scanning');
+      status.textContent = 'Hold steady...';
+      status.style.color = 'rgba(234,179,8,0.7)';
       break;
     case 'capturing':
       inner.style.borderColor = 'rgba(34,197,94,0.6)';
-      label.textContent = 'Capturing...';
+      inner.classList.add('scanning');
+      status.textContent = 'Capturing...';
+      status.style.color = 'rgba(34,197,94,0.8)';
       break;
     case 'snapped':
       inner.style.borderColor = 'rgba(34,197,94,0.9)';
-      label.textContent = '';
+      inner.classList.remove('scanning');
+      status.textContent = 'Captured!';
+      status.style.color = 'rgba(34,197,94,0.9)';
       break;
   }
 }
@@ -272,6 +279,7 @@ function updateTargetOverlay(state) {
 function tryStartDetection() {
   const video = getVideoElement();
   const rect = getTargetRect();
+  console.log('[sleeve] tryStartDetection', { video: !!video, rect, srcObject: !!video?.srcObject, state: getSleeveState() });
   if (!video || !rect || !video.srcObject) return;
   const state = getSleeveState();
   if (state === 'done') return;
