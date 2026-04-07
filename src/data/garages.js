@@ -10,8 +10,8 @@ export const GARAGES = [
     },
     screen: {
       top: 45.5,
-      left: 40.7,
-      width: 18.9,
+      left: 40.2,
+      width: 19.4,
       transform: '',
     },
   },
