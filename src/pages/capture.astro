@@ -158,6 +158,17 @@ import Base from '../layouts/Base.astro';
             <div id="sleeve-capture-view">
               <div id="webcam-container" class="relative bg-[#141214] border border-white/10 aspect-[4/3] overflow-hidden cursor-pointer mb-3">
                 <video id="sleeve-webcam" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
+                <!-- Detection status -->
+                <div id="detect-hud" class="absolute top-2 left-2 right-2 flex items-center gap-2 pointer-events-none z-10">
+                  <span id="detect-dot" style="width:8px;height:8px;border-radius:50%;background:#555;flex-shrink:0;transition:background 0.2s;"></span>
+                  <span id="detect-label" style="font-size:10px;color:rgba(255,255,255,0.3);transition:color 0.2s;">Waiting...</span>
+                  <span style="flex:1;"></span>
+                  <span id="detect-countdown" style="font-size:10px;color:rgba(255,255,255,0.2);font-variant-numeric:tabular-nums;"></span>
+                </div>
+                <!-- Snap progress bar -->
+                <div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:rgba(255,255,255,0.05);z-index:10;pointer-events:none;">
+                  <div id="detect-progress" style="height:100%;width:0%;background:#4caf50;transition:width 0.12s;"></div>
+                </div>
                 <!-- Translucent VHS case target overlay -->
                 <div id="sleeve-target" class="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div class="scan-border aspect-[17/30] h-[70%] border-2 border-white/25 rounded-lg flex flex-col items-center justify-end pb-2 gap-1">

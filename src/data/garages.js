@@ -63,4 +63,20 @@ export const GARAGES = [
       transform: 'skewY(4.5deg)',
     },
   },
+  {
+    id: 'my-pet-monster-01',
+    name: 'My Pet Monster',
+    channel: 'oracrest',
+    channelId: 'UC-wMG2tGhmeBOCO9IVbu4kg',
+    images: {
+      light: '/images/bg-my-pet-monster-01.webp',
+      dark: '/images/bg-my-pet-monster-01-dark.webp',
+    },
+    screen: {
+      top: 37.9,
+      left: 41.8,
+      width: 37.2,
+      transform: 'skewY(-1.5deg)',
+    },
+  },
 ];

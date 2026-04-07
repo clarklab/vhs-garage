@@ -242,11 +242,18 @@ async function saveSidecarFiles(dirHandle, basename, entry) {
 
 // --- Sleeve capture ---
 
-function updateTargetOverlay(state) {
+function updateTargetOverlay(state, progress) {
   const target = document.getElementById('sleeve-target');
   const inner = target?.querySelector('.scan-border');
   const status = document.getElementById('scan-status');
+  const dot = document.getElementById('detect-dot');
+  const label = document.getElementById('detect-label');
+  const countdown = document.getElementById('detect-countdown');
+  const bar = document.getElementById('detect-progress');
   if (!inner || !status) return;
+
+  // Progress bar
+  if (bar) bar.style.width = (progress * 100) + '%';
 
   switch (state) {
     case 'loading':
@@ -254,30 +261,47 @@ function updateTargetOverlay(state) {
       inner.classList.remove('scanning');
       status.textContent = 'Loading scanner...';
       status.style.color = 'rgba(255,255,255,0.2)';
+      if (dot) dot.style.background = '#555';
+      if (label) { label.textContent = 'Loading OpenCV...'; label.style.color = 'rgba(255,255,255,0.3)'; }
+      if (countdown) countdown.textContent = '';
       break;
     case 'idle':
       inner.style.borderColor = 'rgba(255,255,255,0.25)';
       inner.classList.add('scanning');
       status.textContent = getSleeveState() === 'front_captured' ? 'Flip & scan back' : 'Scanning';
       status.style.color = 'rgba(255,255,255,0.3)';
+      if (dot) dot.style.background = '#555';
+      if (label) { label.textContent = 'No rectangle'; label.style.color = 'rgba(255,255,255,0.3)'; }
+      if (countdown) countdown.textContent = '';
       break;
     case 'detected':
       inner.style.borderColor = 'rgba(234,179,8,0.5)';
       inner.classList.add('scanning');
       status.textContent = 'Hold steady...';
       status.style.color = 'rgba(234,179,8,0.7)';
+      if (dot) dot.style.background = '#eab308';
+      if (label) { label.textContent = 'Rectangle found'; label.style.color = 'rgba(234,179,8,0.7)'; }
+      if (countdown) countdown.textContent = 'hold still';
       break;
     case 'capturing':
       inner.style.borderColor = 'rgba(34,197,94,0.6)';
       inner.classList.add('scanning');
+      const remaining = Math.ceil((1 - progress) * 0.6 * 10) / 10;
       status.textContent = 'Capturing...';
       status.style.color = 'rgba(34,197,94,0.8)';
+      if (dot) dot.style.background = '#22c55e';
+      if (label) { label.textContent = 'Steady...'; label.style.color = 'rgba(34,197,94,0.8)'; }
+      if (countdown) { countdown.textContent = remaining.toFixed(1) + 's'; countdown.style.color = 'rgba(34,197,94,0.6)'; }
       break;
     case 'snapped':
       inner.style.borderColor = 'rgba(34,197,94,0.9)';
       inner.classList.remove('scanning');
       status.textContent = 'Captured!';
       status.style.color = 'rgba(34,197,94,0.9)';
+      if (dot) dot.style.background = '#22c55e';
+      if (label) { label.textContent = 'Captured!'; label.style.color = 'rgba(34,197,94,0.9)'; }
+      if (countdown) countdown.textContent = '';
+      if (bar) bar.style.background = '#22c55e';
       break;
   }
 }

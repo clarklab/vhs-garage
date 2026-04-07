@@ -25,11 +25,9 @@ let cvLoading = false;
 
 let detectionState = 'idle';
 
-function setState(state) {
-  if (state !== detectionState) {
-    detectionState = state;
-    if (onStateCallback) onStateCallback(state);
-  }
+function setState(state, progress) {
+  detectionState = state;
+  if (onStateCallback) onStateCallback(state, progress || 0);
 }
 
 // --- Load OpenCV.js from CDN ---
@@ -191,19 +189,20 @@ function loop(timestamp) {
 
   if (hasRect && stableOk) {
     consecutivePasses++;
+    const progress = consecutivePasses / CONSECUTIVE_REQUIRED;
     if (consecutivePasses >= CONSECUTIVE_REQUIRED) {
-      setState('snapped');
+      setState('snapped', 1);
       pauseDetection();
       if (onSnapCallback) onSnapCallback();
       return;
     }
-    setState('capturing');
+    setState('capturing', progress);
   } else if (hasRect) {
     consecutivePasses = 0;
-    setState('detected');
+    setState('detected', 0);
   } else {
     consecutivePasses = 0;
-    setState('idle');
+    setState('idle', 0);
   }
 }
 
