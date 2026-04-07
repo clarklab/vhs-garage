@@ -249,6 +249,12 @@ function updateTargetOverlay(state) {
   if (!inner || !status) return;
 
   switch (state) {
+    case 'loading':
+      inner.style.borderColor = 'rgba(255,255,255,0.15)';
+      inner.classList.remove('scanning');
+      status.textContent = 'Loading scanner...';
+      status.style.color = 'rgba(255,255,255,0.2)';
+      break;
     case 'idle':
       inner.style.borderColor = 'rgba(255,255,255,0.25)';
       inner.classList.add('scanning');
@@ -276,7 +282,7 @@ function updateTargetOverlay(state) {
   }
 }
 
-function tryStartDetection() {
+async function tryStartDetection() {
   const video = getVideoElement();
   const rect = getTargetRect();
   console.log('[sleeve] tryStartDetection', { video: !!video, rect, srcObject: !!video?.srcObject, state: getSleeveState() });
@@ -284,7 +290,8 @@ function tryStartDetection() {
   const state = getSleeveState();
   if (state === 'done') return;
 
-  startDetection(video, rect, () => {
+  updateTargetOverlay('idle');
+  await startDetection(video, rect, () => {
     // Auto-snap triggered
     playShutter();
     const result = handleSleeveCapture();

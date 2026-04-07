@@ -1,16 +1,13 @@
 // Auto-snap detector for VHS sleeve capture
-// Analyzes webcam frames for: presence (edge density), stability (frame diff), sharpness (Laplacian)
-// Zero dependencies — pure Canvas pixel analysis
+// Uses OpenCV.js (loaded from CDN) for rectangle detection
+// Flow: load OpenCV → capture baseline → detect rectangle + stability → snap
 
-const INTERVAL_MS = 100;
-const CONSECUTIVE_REQUIRED = 5; // ~500ms of all-pass
-const SAMPLE_W = 200;
-const SAMPLE_H = 350;
-
-// Thresholds (tunable)
-const EDGE_THRESHOLD = 0.12;    // fraction of max possible gradient
-const STABILITY_THRESHOLD = 6;  // mean pixel diff (0-255)
-const SHARPNESS_THRESHOLD = 80; // Laplacian variance
+const INTERVAL_MS = 120;
+const CONSECUTIVE_REQUIRED = 5;    // ~600ms of all-pass before snap
+const STABILITY_THRESHOLD = 5;     // mean pixel diff between frames
+const MIN_CONTOUR_AREA_RATIO = 0.1; // contour must fill at least 10% of target zone
+const SAMPLE_W = 300;
+const SAMPLE_H = 520;
 
 let running = false;
 let rafId = null;
@@ -23,8 +20,9 @@ let onSnapCallback = null;
 let onStateCallback = null;
 let videoEl = null;
 let targetRect = null;
+let cvReady = false;
+let cvLoading = false;
 
-// States: 'idle' | 'detected' | 'capturing' | 'snapped'
 let detectionState = 'idle';
 
 function setState(state) {
@@ -34,16 +32,188 @@ function setState(state) {
   }
 }
 
-export function startDetection(video, rect, onSnap, onState) {
-  console.log('[detector] startDetection', { videoW: video.videoWidth, videoH: video.videoHeight, rect });
+// --- Load OpenCV.js from CDN ---
+function loadOpenCV() {
+  return new Promise((resolve, reject) => {
+    if (typeof cv !== 'undefined' && cv.Mat) {
+      resolve();
+      return;
+    }
+    if (cvLoading) {
+      // Already loading — poll for ready
+      const poll = setInterval(() => {
+        if (typeof cv !== 'undefined' && cv.Mat) {
+          clearInterval(poll);
+          resolve();
+        }
+      }, 200);
+      return;
+    }
+    cvLoading = true;
+    console.log('[detector] Loading OpenCV.js from CDN...');
+    const script = document.createElement('script');
+    script.src = 'https://docs.opencv.org/4.9.0/opencv.js';
+    script.async = true;
+    script.onload = () => {
+      // OpenCV.js sets up cv as a Module that needs to initialize
+      if (typeof cv === 'object' && cv.then) {
+        // cv is a Promise (newer builds)
+        cv.then((instance) => {
+          window.cv = instance;
+          console.log('[detector] OpenCV.js ready (promise)');
+          resolve();
+        });
+      } else if (typeof cv !== 'undefined' && !cv.Mat) {
+        // cv exists but not ready — wait for onRuntimeInitialized
+        cv.onRuntimeInitialized = () => {
+          console.log('[detector] OpenCV.js ready (callback)');
+          resolve();
+        };
+      } else if (typeof cv !== 'undefined' && cv.Mat) {
+        console.log('[detector] OpenCV.js ready (immediate)');
+        resolve();
+      } else {
+        reject(new Error('OpenCV.js failed to initialize'));
+      }
+    };
+    script.onerror = () => reject(new Error('Failed to load OpenCV.js'));
+    document.head.appendChild(script);
+  });
+}
+
+// --- Rectangle detection using OpenCV ---
+function detectRectangle() {
+  if (!cvReady) return false;
+
+  const { x, y, w, h } = targetRect;
+  ctx.drawImage(videoEl, x, y, w, h, 0, 0, SAMPLE_W, SAMPLE_H);
+
+  let src, gray, blurred, edges, contours, hierarchy;
+  try {
+    src = cv.imread(canvas);
+    gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+    blurred = new cv.Mat();
+    cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+
+    edges = new cv.Mat();
+    cv.Canny(blurred, edges, 50, 150);
+
+    // Dilate to close gaps in edges
+    const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
+    cv.dilate(edges, edges, kernel);
+    kernel.delete();
+
+    contours = new cv.MatVector();
+    hierarchy = new cv.Mat();
+    cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+    const targetArea = SAMPLE_W * SAMPLE_H;
+    let found = false;
+
+    for (let i = 0; i < contours.size(); i++) {
+      const contour = contours.get(i);
+      const area = cv.contourArea(contour);
+
+      // Must fill a significant portion of the target zone
+      if (area < targetArea * MIN_CONTOUR_AREA_RATIO) continue;
+
+      // Approximate to polygon — is it a quadrilateral?
+      const approx = new cv.Mat();
+      const peri = cv.arcLength(contour, true);
+      cv.approxPolyDP(contour, approx, 0.04 * peri, true);
+
+      if (approx.rows >= 4 && approx.rows <= 6) {
+        // Found a roughly rectangular shape filling the target zone
+        found = true;
+        approx.delete();
+        break;
+      }
+      approx.delete();
+    }
+
+    return found;
+  } catch (e) {
+    console.warn('[detector] OpenCV error:', e.message);
+    return false;
+  } finally {
+    if (src) src.delete();
+    if (gray) gray.delete();
+    if (blurred) blurred.delete();
+    if (edges) edges.delete();
+    if (contours) contours.delete();
+    if (hierarchy) hierarchy.delete();
+  }
+}
+
+// --- Stability check (frame diff) ---
+function checkStability() {
+  const { x, y, w, h } = targetRect;
+  ctx.drawImage(videoEl, x, y, w, h, 0, 0, SAMPLE_W, SAMPLE_H);
+  const imageData = ctx.getImageData(0, 0, SAMPLE_W, SAMPLE_H);
+  const gray = toGrayscale(imageData.data, SAMPLE_W, SAMPLE_H);
+
+  const stability = prevGray ? computeMeanDiff(gray, prevGray) : 999;
+  prevGray = gray;
+  return stability;
+}
+
+function toGrayscale(rgba, w, h) {
+  const gray = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    gray[i] = (rgba[i * 4] * 77 + rgba[i * 4 + 1] * 150 + rgba[i * 4 + 2] * 29) >> 8;
+  }
+  return gray;
+}
+
+function computeMeanDiff(a, b) {
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
+  return sum / a.length;
+}
+
+// --- Main loop ---
+function loop(timestamp) {
+  if (!running) return;
+  rafId = requestAnimationFrame(loop);
+
+  if (timestamp - lastTime < INTERVAL_MS) return;
+  lastTime = timestamp;
+
+  if (!videoEl.videoWidth || !videoEl.videoHeight) return;
+
+  const hasRect = detectRectangle();
+  const stability = checkStability();
+  const stableOk = stability < STABILITY_THRESHOLD;
+
+  console.log(`rect:${hasRect} stable:${stability.toFixed(1)} | rect:${hasRect} stable:${stableOk}`);
+
+  if (hasRect && stableOk) {
+    consecutivePasses++;
+    if (consecutivePasses >= CONSECUTIVE_REQUIRED) {
+      setState('snapped');
+      pauseDetection();
+      if (onSnapCallback) onSnapCallback();
+      return;
+    }
+    setState('capturing');
+  } else if (hasRect) {
+    consecutivePasses = 0;
+    setState('detected');
+  } else {
+    consecutivePasses = 0;
+    setState('idle');
+  }
+}
+
+// --- Public API ---
+
+export async function startDetection(video, rect, onSnap, onState) {
   videoEl = video;
   targetRect = rect;
   onSnapCallback = onSnap;
   onStateCallback = onState;
-  running = true;
-  consecutivePasses = 0;
-  prevGray = null;
-  detectionState = 'idle';
 
   if (!canvas) {
     canvas = document.createElement('canvas');
@@ -52,6 +222,24 @@ export function startDetection(video, rect, onSnap, onState) {
     ctx = canvas.getContext('2d', { willReadFrequently: true });
   }
 
+  // Load OpenCV if not ready
+  if (!cvReady) {
+    setState('loading');
+    try {
+      await loadOpenCV();
+      cvReady = true;
+      console.log('[detector] OpenCV ready, starting detection');
+    } catch (e) {
+      console.error('[detector] Failed to load OpenCV:', e);
+      setState('idle');
+      return;
+    }
+  }
+
+  running = true;
+  consecutivePasses = 0;
+  prevGray = null;
+  setState('idle');
   lastTime = 0;
   loop(0);
 }
@@ -72,115 +260,11 @@ export function pauseDetection() {
 }
 
 export function resumeDetection() {
-  if (!videoEl || !targetRect || !onSnapCallback) return;
+  if (!videoEl || !targetRect || !onSnapCallback || !cvReady) return;
   running = true;
   consecutivePasses = 0;
   prevGray = null;
   setState('idle');
   lastTime = 0;
   loop(0);
-}
-
-function loop(timestamp) {
-  if (!running) return;
-  rafId = requestAnimationFrame(loop);
-
-  if (timestamp - lastTime < INTERVAL_MS) return;
-  lastTime = timestamp;
-
-  if (!videoEl.videoWidth || !videoEl.videoHeight) return;
-
-  // Sample the target zone
-  const { x, y, w, h } = targetRect;
-  ctx.drawImage(videoEl, x, y, w, h, 0, 0, SAMPLE_W, SAMPLE_H);
-  const imageData = ctx.getImageData(0, 0, SAMPLE_W, SAMPLE_H);
-  const gray = toGrayscale(imageData.data, SAMPLE_W, SAMPLE_H);
-
-  const edgeDensity = computeEdgeDensity(gray, SAMPLE_W, SAMPLE_H);
-  const stability = prevGray ? computeStability(gray, prevGray) : 999;
-  const sharpness = computeSharpness(gray, SAMPLE_W, SAMPLE_H);
-
-  prevGray = gray;
-
-  const presenceOk = edgeDensity > EDGE_THRESHOLD;
-  const stableOk = stability < STABILITY_THRESHOLD;
-  const sharpOk = sharpness > SHARPNESS_THRESHOLD;
-
-  // Debug — tune thresholds with these values
-  console.log(`edge:${edgeDensity.toFixed(3)} stable:${stability.toFixed(1)} sharp:${sharpness.toFixed(0)} | presence:${presenceOk} stable:${stableOk} sharp:${sharpOk}`);
-
-  if (presenceOk && stableOk && sharpOk) {
-    consecutivePasses++;
-    if (consecutivePasses >= CONSECUTIVE_REQUIRED) {
-      setState('snapped');
-      pauseDetection();
-      if (onSnapCallback) onSnapCallback();
-      return;
-    }
-    setState('capturing');
-  } else if (presenceOk) {
-    consecutivePasses = 0;
-    setState('detected');
-  } else {
-    consecutivePasses = 0;
-    setState('idle');
-  }
-}
-
-// --- Pixel math ---
-
-function toGrayscale(rgba, w, h) {
-  const gray = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) {
-    const r = rgba[i * 4];
-    const g = rgba[i * 4 + 1];
-    const b = rgba[i * 4 + 2];
-    gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
-  }
-  return gray;
-}
-
-function computeEdgeDensity(gray, w, h) {
-  // Simplified Sobel — horizontal + vertical gradient magnitude
-  let sum = 0;
-  let count = 0;
-  for (let y = 1; y < h - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      const idx = y * w + x;
-      const gx = Math.abs(gray[idx + 1] - gray[idx - 1]);
-      const gy = Math.abs(gray[idx + w] - gray[idx - w]);
-      sum += gx + gy;
-      count++;
-    }
-  }
-  // Normalize: max possible per pixel is 510 (255*2)
-  return sum / (count * 510);
-}
-
-function computeStability(current, previous) {
-  // Mean absolute difference between frames
-  let sum = 0;
-  for (let i = 0; i < current.length; i++) {
-    sum += Math.abs(current[i] - previous[i]);
-  }
-  return sum / current.length;
-}
-
-function computeSharpness(gray, w, h) {
-  // Laplacian variance — classic focus measure
-  // Laplacian kernel: center = -4, neighbors = 1
-  let sum = 0;
-  let sumSq = 0;
-  let count = 0;
-  for (let y = 1; y < h - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      const idx = y * w + x;
-      const lap = gray[idx - 1] + gray[idx + 1] + gray[idx - w] + gray[idx + w] - 4 * gray[idx];
-      sum += lap;
-      sumSq += lap * lap;
-      count++;
-    }
-  }
-  const mean = sum / count;
-  return (sumSq / count) - (mean * mean); // variance
 }
