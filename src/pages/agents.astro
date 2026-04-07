@@ -1,0 +1,16 @@
+---
+import { GARAGES } from '../data/garages.js';
+const base = 'https://vhsgarage.com';
+const output = {
+  _info: 'VHS Garage — garage background images for agents. Each garage has a light and dark variant (WebP with alpha transparency for the TV screen cutout). Use these images as backgrounds and overlay video on the transparent TV screen area.',
+  _base: base,
+  _submit: base + '/submit',
+  garages: GARAGES.map(g => ({
+    id: g.id,
+    name: g.name,
+    light: base + g.images.light,
+    dark: base + g.images.dark,
+  })),
+};
+---
+<pre set:text={JSON.stringify(output, null, 2)} />
