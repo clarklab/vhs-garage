@@ -5,7 +5,7 @@
 const INTERVAL_MS = 120;
 const CONSECUTIVE_REQUIRED = 5;    // ~600ms of all-pass before snap
 const STABILITY_THRESHOLD = 5;     // mean pixel diff between frames
-const MIN_CONTOUR_AREA_RATIO = 0.1; // contour must fill at least 10% of target zone
+const MIN_CONTOUR_AREA_RATIO = 0.05; // contour must fill at least 5% of full frame
 const SAMPLE_W = 300;
 const SAMPLE_H = 520;
 
@@ -83,8 +83,8 @@ function loadOpenCV() {
 function detectRectangle() {
   if (!cvReady) return false;
 
-  const { x, y, w, h } = targetRect;
-  ctx.drawImage(videoEl, x, y, w, h, 0, 0, SAMPLE_W, SAMPLE_H);
+  // Scan full webcam frame, not just the target zone
+  ctx.drawImage(videoEl, 0, 0, SAMPLE_W, SAMPLE_H);
 
   let src, gray, blurred, edges, contours, hierarchy;
   try {
@@ -147,8 +147,8 @@ function detectRectangle() {
 
 // --- Stability check (frame diff) ---
 function checkStability() {
-  const { x, y, w, h } = targetRect;
-  ctx.drawImage(videoEl, x, y, w, h, 0, 0, SAMPLE_W, SAMPLE_H);
+  // Compare full frames for stability
+  ctx.drawImage(videoEl, 0, 0, SAMPLE_W, SAMPLE_H);
   const imageData = ctx.getImageData(0, 0, SAMPLE_W, SAMPLE_H);
   const gray = toGrayscale(imageData.data, SAMPLE_W, SAMPLE_H);
 

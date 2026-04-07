@@ -66,7 +66,8 @@ import { GARAGES } from '../data/garages.js';
         <p class="text-white/60 mb-2">Garage</p>
         {GARAGES.map((g, i) => (
           <button data-garage-idx={i} class:list={["garage-opt w-full text-left p-2 border mb-1 transition-colors", i === 0 ? "text-white/80 border-white/30 bg-white/10" : "text-white/50 border-white/15 hover:border-white/30"]}>
-            {g.name}
+            <span>{g.name}</span>
+            {g.credit && <span class="block text-[9px] text-white/30 mt-0.5" set:html={g.credit} />}
           </button>
         ))}
         {GARAGES.length < 2 && <p class="text-white/30 mt-2 text-[10px]">More garages coming soon</p>}
