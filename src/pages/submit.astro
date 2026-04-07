@@ -1,0 +1,302 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Submit Your Garage" description="Submit your own VHS garage setup to be featured on VHS Garage.">
+
+  <style>
+    .upload-zone {
+      border: 2px dashed rgba(255,255,255,0.15);
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .upload-zone:hover, .upload-zone.dragover {
+      border-color: rgba(255,255,255,0.4);
+      background: rgba(255,255,255,0.03);
+    }
+    .upload-zone.has-file {
+      border-color: rgba(76, 175, 80, 0.4);
+      border-style: solid;
+    }
+    .progress-bar {
+      height: 4px;
+      background: rgba(255,255,255,0.1);
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #4caf50;
+      width: 0%;
+      transition: width 0.15s;
+    }
+    .preview-thumb {
+      max-height: 120px;
+      object-fit: contain;
+    }
+  </style>
+
+  <div class="min-h-screen px-6 py-12 max-w-lg mx-auto">
+    <a href="/" class="text-white/30 text-xs hover:text-white/50 transition-colors">← vhsgarage.com</a>
+
+    <h1 class="text-3xl mt-8 mb-2">Submit Your Garage</h1>
+    <p class="text-gray-400 mb-8">Got a sick VHS setup? We want to see it. If it's good enough, we'll feature it on the site as a garage people can watch videos in.</p>
+
+    <!-- Tips -->
+    <fieldset class="border border-white/20 p-4 mb-8">
+      <legend class="text-white/70 text-[11px] tracking-wider px-2">░ Tips ░</legend>
+      <ul class="text-xs text-white/50 space-y-2">
+        <li>► Take a <strong class="text-white/70">high quality photo</strong> of your setup with the TV screen visible</li>
+        <li>► We need both a <strong class="text-white/70">landscape</strong> and <strong class="text-white/70">portrait</strong> shot if possible — portrait is required, landscape is a bonus</li>
+        <li>► Make sure the <strong class="text-white/70">TV screen is clearly visible</strong> — we'll cut it out and play video through it</li>
+        <li>► Must be <strong class="text-white/70">your own garage/setup</strong> — no stock photos or other people's spaces</li>
+        <li>► Larger photos are better. <strong class="text-white/70">We'll compress automatically</strong> if needed</li>
+      </ul>
+    </fieldset>
+
+    <!-- Form -->
+    <form id="submit-form" name="garage-submit" method="POST" enctype="multipart/form-data" data-netlify="true">
+      <input type="hidden" name="form-name" value="garage-submit" />
+
+      <div>
+        <!-- Name -->
+        <div style="margin-bottom:2rem;">
+          <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Your Name</label>
+          <input name="name" type="text" required placeholder="Matt Manchester"
+            class="w-full px-3 py-2.5 bg-black border border-white/20 text-white text-sm placeholder-white/25 focus:outline-none focus:border-white/40" />
+        </div>
+
+        <!-- Email -->
+        <div style="margin-bottom:2rem;">
+          <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Email</label>
+          <input name="email" type="email" required placeholder="your@email.com"
+            class="w-full px-3 py-2.5 bg-black border border-white/20 text-white text-sm placeholder-white/25 focus:outline-none focus:border-white/40" />
+          <p class="text-white/20 text-[10px] mt-1">We'll email you if your garage gets featured</p>
+        </div>
+
+        <!-- Garage name -->
+        <div style="margin-bottom:2rem;">
+          <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Garage Name</label>
+          <input name="garage-name" type="text" placeholder="The Dungeon, Clark's Corner, etc."
+            class="w-full px-3 py-2.5 bg-black border border-white/20 text-white text-sm placeholder-white/25 focus:outline-none focus:border-white/40" />
+        </div>
+
+        <!-- Description -->
+        <div style="margin-bottom:2rem;">
+          <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tell us about your setup</label>
+          <textarea name="description" rows="3" placeholder="What TV, what VCR, how long you've been collecting..."
+            class="w-full px-3 py-2.5 bg-black border border-white/20 text-white text-sm placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
+        </div>
+
+        <!-- Portrait photo (required) -->
+        <div style="margin-bottom:2rem;">
+          <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-2">Portrait Photo <span class="text-red-500">*</span></label>
+          <div id="drop-portrait" class="upload-zone p-6 text-center cursor-pointer" data-input="file-portrait">
+            <p class="text-white/30 text-sm mb-1">Drop image here or click to browse</p>
+            <p class="text-white/15 text-[10px]">JPG, PNG, or WebP</p>
+            <img id="preview-portrait" class="preview-thumb mx-auto mt-3 hidden" alt="" />
+            <p id="info-portrait" class="text-[10px] text-white/30 mt-2 hidden"></p>
+          </div>
+          <input id="file-portrait" type="file" name="photo-portrait" accept="image/*" required class="hidden" />
+          <div class="progress-bar mt-1 hidden" id="progress-portrait"><div class="progress-fill"></div></div>
+        </div>
+
+        <!-- Landscape photo (optional) -->
+        <div style="margin-bottom:2rem;">
+          <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-2">Landscape Photo <span class="text-white/20">(optional)</span></label>
+          <div id="drop-landscape" class="upload-zone p-6 text-center cursor-pointer" data-input="file-landscape">
+            <p class="text-white/30 text-sm mb-1">Drop image here or click to browse</p>
+            <p class="text-white/15 text-[10px]">JPG, PNG, or WebP</p>
+            <img id="preview-landscape" class="preview-thumb mx-auto mt-3 hidden" alt="" />
+            <p id="info-landscape" class="text-[10px] text-white/30 mt-2 hidden"></p>
+          </div>
+          <input id="file-landscape" type="file" name="photo-landscape" accept="image/*" class="hidden" />
+          <div class="progress-bar mt-1 hidden" id="progress-landscape"><div class="progress-fill"></div></div>
+        </div>
+
+        <!-- Permission -->
+        <label class="flex items-start gap-3 cursor-pointer group" style="margin-bottom:2rem;">
+          <input type="checkbox" name="permission" value="yes" required
+            class="mt-0.5 accent-white shrink-0" />
+          <span class="text-xs text-white/50 group-hover:text-white/70 transition-colors">
+            I grant VHS Garage permission to use my submitted photo(s) on the website, social media, and promotional materials. This is <strong class="text-white/70">my own setup</strong> and I have the right to share it.
+          </span>
+        </label>
+
+        <!-- Submit -->
+        <div>
+          <div id="upload-progress" class="hidden mb-3">
+            <div class="flex items-center gap-3">
+              <div class="progress-bar flex-1"><div id="total-progress-fill" class="progress-fill"></div></div>
+              <span id="upload-status" class="text-[10px] text-white/40 tabular-nums shrink-0">0%</span>
+            </div>
+          </div>
+          <button id="submit-btn" type="submit"
+            class="w-full py-3 bg-white text-black hover:bg-gray-200 transition-colors text-sm min-h-[48px]">
+            Submit Garage
+          </button>
+        </div>
+      </div>
+    </form>
+
+    <p id="submit-confirm" class="hidden text-lg mt-6"></p>
+
+    <footer class="text-white/15 text-[10px] mt-12 pb-8">Submissions are reviewed by humans. We'll be in touch if your garage makes the cut. Contact <a href="https://x.com/clarklab" target="_blank" style="color:#4488ff;">@clarklab</a> or <a href="https://x.com/oracrest" target="_blank" style="color:#4488ff;">@oracrest</a> if you need any help or have questions.</footer>
+  </div>
+
+  <script is:inline>
+    (() => {
+      const MAX_DIM = 3000;
+      const JPEG_QUALITY = 0.85;
+      const MAX_SIZE = 7 * 1024 * 1024; // 7MB target (under Netlify's 8MB limit)
+
+      // --- Client-side image compression ---
+      function compressImage(file) {
+        return new Promise((resolve) => {
+          // Skip if already small enough and is JPEG
+          if (file.size <= MAX_SIZE && file.type === 'image/jpeg') {
+            return resolve(file);
+          }
+
+          const img = new Image();
+          const url = URL.createObjectURL(file);
+          img.onload = () => {
+            URL.revokeObjectURL(url);
+            let w = img.width, h = img.height;
+            if (w > MAX_DIM || h > MAX_DIM) {
+              const ratio = Math.min(MAX_DIM / w, MAX_DIM / h);
+              w = Math.round(w * ratio);
+              h = Math.round(h * ratio);
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            canvas.toBlob((blob) => {
+              resolve(new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
+            }, 'image/jpeg', JPEG_QUALITY);
+          };
+          img.src = url;
+        });
+      }
+
+      // --- Drop zones ---
+      function setupDropZone(zoneId, inputId, previewId, infoId) {
+        const zone = document.getElementById(zoneId);
+        const input = document.getElementById(inputId);
+        const preview = document.getElementById(previewId);
+        const info = document.getElementById(infoId);
+
+        zone.addEventListener('click', () => input.click());
+
+        zone.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          zone.classList.add('dragover');
+        });
+        zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+        zone.addEventListener('drop', (e) => {
+          e.preventDefault();
+          zone.classList.remove('dragover');
+          if (e.dataTransfer.files.length) {
+            input.files = e.dataTransfer.files;
+            input.dispatchEvent(new Event('change'));
+          }
+        });
+
+        input.addEventListener('change', () => {
+          const file = input.files[0];
+          if (!file) return;
+          zone.classList.add('has-file');
+          preview.src = URL.createObjectURL(file);
+          preview.classList.remove('hidden');
+          const mb = (file.size / (1024 * 1024)).toFixed(1);
+          info.textContent = file.name + ' · ' + mb + 'MB';
+          info.classList.remove('hidden');
+        });
+      }
+
+      setupDropZone('drop-portrait', 'file-portrait', 'preview-portrait', 'info-portrait');
+      setupDropZone('drop-landscape', 'file-landscape', 'preview-landscape', 'info-landscape');
+
+      // --- Form submission with progress ---
+      const form = document.getElementById('submit-form');
+      const btn = document.getElementById('submit-btn');
+      const confirm = document.getElementById('submit-confirm');
+      const uploadProgress = document.getElementById('upload-progress');
+      const totalFill = document.getElementById('total-progress-fill');
+      const uploadStatus = document.getElementById('upload-status');
+      const frames = ['░░░', '▒░░', '▓▒░', '▓▓▒', '▓▓▓', '▓▓▒', '▓▒░', '▒░░'];
+      let tick;
+
+      function startLoader() {
+        let i = 0;
+        btn.disabled = true;
+        btn.textContent = frames[0];
+        tick = setInterval(() => { i = (i + 1) % frames.length; btn.textContent = frames[i]; }, 120);
+      }
+      function stopLoader() {
+        clearInterval(tick);
+        btn.disabled = false;
+        btn.textContent = 'Submit Garage';
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        startLoader();
+        uploadProgress.classList.remove('hidden');
+
+        // Compress images
+        const portraitInput = document.getElementById('file-portrait');
+        const landscapeInput = document.getElementById('file-landscape');
+
+        const fd = new FormData(form);
+        // Remove original files, add compressed ones
+        fd.delete('photo-portrait');
+        fd.delete('photo-landscape');
+
+        if (portraitInput.files[0]) {
+          uploadStatus.textContent = 'Compressing...';
+          const compressed = await compressImage(portraitInput.files[0]);
+          fd.append('photo-portrait', compressed);
+        }
+        if (landscapeInput.files[0]) {
+          const compressed = await compressImage(landscapeInput.files[0]);
+          fd.append('photo-landscape', compressed);
+        }
+
+        // Upload with XHR for progress
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/');
+
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            totalFill.style.width = pct + '%';
+            uploadStatus.textContent = pct + '%';
+          }
+        });
+
+        xhr.addEventListener('load', () => {
+          stopLoader();
+          if (xhr.status >= 200 && xhr.status < 300) {
+            form.classList.add('hidden');
+            uploadProgress.classList.add('hidden');
+            confirm.classList.remove('hidden');
+            confirm.textContent = '▓ Submitted. We\'ll review your garage and be in touch.';
+          } else {
+            confirm.classList.remove('hidden');
+            confirm.textContent = '░ Something went wrong. Try again.';
+            confirm.classList.add('text-red-400');
+          }
+        });
+
+        xhr.addEventListener('error', () => {
+          stopLoader();
+          confirm.classList.remove('hidden');
+          confirm.textContent = '░ Network error. Try again.';
+          confirm.classList.add('text-red-400');
+        });
+
+        xhr.send(fd);
+      });
+    })();
+  </script>
+
+</Base>
