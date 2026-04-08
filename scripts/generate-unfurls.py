@@ -33,7 +33,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 for g in garages:
     gid = g['id']
-    dark_path = PUBLIC / g['images']['dark'].lstrip('/')
+    dark_path = PUBLIC / g['images']['light'].lstrip('/')
 
     if not dark_path.exists():
         print(f'  SKIP {gid}: {dark_path} not found')
