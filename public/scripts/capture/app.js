@@ -723,30 +723,106 @@ function refreshLibrary() {
   const clips = getClips();
   const grid = document.getElementById('library-grid');
   const empty = document.getElementById('library-empty');
-  renderLibrary(grid, empty, clips, (id) => {
-    deleteClip(id);
-    refreshLibrary();
-  }, async (id, filename) => {
-    if (!directoryHandle || !filename) {
-      alert('Save folder not available. Please re-select it from settings to open files.');
-      return;
-    }
+
+  // Only provide onOpen if we have a directoryHandle this session
+  const onOpen = directoryHandle ? async (id, filename) => {
+    if (!filename) return;
     try {
       const fileHandle = await directoryHandle.getFileHandle(filename);
       const file = await fileHandle.getFile();
       const url = URL.createObjectURL(file);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const clip = clips.find(c => c.id === id);
+      openPlayerModal(url, clip);
     } catch (err) {
       console.warn('Could not open file:', err);
-      alert('Could not open file. The save folder may need to be re-selected, or the file may have been moved.');
+      alert('Could not open file. The save folder may need to be re-selected.');
     }
+  } : null;
+
+  renderLibrary(grid, empty, clips, (id) => {
+    deleteClip(id);
+    refreshLibrary();
+  }, onOpen);
+}
+
+// --- Clip playback modal ---
+
+let playerModalBlobUrl = null;
+
+function openPlayerModal(url, clip) {
+  const modal = document.getElementById('clip-player-modal');
+  const video = document.getElementById('player-modal-video');
+  const title = document.getElementById('player-modal-title');
+  const filename = document.getElementById('player-modal-filename');
+  const meta = document.getElementById('player-modal-meta');
+  const playBtn = document.getElementById('player-modal-play');
+  const btn1x = document.getElementById('player-modal-1x');
+  const btn2x = document.getElementById('player-modal-2x');
+  const btn4x = document.getElementById('player-modal-4x');
+
+  if (playerModalBlobUrl) URL.revokeObjectURL(playerModalBlobUrl);
+  playerModalBlobUrl = url;
+
+  title.textContent = clip?.title || 'Untitled';
+  filename.textContent = clip?.filename || '';
+
+  const parts = [];
+  if (clip?.date) parts.push(new Date(clip.date).toLocaleDateString());
+  if (clip?.duration) parts.push(Math.floor(clip.duration / 60) + 'm ' + (clip.duration % 60) + 's');
+  if (clip?.fileSize) {
+    const mb = clip.fileSize / (1024 * 1024);
+    parts.push(mb < 1024 ? mb.toFixed(0) + ' MB' : (mb / 1024).toFixed(1) + ' GB');
+  }
+  if (clip?.tape) parts.push(clip.tape);
+  if (clip?.year) parts.push(clip.year);
+  meta.textContent = parts.join(' · ');
+
+  video.src = url;
+  video.playbackRate = 1;
+  video.play();
+
+  playBtn.textContent = 'Pause';
+  setSpeedActive(btn1x, [btn1x, btn2x, btn4x]);
+
+  modal.classList.remove('hidden');
+
+  // Play/Pause
+  playBtn.onclick = () => {
+    if (video.paused) { video.play(); playBtn.textContent = 'Pause'; }
+    else { video.pause(); playBtn.textContent = 'Play'; }
+  };
+
+  video.onplay = () => playBtn.textContent = 'Pause';
+  video.onpause = () => playBtn.textContent = 'Play';
+
+  // Speed buttons
+  btn1x.onclick = () => { video.playbackRate = 1; setSpeedActive(btn1x, [btn1x, btn2x, btn4x]); };
+  btn2x.onclick = () => { video.playbackRate = 2; setSpeedActive(btn2x, [btn1x, btn2x, btn4x]); };
+  btn4x.onclick = () => { video.playbackRate = 4; setSpeedActive(btn4x, [btn1x, btn2x, btn4x]); };
+
+  // Close
+  document.getElementById('player-modal-close').onclick = () => closePlayerModal();
+}
+
+function setSpeedActive(active, all) {
+  all.forEach(b => {
+    b.classList.remove('bg-white/10', 'border-white/30', 'text-white/70');
+    b.classList.add('border-white/20', 'text-white/40');
   });
+  active.classList.remove('border-white/20', 'text-white/40');
+  active.classList.add('bg-white/10', 'border-white/30', 'text-white/70');
+}
+
+function closePlayerModal() {
+  const modal = document.getElementById('clip-player-modal');
+  const video = document.getElementById('player-modal-video');
+  video.pause();
+  video.src = '';
+  modal.classList.add('hidden');
+  if (playerModalBlobUrl) {
+    URL.revokeObjectURL(playerModalBlobUrl);
+    playerModalBlobUrl = null;
+  }
 }
 
 // --- Mute toggle ---

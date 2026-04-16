@@ -348,6 +348,29 @@ import Base from '../layouts/Base.astro';
     </div>
   </div>
 
+  <!-- Clip playback modal -->
+  <div id="clip-player-modal" class="hidden fixed inset-0 z-40 bg-black/95 flex flex-col">
+    <div class="flex items-center justify-between p-4">
+      <div>
+        <p id="player-modal-title" class="text-white text-sm"></p>
+        <p id="player-modal-filename" class="text-white/30 text-[10px] mt-0.5"></p>
+      </div>
+      <button id="player-modal-close" class="text-white/50 hover:text-white/80 text-xs px-3 py-1">Close</button>
+    </div>
+    <div class="flex-1 flex items-center justify-center px-4 pb-2">
+      <video id="player-modal-video" class="max-w-full max-h-full object-contain bg-black" playsinline></video>
+    </div>
+    <div class="flex items-center justify-center gap-4 pb-2">
+      <button id="player-modal-play" class="text-white/70 hover:text-white text-xs px-3 py-1 border border-white/20">Play</button>
+      <button id="player-modal-1x" class="text-white/70 hover:text-white text-xs px-3 py-1 border border-white/30 bg-white/10">1x</button>
+      <button id="player-modal-2x" class="text-white/40 hover:text-white text-xs px-3 py-1 border border-white/20">2x</button>
+      <button id="player-modal-4x" class="text-white/40 hover:text-white text-xs px-3 py-1 border border-white/20">4x</button>
+    </div>
+    <div class="px-4 pb-4">
+      <p id="player-modal-meta" class="text-white/30 text-[10px] text-center"></p>
+    </div>
+  </div>
+
   <!-- Settings popover (hidden, triggered by gear icon) -->
   <div id="settings-popover" class="hidden fixed bottom-10 right-4 z-30 bg-black/95 border border-white/20 p-3 w-56 text-xs">
     <div class="space-y-3">
