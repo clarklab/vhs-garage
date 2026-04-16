@@ -93,6 +93,7 @@ async function startApp() {
   wirePlaybackTabs();
   wireMuteToggle();
   wireSaveData();
+  wireResetButtons();
   wireBeforeUnload();
 }
 
@@ -895,6 +896,28 @@ function wireSaveData() {
   });
 }
 
+// --- Reset buttons ---
+
+function wireResetButtons() {
+  document.getElementById('reset-sleeve-btn').addEventListener('click', () => {
+    resetSleeve();
+    tryStartDetection();
+  });
+
+  document.getElementById('reset-info-btn').addEventListener('click', () => {
+    document.getElementById('clip-title').value = '';
+    document.getElementById('clip-description').value = '';
+    document.getElementById('clip-year').value = '';
+    document.getElementById('clip-tags').value = '';
+    document.getElementById('clip-tape').value = '';
+    document.getElementById('clip-distributor').value = '';
+    document.getElementById('clip-tape-length').value = '';
+    document.getElementById('clip-speed').value = '';
+    document.getElementById('clip-condition').value = '';
+    document.getElementById('clip-notes').value = '';
+  });
+}
+
 // --- Before unload ---
 
 function wireBeforeUnload() {
@@ -984,9 +1007,14 @@ function showPlaybackTab() {
   tabLive.classList.replace('border-white/20', 'border-white/10');
 
   preview.classList.add('hidden');
+  preview.muted = true;
   playback.classList.remove('hidden');
   deleteBtn.classList.remove('hidden');
   document.getElementById('save-data-btn').classList.remove('hidden');
+
+  // Update mute icon to reflect muted state
+  document.getElementById('mute-icon-on').classList.add('hidden');
+  document.getElementById('mute-icon-off').classList.remove('hidden');
 
   // Update legend
   const legend = document.getElementById('preview-legend');
