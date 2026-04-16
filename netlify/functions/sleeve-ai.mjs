@@ -21,29 +21,38 @@ export default async (req) => {
   }
 
   const image = body?.image;
+  const imageBack = body?.imageBack;
   if (!image) {
     console.error('No image in body. Keys received:', Object.keys(body || {}));
     return json({ error: 'Missing image data', keys: Object.keys(body || {}) }, 400);
   }
 
-  // Strip data URL prefix if present
-  const base64 = image.replace(/^data:image\/\w+;base64,/, '');
+  const base64Front = image.replace(/^data:image\/\w+;base64,/, '');
+  const base64Back = imageBack ? imageBack.replace(/^data:image\/\w+;base64,/, '') : null;
 
-  const prompt = `You are analyzing the front cover of a VHS cassette tape sleeve/case.
-Extract the following information from the image and return ONLY valid JSON with these fields:
+  const prompt = `You are analyzing a VHS cassette tape sleeve/case.${base64Back ? ' You have been given BOTH the front and back cover images.' : ' You have been given the front cover image.'}
+Extract the following information and return ONLY valid JSON with these fields:
 
 {
   "tape": "The title of the movie, show, or content on this VHS tape",
   "year": "The release year if visible, otherwise your best estimate",
   "tags": "Comma-separated relevant tags (genre, era, format, studio, etc.)",
-  "distributor": "The distributor or studio label visible on the sleeve (e.g., Warner Home Video, Paramount, Sony, etc.). Empty string if not visible.",
-  "tapeLength": "Tape length if visible (e.g., T-120, T-160, T-60). Empty string if not visible.",
-  "recordingSpeed": "Recording speed if indicated (SP, LP, EP, SLP). Empty string if not visible.",
+  "distributor": "The distributor or studio label visible on the sleeve (e.g., Warner Home Video, Paramount, Sony, etc.). Check both front and back for this.",
+  "tapeLength": "Tape length if visible (e.g., T-120, T-160, T-60). Check both front and back.",
+  "recordingSpeed": "Recording speed if indicated (SP, LP, EP, SLP). Check both front and back.",
   "condition": "Estimate tape condition from sleeve appearance: Excellent, Good, Fair, or Poor. Empty string if unclear.",
-  "cassetteNotes": "Two parts: (1) A brief 1-2 sentence summary of what this movie/show is about. (2) Anything unique about THIS specific VHS release — special edition, director's cut, widescreen, rental copy stickers, screener markings, ex-library, clamshell case, or any other notable physical details you can spot. Separate the summary and the release details with a line break."
+  "cassetteNotes": "Two parts: (1) A brief 1-2 sentence summary of what this movie/show is about. (2) Anything unique about THIS specific VHS release — special edition, director's cut, widescreen, rental copy stickers, screener markings, ex-library, clamshell case, or any other notable physical details you can spot from front and back. Separate the summary and the release details with a line break."
 }
 
 If you cannot determine a field, use an empty string. Return ONLY the JSON object, no markdown formatting.`;
+
+  const imageParts = [
+    { text: prompt },
+    { inlineData: { mimeType: 'image/jpeg', data: base64Front } },
+  ];
+  if (base64Back) {
+    imageParts.push({ inlineData: { mimeType: 'image/jpeg', data: base64Back } });
+  }
 
   try {
     const res = await fetch(
@@ -55,18 +64,7 @@ If you cannot determine a field, use an empty string. Return ONLY the JSON objec
           'x-goog-api-key': GEMINI_API_KEY,
         },
         body: JSON.stringify({
-          contents: [{
-            role: 'user',
-            parts: [
-              { text: prompt },
-              {
-                inlineData: {
-                  mimeType: 'image/jpeg',
-                  data: base64,
-                },
-              },
-            ],
-          }],
+          contents: [{ role: 'user', parts: imageParts }],
         }),
       }
     );
@@ -77,10 +75,7 @@ If you cannot determine a field, use an empty string. Return ONLY the JSON objec
       return json({ error: data.error.message }, data.error.code || 500);
     }
 
-    // Extract text from Gemini response
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-    // Parse JSON from response (strip any markdown fences)
     const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     const info = JSON.parse(cleaned);
 

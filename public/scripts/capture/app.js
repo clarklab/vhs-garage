@@ -322,11 +322,13 @@ async function tryStartDetection() {
     playShutter();
     const result = handleSleeveCapture();
     if (result && result.captured === 'front') {
-      analyzeSleevePhoto(result.data);
-      // Restart detection for back after a short pause
+      // Don't analyze yet — wait for back
       setTimeout(() => tryStartDetection(), 1500);
+    } else if (result && result.captured === 'back') {
+      // Both captured — now analyze with both images
+      const sleeveData = getSleeveData();
+      analyzeSleevePhotos(sleeveData.front, sleeveData.back);
     }
-    // If back was captured (result.captured === 'back'), detection stays paused (state is 'done')
   }, updateTargetOverlay);
 }
 
@@ -337,8 +339,12 @@ function wireSleeveCapture() {
     playShutter();
     const result = handleSleeveCapture();
     if (result && result.captured === 'front') {
-      analyzeSleevePhoto(result.data);
+      // Don't analyze yet — wait for back
       setTimeout(() => tryStartDetection(), 1500);
+    } else if (result && result.captured === 'back') {
+      // Both captured — analyze with both images
+      const sleeveData = getSleeveData();
+      analyzeSleevePhotos(sleeveData.front, sleeveData.back);
     }
   });
   document.getElementById('sleeve-retake-btn').addEventListener('click', () => {
@@ -377,22 +383,28 @@ function resizeForAI(dataUrl) {
   });
 }
 
-async function analyzeSleevePhoto(imageData) {
+async function analyzeSleevePhotos(frontData, backData) {
   const loader = document.getElementById('clip-info-loader');
   const aiFields = document.getElementById('ai-fields');
 
-  // Show loader, dim only AI-filled fields (leave Title & Description editable)
+  // Show loader, dim only AI-filled fields (leave Clip Title & Description editable)
   loader.classList.remove('hidden');
   aiFields.classList.add('opacity-30', 'pointer-events-none');
 
   try {
-    const smallImage = await resizeForAI(imageData);
-    // Send only base64 data, strip the data URL prefix
-    const base64 = smallImage.replace(/^data:image\/\w+;base64,/, '');
+    const smallFront = await resizeForAI(frontData);
+    const base64Front = smallFront.replace(/^data:image\/\w+;base64,/, '');
+
+    const payload = { image: base64Front };
+    if (backData) {
+      const smallBack = await resizeForAI(backData);
+      payload.imageBack = smallBack.replace(/^data:image\/\w+;base64,/, '');
+    }
+
     const res = await fetch('/.netlify/functions/sleeve-ai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: base64 }),
+      body: JSON.stringify(payload),
     });
     const info = await res.json();
 
