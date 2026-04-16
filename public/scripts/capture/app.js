@@ -514,7 +514,9 @@ function wireRecordButton() {
         const speed = document.getElementById('clip-speed')?.value || '';
         const condition = document.getElementById('clip-condition')?.value || '';
 
-        const entry = createClipEntry(title || 'Untitled', currentFilename, duration, fileSize, bitrate);
+        // Read title fresh (user may have edited during recording)
+        const currentTitle = titleInput.value || title || 'Untitled';
+        const entry = createClipEntry(currentTitle, currentFilename, duration, fileSize, bitrate);
         entry.thumbnail = thumbnail;
         entry.year = year;
         entry.description = description;
@@ -861,7 +863,7 @@ function wireSaveData() {
   btn.addEventListener('click', async () => {
     if (!lastClipId || !directoryHandle) return;
 
-    // Read current field values
+    // Read current field values fresh from the form
     const title = document.getElementById('clip-title')?.value || 'Untitled';
     const year = document.getElementById('clip-year')?.value || '';
     const description = document.getElementById('clip-description')?.value || '';
@@ -873,16 +875,30 @@ function wireSaveData() {
     const speed = document.getElementById('clip-speed')?.value || '';
     const condition = document.getElementById('clip-condition')?.value || '';
 
-    // Update the clip in the catalog
-    const fields = { title, year, description, tags, tape, cassetteNotes: notes, distributor, tapeLength, recordingSpeed: speed, condition };
+    // Also grab latest sleeve data (in case of retake)
+    const sleeveData = getSleeveData();
+
+    // Update the clip in the catalog with all current data
+    const fields = {
+      title, year, description, tags, tape,
+      cassetteNotes: notes, distributor, tapeLength,
+      recordingSpeed: speed, condition,
+      sleeveFront: sleeveData.front,
+      sleeveBack: sleeveData.back,
+    };
     updateClip(lastClipId, fields);
 
-    // Re-save sidecar files with updated data
+    // Get the updated clip from catalog (has the correct filename)
     const clips = getClips();
     const clip = clips.find(c => c.id === lastClipId);
-    if (clip) {
+    if (clip && clip.filename) {
       const basename = clip.filename.replace(/\.(webm|mp4)$/, '');
+
+      // Save sidecar JSON + YouTube text (named to match the video file)
       await saveSidecarFiles(directoryHandle, basename, clip);
+
+      // Re-save sleeve photos (named to match the video file)
+      await saveSleevePhotos(directoryHandle, basename).catch(() => {});
     }
 
     // Flash confirmation
