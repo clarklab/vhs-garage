@@ -95,19 +95,6 @@ function detectPaper() {
     const frameArea = SAMPLE_W * SAMPLE_H;
     let found = false;
 
-    // Debug: see what's being detected
-    if (maxIdx >= 0) {
-      const contour = contours.get(maxIdx);
-      const approx = new cv.Mat();
-      const peri = cv.arcLength(contour, true);
-      // Check rectangularity: contour area vs bounding rect area
-      const contour = contours.get(maxIdx);
-      const rect = cv.boundingRect(contour);
-      const boundingArea = rect.width * rect.height;
-      const rectangularity = maxArea / boundingArea;
-      console.log(`[detect] area=${maxArea.toFixed(0)} (${(maxArea/frameArea*100).toFixed(1)}%) rect=${rectangularity.toFixed(2)} bbox=${rect.width}x${rect.height}`);
-    }
-
     if (maxIdx >= 0 && maxArea > frameArea * MIN_AREA_RATIO) {
       // Rectangularity test: a real box fills 80%+ of its bounding rectangle
       // A face/organic shape fills 50-70%
@@ -115,6 +102,8 @@ function detectPaper() {
       const rect = cv.boundingRect(contour);
       const boundingArea = rect.width * rect.height;
       const rectangularity = maxArea / boundingArea;
+
+      console.log(`[detect] area=${maxArea.toFixed(0)} (${(maxArea/frameArea*100).toFixed(1)}%) rect=${rectangularity.toFixed(2)} bbox=${rect.width}x${rect.height}`);
 
       if (rectangularity > 0.8) {
         found = true;
