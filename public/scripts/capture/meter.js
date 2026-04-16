@@ -5,11 +5,14 @@ let animId = null;
 let canvas = null;
 let ctx = null;
 let currentSource = null;
+let canvasW = 0;
+let canvasH = 0;
 
 function setupAnalyser() {
   if (!audioCtx) audioCtx = new AudioContext();
-  if (analyser) {
-    if (currentSource) currentSource.disconnect();
+  if (currentSource) {
+    currentSource.disconnect();
+    currentSource = null;
   }
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 128;
@@ -21,10 +24,21 @@ export function initMeter(stream) {
   canvas = document.getElementById('audio-meter');
   if (!canvas) return;
   ctx = canvas.getContext('2d');
+  canvasW = canvas.offsetWidth;
+  canvasH = canvas.offsetHeight;
+  canvas.width = canvasW;
+  canvas.height = canvasH;
 
   setupAnalyser();
-  currentSource = audioCtx.createMediaStreamSource(stream);
+
+  // Clone the audio tracks into a separate stream so the meter
+  // doesn't interfere with the <video> element's audio playback
+  const audioTracks = stream.getAudioTracks();
+  if (!audioTracks.length) return;
+  const meterStream = new MediaStream(audioTracks.map(t => t.clone()));
+  currentSource = audioCtx.createMediaStreamSource(meterStream);
   currentSource.connect(analyser);
+  // Do NOT connect to audioCtx.destination — analysis only
 
   if (!animId) draw();
 }
@@ -33,6 +47,10 @@ export function initMeterFromElement(videoEl) {
   canvas = document.getElementById('audio-meter');
   if (!canvas) return;
   ctx = canvas.getContext('2d');
+  canvasW = canvas.offsetWidth;
+  canvasH = canvas.offsetHeight;
+  canvas.width = canvasW;
+  canvas.height = canvasH;
 
   setupAnalyser();
   currentSource = audioCtx.createMediaElementSource(videoEl);
@@ -46,7 +64,7 @@ export function pauseMeter() {
   if (animId) cancelAnimationFrame(animId);
   animId = null;
   if (ctx && canvas) {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, canvasW, canvasH);
   }
 }
 
@@ -67,22 +85,18 @@ function draw() {
   animId = requestAnimationFrame(draw);
   if (!analyser || !ctx || !canvas) return;
 
-  canvas.width = canvas.offsetWidth;
-  canvas.height = canvas.offsetHeight;
-
   analyser.getByteFrequencyData(dataArray);
 
   const bars = dataArray.length;
-  const barWidth = canvas.width / bars;
-  const h = canvas.height;
+  const barWidth = canvasW / bars;
+  const h = canvasH;
 
-  ctx.clearRect(0, 0, canvas.width, h);
+  ctx.clearRect(0, 0, canvasW, h);
 
   for (let i = 0; i < bars; i++) {
     const val = dataArray[i] / 255;
     const barH = val * h;
 
-    // Green → yellow → red gradient based on level
     if (val < 0.5) {
       ctx.fillStyle = `rgba(76, 175, 80, ${0.4 + val * 0.8})`;
     } else if (val < 0.8) {
