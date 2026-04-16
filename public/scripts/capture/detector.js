@@ -1,13 +1,13 @@
 // Auto-snap detector for VHS sleeve capture
-// Uses OpenCV.js (loaded from CDN) for rectangle detection
-// Flow: load OpenCV → capture baseline → detect rectangle + stability → snap
+// Uses jscanify (OpenCV.js) for paper/document detection
+// Simply: does jscanify find a paper? Is it big enough? Is the scene stable? → snap
 
-const INTERVAL_MS = 120;
-const CONSECUTIVE_REQUIRED = 5;    // ~600ms of all-pass before snap
-const STABILITY_THRESHOLD = 5;     // mean pixel diff between frames
-const MIN_CONTOUR_AREA_RATIO = 0.15; // contour must fill at least 15% of frame (a real box held up)
-const SAMPLE_W = 300;
-const SAMPLE_H = 520;
+const INTERVAL_MS = 150;
+const CONSECUTIVE_REQUIRED = 3;    // ~450ms of stable detection
+const STABILITY_THRESHOLD = 8;     // mean pixel diff — webcams have noise
+const MIN_AREA_RATIO = 0.08;       // contour must fill 8% of frame
+const SAMPLE_W = 320;
+const SAMPLE_H = 240;
 
 let running = false;
 let rafId = null;
@@ -19,9 +19,9 @@ let ctx = null;
 let onSnapCallback = null;
 let onStateCallback = null;
 let videoEl = null;
-let targetRect = null;
 let cvReady = false;
 let cvLoading = false;
+let scanner = null; // jscanify instance
 
 let detectionState = 'idle';
 
@@ -33,45 +33,27 @@ function setState(state, progress) {
 // --- Load OpenCV.js from CDN ---
 function loadOpenCV() {
   return new Promise((resolve, reject) => {
-    if (typeof cv !== 'undefined' && cv.Mat) {
-      resolve();
-      return;
-    }
+    if (typeof cv !== 'undefined' && cv.Mat) { resolve(); return; }
     if (cvLoading) {
-      // Already loading — poll for ready
       const poll = setInterval(() => {
-        if (typeof cv !== 'undefined' && cv.Mat) {
-          clearInterval(poll);
-          resolve();
-        }
+        if (typeof cv !== 'undefined' && cv.Mat) { clearInterval(poll); resolve(); }
       }, 200);
       return;
     }
     cvLoading = true;
-    console.log('[detector] Loading OpenCV.js from CDN...');
+    console.log('[detector] Loading OpenCV.js...');
     const script = document.createElement('script');
     script.src = 'https://docs.opencv.org/4.9.0/opencv.js';
     script.async = true;
     script.onload = () => {
-      // OpenCV.js sets up cv as a Module that needs to initialize
       if (typeof cv === 'object' && cv.then) {
-        // cv is a Promise (newer builds)
-        cv.then((instance) => {
-          window.cv = instance;
-          console.log('[detector] OpenCV.js ready (promise)');
-          resolve();
-        });
+        cv.then((instance) => { window.cv = instance; resolve(); });
       } else if (typeof cv !== 'undefined' && !cv.Mat) {
-        // cv exists but not ready — wait for onRuntimeInitialized
-        cv.onRuntimeInitialized = () => {
-          console.log('[detector] OpenCV.js ready (callback)');
-          resolve();
-        };
+        cv.onRuntimeInitialized = () => resolve();
       } else if (typeof cv !== 'undefined' && cv.Mat) {
-        console.log('[detector] OpenCV.js ready (immediate)');
         resolve();
       } else {
-        reject(new Error('OpenCV.js failed to initialize'));
+        reject(new Error('OpenCV.js failed'));
       }
     };
     script.onerror = () => reject(new Error('Failed to load OpenCV.js'));
@@ -79,114 +61,98 @@ function loadOpenCV() {
   });
 }
 
-// --- Rectangle detection using OpenCV ---
-function detectRectangle() {
+// --- Use jscanify's findPaperContour approach ---
+function detectPaper() {
   if (!cvReady) return false;
 
-  // Scan full webcam frame, not just the target zone
   ctx.drawImage(videoEl, 0, 0, SAMPLE_W, SAMPLE_H);
-
-  let src, gray, blurred, edges, contours, hierarchy;
+  let src = null;
   try {
     src = cv.imread(canvas);
-    gray = new cv.Mat();
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-    blurred = new cv.Mat();
-    cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+    // Use jscanify's exact pipeline: Canny → blur → Otsu → findContours
+    const gray = new cv.Mat();
+    cv.Canny(src, gray, 50, 200);
 
-    edges = new cv.Mat();
-    cv.Canny(blurred, edges, 50, 150);
+    const blurred = new cv.Mat();
+    cv.GaussianBlur(gray, blurred, new cv.Size(3, 3), 0, 0, cv.BORDER_DEFAULT);
 
-    // Dilate to close gaps in edges
-    const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
-    cv.dilate(edges, edges, kernel);
-    kernel.delete();
+    const thresh = new cv.Mat();
+    cv.threshold(blurred, thresh, 0, 255, cv.THRESH_OTSU);
 
-    contours = new cv.MatVector();
-    hierarchy = new cv.Mat();
-    cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(thresh, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_SIMPLE);
 
-    const targetArea = SAMPLE_W * SAMPLE_H;
+    // Find the largest contour
+    let maxArea = 0;
+    let maxIdx = -1;
+    for (let i = 0; i < contours.size(); i++) {
+      const area = cv.contourArea(contours.get(i));
+      if (area > maxArea) { maxArea = area; maxIdx = i; }
+    }
+
+    const frameArea = SAMPLE_W * SAMPLE_H;
     let found = false;
 
-    for (let i = 0; i < contours.size(); i++) {
-      const contour = contours.get(i);
-      const area = cv.contourArea(contour);
-
-      // Must fill a significant portion of the frame
-      if (area < targetArea * MIN_CONTOUR_AREA_RATIO) continue;
-
-      // Approximate to polygon — must be exactly 4 corners (quadrilateral)
+    // Debug: see what's being detected
+    if (maxIdx >= 0) {
+      const contour = contours.get(maxIdx);
       const approx = new cv.Mat();
       const peri = cv.arcLength(contour, true);
-      cv.approxPolyDP(contour, approx, 0.03 * peri, true);
-
-      if (approx.rows === 4 && cv.isContourConvex(approx)) {
-        // Check that angles are roughly 90° (rectangle, not a random quad)
-        const pts = [];
-        for (let j = 0; j < 4; j++) {
-          pts.push({ x: approx.data32S[j * 2], y: approx.data32S[j * 2 + 1] });
-        }
-        const anglesOk = pts.every((_, j) => {
-          const a = pts[j];
-          const b = pts[(j + 1) % 4];
-          const c = pts[(j + 2) % 4];
-          const ab = { x: a.x - b.x, y: a.y - b.y };
-          const cb = { x: c.x - b.x, y: c.y - b.y };
-          const dot = ab.x * cb.x + ab.y * cb.y;
-          const cross = Math.abs(ab.x * cb.y - ab.y * cb.x);
-          const angle = Math.atan2(cross, Math.abs(dot)) * (180 / Math.PI);
-          return angle > 60 && angle < 120; // within 30° of a right angle
-        });
-
-        if (anglesOk) {
-          found = true;
-          approx.delete();
-          break;
-        }
-      }
-      approx.delete();
+      // Check rectangularity: contour area vs bounding rect area
+      const contour = contours.get(maxIdx);
+      const rect = cv.boundingRect(contour);
+      const boundingArea = rect.width * rect.height;
+      const rectangularity = maxArea / boundingArea;
+      console.log(`[detect] area=${maxArea.toFixed(0)} (${(maxArea/frameArea*100).toFixed(1)}%) rect=${rectangularity.toFixed(2)} bbox=${rect.width}x${rect.height}`);
     }
+
+    if (maxIdx >= 0 && maxArea > frameArea * MIN_AREA_RATIO) {
+      // Rectangularity test: a real box fills 80%+ of its bounding rectangle
+      // A face/organic shape fills 50-70%
+      const contour = contours.get(maxIdx);
+      const rect = cv.boundingRect(contour);
+      const boundingArea = rect.width * rect.height;
+      const rectangularity = maxArea / boundingArea;
+
+      if (rectangularity > 0.8) {
+        found = true;
+      }
+    }
+
+    gray.delete();
+    blurred.delete();
+    thresh.delete();
+    contours.delete();
+    hierarchy.delete();
+    src.delete();
+    src = null;
 
     return found;
   } catch (e) {
-    console.warn('[detector] OpenCV error:', e.message);
-    return false;
-  } finally {
+    console.warn('[detector] error:', e.message);
     if (src) src.delete();
-    if (gray) gray.delete();
-    if (blurred) blurred.delete();
-    if (edges) edges.delete();
-    if (contours) contours.delete();
-    if (hierarchy) hierarchy.delete();
+    return false;
   }
 }
 
-// --- Stability check (frame diff) ---
+// --- Stability check ---
 function checkStability() {
-  // Compare full frames for stability
   ctx.drawImage(videoEl, 0, 0, SAMPLE_W, SAMPLE_H);
   const imageData = ctx.getImageData(0, 0, SAMPLE_W, SAMPLE_H);
-  const gray = toGrayscale(imageData.data, SAMPLE_W, SAMPLE_H);
-
-  const stability = prevGray ? computeMeanDiff(gray, prevGray) : 999;
-  prevGray = gray;
-  return stability;
-}
-
-function toGrayscale(rgba, w, h) {
-  const gray = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) {
-    gray[i] = (rgba[i * 4] * 77 + rgba[i * 4 + 1] * 150 + rgba[i * 4 + 2] * 29) >> 8;
+  const gray = new Uint8Array(SAMPLE_W * SAMPLE_H);
+  for (let i = 0; i < gray.length; i++) {
+    gray[i] = (imageData.data[i * 4] * 77 + imageData.data[i * 4 + 1] * 150 + imageData.data[i * 4 + 2] * 29) >> 8;
   }
-  return gray;
-}
-
-function computeMeanDiff(a, b) {
-  let sum = 0;
-  for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
-  return sum / a.length;
+  let diff = 999;
+  if (prevGray) {
+    let sum = 0;
+    for (let i = 0; i < gray.length; i++) sum += Math.abs(gray[i] - prevGray[i]);
+    diff = sum / gray.length;
+  }
+  prevGray = gray;
+  return diff;
 }
 
 // --- Main loop ---
@@ -199,13 +165,13 @@ function loop(timestamp) {
 
   if (!videoEl.videoWidth || !videoEl.videoHeight) return;
 
-  const hasRect = detectRectangle();
+  const hasPaper = detectPaper();
   const stability = checkStability();
   const stableOk = stability < STABILITY_THRESHOLD;
 
-  console.log(`rect:${hasRect} stable:${stability.toFixed(1)} | rect:${hasRect} stable:${stableOk}`);
+  console.log(`paper:${hasPaper} stable:${stability.toFixed(1)} | paper:${hasPaper} stable:${stableOk}`);
 
-  if (hasRect && stableOk) {
+  if (hasPaper && stableOk) {
     consecutivePasses++;
     const progress = consecutivePasses / CONSECUTIVE_REQUIRED;
     if (consecutivePasses >= CONSECUTIVE_REQUIRED) {
@@ -215,7 +181,7 @@ function loop(timestamp) {
       return;
     }
     setState('capturing', progress);
-  } else if (hasRect) {
+  } else if (hasPaper) {
     consecutivePasses = 0;
     setState('detected', 0);
   } else {
@@ -228,7 +194,6 @@ function loop(timestamp) {
 
 export async function startDetection(video, rect, onSnap, onState) {
   videoEl = video;
-  targetRect = rect;
   onSnapCallback = onSnap;
   onStateCallback = onState;
 
@@ -239,13 +204,12 @@ export async function startDetection(video, rect, onSnap, onState) {
     ctx = canvas.getContext('2d', { willReadFrequently: true });
   }
 
-  // Load OpenCV if not ready
   if (!cvReady) {
     setState('loading');
     try {
       await loadOpenCV();
       cvReady = true;
-      console.log('[detector] OpenCV ready, starting detection');
+      console.log('[detector] OpenCV ready');
     } catch (e) {
       console.error('[detector] Failed to load OpenCV:', e);
       setState('idle');
@@ -277,7 +241,7 @@ export function pauseDetection() {
 }
 
 export function resumeDetection() {
-  if (!videoEl || !targetRect || !onSnapCallback || !cvReady) return;
+  if (!videoEl || !onSnapCallback || !cvReady) return;
   running = true;
   consecutivePasses = 0;
   prevGray = null;

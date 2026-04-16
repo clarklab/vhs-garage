@@ -6,7 +6,7 @@ import {
   startRecording, stopRecording, isRecording, formatTime, formatSize, generateFilename, getLastFileHandle
 } from './recorder.js';
 import {
-  getClips, addClip, deleteClip, createClipEntry, captureThumbnail, exportCatalog, renderLibrary
+  getClips, addClip, updateClip, deleteClip, createClipEntry, captureThumbnail, exportCatalog, renderLibrary
 } from './library.js';
 import {
   initWebcam, stopWebcam, handleSleeveCapture, handleSleeveRetake, getSleeveData, getSleeveState,
@@ -91,6 +91,8 @@ async function startApp() {
   wireDevicePopover();
   wireLibrary();
   wirePlaybackTabs();
+  wireMuteToggle();
+  wireSaveData();
   wireBeforeUnload();
 }
 
@@ -427,7 +429,6 @@ function wireRecordButton() {
     if (isRecording()) {
       btn.classList.remove('recording');
       btn.querySelector('.rec-label').textContent = 'REC';
-      titleInput.readOnly = false;
       document.getElementById('preview-container').classList.remove('recording-active');
       document.getElementById('rec-overlay-timer').classList.add('hidden');
       const legend = document.getElementById('preview-legend');
@@ -467,7 +468,6 @@ function wireRecordButton() {
     currentFilename = generateFilename(title, settings.nameFormat || 'title', videoFormat);
     const bitrate = settings.bitrate || 5000000;
 
-    titleInput.readOnly = true;
     btn.classList.add('recording');
     btn.querySelector('.rec-label').textContent = 'STOP';
     document.getElementById('preview-container').classList.add('recording-active');
@@ -554,7 +554,6 @@ function wireRecordButton() {
       },
       onError: (err) => {
         btn.classList.remove('recording');
-        titleInput.readOnly = false;
         document.getElementById('preview-container').classList.remove('recording-active');
         document.getElementById('rec-overlay-timer').classList.add('hidden');
         alert('Recording error: ' + err.message);
@@ -750,6 +749,64 @@ function refreshLibrary() {
   });
 }
 
+// --- Mute toggle ---
+
+function wireMuteToggle() {
+  const btn = document.getElementById('mute-btn');
+  const preview = document.getElementById('preview');
+  const iconOn = document.getElementById('mute-icon-on');
+  const iconOff = document.getElementById('mute-icon-off');
+
+  btn.addEventListener('click', () => {
+    preview.muted = !preview.muted;
+    iconOn.classList.toggle('hidden', preview.muted);
+    iconOff.classList.toggle('hidden', !preview.muted);
+  });
+}
+
+// --- Save data button ---
+
+function wireSaveData() {
+  const btn = document.getElementById('save-data-btn');
+
+  btn.addEventListener('click', async () => {
+    if (!lastClipId || !directoryHandle) return;
+
+    // Read current field values
+    const title = document.getElementById('clip-title')?.value || 'Untitled';
+    const year = document.getElementById('clip-year')?.value || '';
+    const description = document.getElementById('clip-description')?.value || '';
+    const tags = document.getElementById('clip-tags')?.value || '';
+    const tape = document.getElementById('clip-tape')?.value || '';
+    const notes = document.getElementById('clip-notes')?.value || '';
+    const distributor = document.getElementById('clip-distributor')?.value || '';
+    const tapeLength = document.getElementById('clip-tape-length')?.value || '';
+    const speed = document.getElementById('clip-speed')?.value || '';
+    const condition = document.getElementById('clip-condition')?.value || '';
+
+    // Update the clip in the catalog
+    const fields = { title, year, description, tags, tape, cassetteNotes: notes, distributor, tapeLength, recordingSpeed: speed, condition };
+    updateClip(lastClipId, fields);
+
+    // Re-save sidecar files with updated data
+    const clips = getClips();
+    const clip = clips.find(c => c.id === lastClipId);
+    if (clip) {
+      const basename = clip.filename.replace(/\.(webm|mp4)$/, '');
+      await saveSidecarFiles(directoryHandle, basename, clip);
+    }
+
+    // Flash confirmation
+    const orig = btn.textContent;
+    btn.textContent = 'Saved!';
+    btn.classList.add('bg-red-500', 'text-black');
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.classList.remove('bg-red-500', 'text-black');
+    }, 1500);
+  });
+}
+
 // --- Before unload ---
 
 function wireBeforeUnload() {
@@ -841,6 +898,7 @@ function showPlaybackTab() {
   preview.classList.add('hidden');
   playback.classList.remove('hidden');
   deleteBtn.classList.remove('hidden');
+  document.getElementById('save-data-btn').classList.remove('hidden');
 
   // Update legend
   const legend = document.getElementById('preview-legend');
@@ -872,6 +930,7 @@ function showLiveTab() {
   playback.classList.add('hidden');
   preview.classList.remove('hidden');
   deleteBtn.classList.add('hidden');
+  document.getElementById('save-data-btn').classList.add('hidden');
 
   // Update legend
   const legend = document.getElementById('preview-legend');
