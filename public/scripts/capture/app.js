@@ -94,6 +94,7 @@ async function startApp() {
   wireMuteToggle();
   wireSaveData();
   wireResetButtons();
+  wireYouTubePublish();
   wireBeforeUnload();
 }
 
@@ -934,6 +935,188 @@ function wireResetButtons() {
   });
 }
 
+// --- YouTube publish ---
+
+function wireYouTubePublish() {
+  const btn = document.getElementById('publish-yt-btn');
+  const modal = document.getElementById('yt-publish-modal');
+  const loading = document.getElementById('yt-pub-loading');
+  const form = document.getElementById('yt-pub-form');
+  const done = document.getElementById('yt-pub-done');
+  const titleInput = document.getElementById('yt-pub-title');
+  const descInput = document.getElementById('yt-pub-desc');
+  const tagsInput = document.getElementById('yt-pub-tags');
+  const privacySelect = document.getElementById('yt-pub-privacy');
+  const uploadBtn = document.getElementById('yt-pub-upload');
+  const cancelBtn = document.getElementById('yt-pub-cancel');
+  const closeBtn = document.getElementById('yt-pub-close');
+  const progressDiv = document.getElementById('yt-pub-progress');
+  const progressBar = document.getElementById('yt-pub-progress-bar');
+  const statusEl = document.getElementById('yt-pub-status');
+  const linkEl = document.getElementById('yt-pub-link');
+
+  let currentToken = null;
+
+  btn.addEventListener('click', async () => {
+    if (!lastClipId) return;
+
+    // Show modal in loading state
+    modal.classList.remove('hidden');
+    loading.classList.remove('hidden');
+    form.classList.add('hidden');
+    done.classList.add('hidden');
+
+    // Get current clip metadata
+    const clips = getClips();
+    const clip = clips.find(c => c.id === lastClipId);
+    if (!clip) return;
+
+    try {
+      const res = await fetch('/.netlify/functions/youtube-publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'prepare', metadata: clip }),
+      });
+      const data = await res.json();
+
+      if (data.error) {
+        loading.textContent = 'Error: ' + data.error;
+        return;
+      }
+
+      currentToken = data.accessToken;
+      titleInput.value = data.title;
+      descInput.value = data.description;
+      tagsInput.value = data.tags;
+
+      loading.classList.add('hidden');
+      form.classList.remove('hidden');
+    } catch (e) {
+      loading.textContent = 'Error: ' + e.message;
+    }
+  });
+
+  uploadBtn.addEventListener('click', async () => {
+    if (!currentToken || !lastClipId || !directoryHandle) return;
+
+    const clips = getClips();
+    const clip = clips.find(c => c.id === lastClipId);
+    if (!clip || !clip.filename) return;
+
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = 'Uploading...';
+    progressDiv.classList.remove('hidden');
+
+    try {
+      // Read the video file from disk
+      const fh = await directoryHandle.getFileHandle(clip.filename);
+      const file = await fh.getFile();
+      const contentType = clip.filename.endsWith('.webm') ? 'video/webm' : 'video/mp4';
+
+      const tags = tagsInput.value.split(',').map(t => t.trim()).filter(Boolean);
+      const uploadMeta = {
+        snippet: {
+          title: titleInput.value,
+          description: descInput.value,
+          tags,
+          categoryId: '22',
+        },
+        status: {
+          privacyStatus: privacySelect.value,
+          selfDeclaredMadeForKids: false,
+        },
+      };
+
+      // Init resumable upload
+      statusEl.textContent = 'Initializing...';
+      const initRes = await fetch(
+        'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${currentToken}`,
+            'Content-Type': 'application/json',
+            'X-Upload-Content-Type': contentType,
+            'X-Upload-Content-Length': String(file.size),
+          },
+          body: JSON.stringify(uploadMeta),
+        }
+      );
+
+      if (!initRes.ok) {
+        const err = await initRes.text();
+        statusEl.textContent = 'Error: ' + err;
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = 'Upload to YouTube';
+        return;
+      }
+
+      const uploadUrl = initRes.headers.get('location');
+
+      // Upload with XHR for progress
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', uploadUrl);
+      xhr.setRequestHeader('Content-Type', contentType);
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          progressBar.style.width = pct + '%';
+          statusEl.textContent = pct + '% uploaded';
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const result = JSON.parse(xhr.responseText);
+          const ytUrl = 'https://youtube.com/watch?v=' + result.id;
+
+          // Save YouTube URL back to clip
+          updateClip(lastClipId, { youtubeUrl: ytUrl, youtubeId: result.id });
+
+          linkEl.href = ytUrl;
+          linkEl.textContent = ytUrl;
+          form.classList.add('hidden');
+          done.classList.remove('hidden');
+        } else {
+          statusEl.textContent = 'Upload failed: ' + xhr.status;
+          uploadBtn.disabled = false;
+          uploadBtn.textContent = 'Upload to YouTube';
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        statusEl.textContent = 'Network error';
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = 'Upload to YouTube';
+      });
+
+      statusEl.textContent = 'Uploading...';
+      xhr.send(file);
+    } catch (e) {
+      statusEl.textContent = 'Error: ' + e.message;
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = 'Upload to YouTube';
+    }
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    modal.classList.add('hidden');
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = 'Upload to YouTube';
+    progressDiv.classList.add('hidden');
+    progressBar.style.width = '0%';
+  });
+
+  closeBtn.addEventListener('click', () => {
+    modal.classList.add('hidden');
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = 'Upload to YouTube';
+    progressDiv.classList.add('hidden');
+    progressBar.style.width = '0%';
+  });
+}
+
 // --- Before unload ---
 
 function wireBeforeUnload() {
@@ -1027,6 +1210,7 @@ function showPlaybackTab() {
   playback.classList.remove('hidden');
   deleteBtn.classList.remove('hidden');
   document.getElementById('save-data-btn').classList.remove('hidden');
+  document.getElementById('publish-yt-btn').classList.remove('hidden');
 
   // Update mute icon to reflect muted state
   document.getElementById('mute-icon-on').classList.add('hidden');
@@ -1063,6 +1247,7 @@ function showLiveTab() {
   preview.classList.remove('hidden');
   deleteBtn.classList.add('hidden');
   document.getElementById('save-data-btn').classList.add('hidden');
+  document.getElementById('publish-yt-btn').classList.add('hidden');
 
   // Update legend
   const legend = document.getElementById('preview-legend');
