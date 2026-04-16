@@ -43,10 +43,24 @@ export function onDeviceChange(callback) {
 }
 
 export async function openStream(videoDeviceId, audioDeviceId) {
-  return navigator.mediaDevices.getUserMedia({
-    video: { deviceId: { exact: videoDeviceId }, width: { ideal: 720 }, height: { ideal: 480 } },
-    audio: { deviceId: { exact: audioDeviceId } },
-  });
+  // Open video and audio as separate streams to avoid USB capture card
+  // issues where Chrome drops audio when negotiating both in one call
+  const [videoStream, audioStream] = await Promise.all([
+    navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: videoDeviceId }, width: { ideal: 720 }, height: { ideal: 480 } },
+      audio: false,
+    }),
+    navigator.mediaDevices.getUserMedia({
+      video: false,
+      audio: { deviceId: { exact: audioDeviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    }),
+  ]);
+  // Combine into a single stream
+  const combined = new MediaStream([
+    ...videoStream.getVideoTracks(),
+    ...audioStream.getAudioTracks(),
+  ]);
+  return combined;
 }
 
 export async function openWebcamStream(deviceId) {
