@@ -20,6 +20,7 @@ let captureStream = null;
 let currentFilename = null;
 let playbackBlobUrl = null;
 let lastClipId = null;
+let publishClip = null;
 
 async function init() {
   // Browser check
@@ -755,10 +756,16 @@ function refreshLibrary() {
     }
   } : null;
 
+  // Only offer Upload when the user has a directory handle this session
+  // (so we can read the video file) AND the publish flow is wired up.
+  const onUpload = directoryHandle && publishClip
+    ? (id) => publishClip(id)
+    : null;
+
   renderLibrary(grid, empty, clips, (id) => {
     deleteClip(id);
     refreshLibrary();
-  }, onOpen);
+  }, onOpen, onUpload);
 }
 
 // --- Clip playback modal ---
@@ -958,6 +965,9 @@ function wireYouTubePublish() {
   const linkEl = document.getElementById('yt-pub-link');
 
   let currentToken = null;
+  // Clip being published in this modal session. May differ from `lastClipId`
+  // when the publish is triggered from the library card.
+  let publishClipId = null;
 
   function closeModal() {
     modal.classList.add('hidden');
@@ -976,8 +986,9 @@ function wireYouTubePublish() {
     errorPanel.classList.remove('hidden');
   }
 
-  async function startPrepare() {
-    if (!lastClipId) return;
+  async function startPrepare(clipId = lastClipId) {
+    if (!clipId) return;
+    publishClipId = clipId;
 
     let password = sessionStorage.getItem('yt-publish-password');
     if (!password) {
@@ -994,12 +1005,15 @@ function wireYouTubePublish() {
     done.classList.add('hidden');
 
     const clips = getClips();
-    const storedClip = clips.find(c => c.id === lastClipId);
+    const storedClip = clips.find(c => c.id === publishClipId);
     if (!storedClip) { showError('Clip not found.'); return; }
 
-    // Merge live form values over stored clip so edits made after (or without)
-    // "Save Data" still reach the AI prompt.
-    const metadata = { ...storedClip, ...readFormFields() };
+    // For the active clip, merge live form values so edits after (or without)
+    // "Save Data" still reach the AI prompt. For a library clip, use stored
+    // metadata — the form reflects a different clip or nothing.
+    const metadata = publishClipId === lastClipId
+      ? { ...storedClip, ...readFormFields() }
+      : storedClip;
 
     try {
       const res = await fetch('/.netlify/functions/youtube-publish', {
@@ -1034,8 +1048,9 @@ function wireYouTubePublish() {
     }
   }
 
-  btn.addEventListener('click', startPrepare);
-  retryBtn.addEventListener('click', startPrepare);
+  btn.addEventListener('click', () => startPrepare());
+  retryBtn.addEventListener('click', () => startPrepare(publishClipId));
+  publishClip = startPrepare;
   errorCloseBtn.addEventListener('click', closeModal);
   dismissBtn.addEventListener('click', closeModal);
   modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
@@ -1044,10 +1059,10 @@ function wireYouTubePublish() {
   });
 
   uploadBtn.addEventListener('click', async () => {
-    if (!currentToken || !lastClipId || !directoryHandle) return;
+    if (!currentToken || !publishClipId || !directoryHandle) return;
 
     const clips = getClips();
-    const clip = clips.find(c => c.id === lastClipId);
+    const clip = clips.find(c => c.id === publishClipId);
     if (!clip || !clip.filename) return;
 
     uploadBtn.disabled = true;
@@ -1119,7 +1134,8 @@ function wireYouTubePublish() {
           const ytUrl = 'https://youtube.com/watch?v=' + result.id;
 
           // Save YouTube URL back to clip
-          updateClip(lastClipId, { youtubeUrl: ytUrl, youtubeId: result.id });
+          updateClip(publishClipId, { youtubeUrl: ytUrl, youtubeId: result.id });
+          refreshLibrary();
 
           linkEl.href = ytUrl;
           linkEl.textContent = ytUrl;

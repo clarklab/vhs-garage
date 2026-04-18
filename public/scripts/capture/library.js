@@ -96,7 +96,7 @@ function clipToJSON(clip) {
   return JSON.stringify(obj, null, 2);
 }
 
-export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen) {
+export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUpload) {
   if (!clips.length) {
     container.innerHTML = '';
     emptyMsg.classList.remove('hidden');
@@ -104,7 +104,12 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen) {
   }
 
   emptyMsg.classList.add('hidden');
-  container.innerHTML = clips.map(clip => `
+  container.innerHTML = clips.map(clip => {
+    const canUpload = onUpload && clip.filename && !clip.youtubeUrl;
+    const uploadedMarker = clip.youtubeUrl
+      ? `<a href="${clip.youtubeUrl}" target="_blank" class="text-red-400/60 hover:text-red-400 transition-colors" title="View on YouTube">▶ Uploaded</a>`
+      : '';
+    return `
     <div class="border border-white/20 p-3 text-xs" data-id="${clip.id}">
       <div class="aspect-[4/3] bg-[#141214] mb-2 overflow-hidden flex items-center justify-center ${onOpen ? 'cursor-pointer open-clip hover:opacity-80' : ''} transition-opacity" data-id="${clip.id}" data-filename="${clip.filename || ''}" title="${onOpen ? 'Click to play' : clip.filename || ''}">
         ${clip.thumbnail ? `<img src="${clip.thumbnail}" class="w-full h-full object-contain pointer-events-none" alt="">` : '<span class="text-white/10 pointer-events-none">No thumbnail</span>'}
@@ -113,14 +118,16 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen) {
       <p class="text-gray-500">${new Date(clip.date).toLocaleDateString()} · ${formatDuration(clip.duration)} · ${formatLibSize(clip.fileSize)}</p>
       <p class="text-gray-600 truncate text-[10px] mt-1">${clip.filename || ''}</p>
       ${clip.sleeveFront ? '<p class="text-gray-500 mt-1">Sleeve: Front' + (clip.sleeveBack ? ' + Back' : '') + '</p>' : ''}
-      <div class="flex gap-3 mt-2">
+      <div class="flex gap-3 mt-2 flex-wrap">
         <button class="copy-yt text-white/40 hover:text-white/70 transition-colors" data-id="${clip.id}" title="Copy YouTube text">YT ░</button>
         <button class="copy-json text-white/40 hover:text-white/70 transition-colors" data-id="${clip.id}" title="Copy JSON">JSON ░</button>
+        ${canUpload ? `<button class="upload-clip text-red-400/60 hover:text-red-400 transition-colors" data-id="${clip.id}" title="Upload to YouTube">▶ Upload</button>` : uploadedMarker}
         <span class="flex-1"></span>
         <button class="delete-clip text-red-400/50 hover:text-red-400 transition-colors" data-id="${clip.id}">Delete</button>
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   if (onOpen) {
     container.querySelectorAll('.open-clip').forEach(el => {
@@ -161,6 +168,12 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen) {
       }
     });
   });
+
+  if (onUpload) {
+    container.querySelectorAll('.upload-clip').forEach(btn => {
+      btn.addEventListener('click', () => onUpload(btn.dataset.id));
+    });
+  }
 }
 
 function formatDuration(seconds) {
