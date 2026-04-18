@@ -105,10 +105,13 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
 
   emptyMsg.classList.add('hidden');
   container.innerHTML = clips.map(clip => {
-    const canUpload = onUpload && clip.filename && !clip.youtubeUrl;
+    const hasFile = !!clip.filename;
+    const canUpload = onUpload && hasFile && !clip.youtubeUrl;
     const uploadedMarker = clip.youtubeUrl
       ? `<a href="${clip.youtubeUrl}" target="_blank" class="text-red-400/60 hover:text-red-400 transition-colors" title="View on YouTube">▶ Uploaded</a>`
-      : '';
+      : (hasFile && !onUpload
+          ? `<span class="text-white/20" title="Pick a save folder to enable upload">▶ Pick folder</span>`
+          : '');
     return `
     <div class="border border-white/20 p-3 text-xs" data-id="${clip.id}">
       <div class="aspect-[4/3] bg-[#141214] mb-2 overflow-hidden flex items-center justify-center ${onOpen ? 'cursor-pointer open-clip hover:opacity-80' : ''} transition-opacity" data-id="${clip.id}" data-filename="${clip.filename || ''}" title="${onOpen ? 'Click to play' : clip.filename || ''}">

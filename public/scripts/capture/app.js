@@ -1089,10 +1089,8 @@ function wireYouTubePublish() {
   publishClip = startPrepare;
   errorCloseBtn.addEventListener('click', closeModal);
   dismissBtn.addEventListener('click', closeModal);
-  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
-  });
+  // Modal only closes via the X button — no backdrop click or Escape, so
+  // a stray click or drag-to-select inside the form can't wipe the AI copy.
 
   uploadBtn.addEventListener('click', async () => {
     if (!currentToken || !publishClipId || !directoryHandle) return;
