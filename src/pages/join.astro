@@ -4,7 +4,7 @@ import Base from '../layouts/Base.astro';
 
 <Base title="Join" description="Sign up for VHS Garage. Free mystery VHS at our next event.">
 
-  <div class="min-h-screen flex flex-col items-center justify-center px-6 py-12">
+  <div id="join-layout" class="min-h-screen flex flex-col items-center justify-center px-6 py-12">
     <img src="/unfurl.png" alt="VHS Garage" class="w-64 mb-10" />
 
     <p id="join-count" class="text-white/40 text-xs uppercase tracking-widest mb-6"></p>
@@ -40,23 +40,35 @@ import Base from '../layouts/Base.astro';
     </form>
     <p id="join-error" class="hidden text-lg mt-4 text-red-400"></p>
 
-    <div id="join-confirm" class="hidden w-full max-w-md text-center relative">
-      <div aria-hidden="true" class="absolute inset-0 pointer-events-none scanlines"></div>
-      <p class="text-white/60 text-[11px] tracking-[0.3em] mb-4">░░░  CONFIRMED  ░░░</p>
-      <div class="relative py-8">
+    <a href="/" class="text-white/30 text-xs mt-12 hover:text-white/50 transition-colors">← vhsgarage.com</a>
+  </div>
+
+  <div id="join-confirm" class="hidden fixed inset-0 z-50 bg-black overflow-y-auto">
+    <div aria-hidden="true" class="fixed inset-0 pointer-events-none scanlines"></div>
+    <div class="relative min-h-full flex flex-col items-center justify-center px-6 py-10 text-center">
+      <p class="text-white/60 text-[11px] tracking-[0.3em] mb-6">░░░  CONFIRMED  ░░░</p>
+      <div class="w-full max-w-md">
         <p aria-hidden="true" class="text-white/30 text-xl tracking-widest mb-2">▓▓▓▓▓▓▓▓▓▓▓▓▓</p>
-        <h2 class="text-7xl sm:text-8xl font-black tracking-tight leading-none text-white free-tape">
+        <h2 class="text-7xl sm:text-9xl font-black tracking-tight leading-none text-white free-tape py-6">
           FREE<br/>TAPE
         </h2>
         <p aria-hidden="true" class="text-white/30 text-xl tracking-widest mt-2">▓▓▓▓▓▓▓▓▓▓▓▓▓</p>
       </div>
-      <p class="text-white/80 text-base mt-2 px-4">
+      <p class="text-white/80 text-base mt-8 px-4 max-w-md">
         Show this screen to <strong class="text-white">Matt</strong> or <strong class="text-white">Clark</strong> for your free VHS tape. Good luck.
       </p>
-      <p class="text-white/30 text-[10px] mt-10 italic">Within reason, don't be weird. We're cool.</p>
-    </div>
 
-    <a href="/" class="text-white/30 text-xs mt-12 hover:text-white/50 transition-colors">← vhsgarage.com</a>
+      <div class="w-full max-w-md flex flex-col gap-3 mt-10">
+        <a href="/watch" class="w-full h-14 flex items-center justify-center border border-white/30 text-white text-base hover:border-white hover:bg-white/5 transition-colors">
+          ▶ Watch VHS in the Garage
+        </a>
+        <a href="https://game.vhsgarage.com" class="w-full h-14 flex items-center justify-center border border-white/30 text-white text-base hover:border-white hover:bg-white/5 transition-colors">
+          ▶ Play our VHS Game
+        </a>
+      </div>
+
+      <p class="text-white/30 text-[10px] mt-12 italic max-w-md">Within reason, don't be weird. We're cool.</p>
+    </div>
   </div>
 
   <style>
@@ -87,6 +99,7 @@ import Base from '../layouts/Base.astro';
     (() => {
       const form = document.getElementById('join-form');
       const btn = document.getElementById('join-submit-btn');
+      const layout = document.getElementById('join-layout');
       const confirm = document.getElementById('join-confirm');
       const errorEl = document.getElementById('join-error');
       const frames = ['░░░', '▒░░', '▓▒░', '▓▓▒', '▓▓▓', '▓▓▒', '▓▒░', '▒░░'];
@@ -142,8 +155,9 @@ import Base from '../layouts/Base.astro';
           });
           stopLoader();
           if (res.ok) {
-            form.classList.add('hidden');
+            layout.classList.add('hidden');
             confirm.classList.remove('hidden');
+            window.scrollTo(0, 0);
           } else {
             showError('░ Something went wrong. Try again.');
           }
