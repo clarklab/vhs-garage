@@ -10,7 +10,7 @@ import Base from '../layouts/Base.astro';
     <p id="join-count" class="text-white/40 text-xs uppercase tracking-widest mb-6"></p>
 
     <h1 class="text-3xl mb-3 text-center">Join us in the Garage</h1>
-    <p class="text-gray-400 text-center max-w-md mb-8">Drop your email or phone and we'll give you a <strong class="text-white">free mystery VHS</strong> at an upcoming event. No spam. Just tapes.</p>
+    <p class="text-gray-400 text-center max-w-md mb-8">Drop your email or phone and we'll give you a <strong class="text-white">free mystery VHS</strong>. No spam. Just tapes.</p>
 
     <form id="join-form" name="garage-signup" method="POST" data-netlify="true" class="flex flex-col gap-3 w-full max-w-md">
       <input type="hidden" name="form-name" value="garage-signup" />
@@ -36,16 +36,57 @@ import Base from '../layouts/Base.astro';
         Sign Up
       </button>
     </form>
-    <p id="join-confirm" class="hidden text-lg mt-4"></p>
+    <p id="join-error" class="hidden text-lg mt-4 text-red-400"></p>
+
+    <div id="join-confirm" class="hidden w-full max-w-md text-center relative">
+      <div aria-hidden="true" class="absolute inset-0 pointer-events-none scanlines"></div>
+      <p class="text-white/60 text-[11px] tracking-[0.3em] mb-4">░░░  CONFIRMED  ░░░</p>
+      <div class="relative py-8">
+        <p aria-hidden="true" class="text-white/30 text-xl tracking-widest mb-2">▓▓▓▓▓▓▓▓▓▓▓▓▓</p>
+        <h2 class="text-7xl sm:text-8xl font-black tracking-tight leading-none text-white free-tape">
+          FREE<br/>TAPE
+        </h2>
+        <p aria-hidden="true" class="text-white/30 text-xl tracking-widest mt-2">▓▓▓▓▓▓▓▓▓▓▓▓▓</p>
+      </div>
+      <p class="text-white/80 text-base mt-2 px-4">
+        Show this screen to <strong class="text-white">Matt</strong> or <strong class="text-white">Clark</strong> for your free VHS tape. Good luck.
+      </p>
+      <p class="text-white/30 text-[10px] mt-10 italic">Within reason, don't be weird. We're cool.</p>
+    </div>
 
     <a href="/" class="text-white/30 text-xs mt-12 hover:text-white/50 transition-colors">← vhsgarage.com</a>
   </div>
+
+  <style>
+    .scanlines {
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 2px,
+        rgba(255, 255, 255, 0.04) 2px,
+        rgba(255, 255, 255, 0.04) 3px
+      );
+    }
+    .free-tape {
+      text-shadow:
+        2px 0 rgba(255, 0, 80, 0.7),
+        -2px 0 rgba(0, 200, 255, 0.7),
+        0 0 30px rgba(255, 255, 255, 0.25);
+      animation: vhs-wobble 5s ease-in-out infinite;
+    }
+    @keyframes vhs-wobble {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-1px); }
+      75% { transform: translateX(1px); }
+    }
+  </style>
 
   <script is:inline>
     (() => {
       const form = document.getElementById('join-form');
       const btn = document.getElementById('join-submit-btn');
       const confirm = document.getElementById('join-confirm');
+      const errorEl = document.getElementById('join-error');
       const frames = ['░░░', '▒░░', '▓▒░', '▓▓▒', '▓▓▓', '▓▓▒', '▓▒░', '▒░░'];
       let tick;
 
@@ -68,6 +109,16 @@ import Base from '../layouts/Base.astro';
       const emailInput = document.getElementById('join-email');
       const phoneInput = document.getElementById('join-phone');
 
+      function showError(msg) {
+        errorEl.textContent = msg;
+        errorEl.classList.remove('hidden');
+      }
+
+      function clearError() {
+        errorEl.classList.add('hidden');
+        errorEl.textContent = '';
+      }
+
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
 
@@ -75,15 +126,11 @@ import Base from '../layouts/Base.astro';
         const phone = phoneInput.value.trim();
 
         if (!email && !phone) {
-          confirm.classList.remove('hidden');
-          confirm.classList.add('text-red-400');
-          confirm.textContent = '░ Enter an email or phone number.';
+          showError('░ Enter an email or phone number.');
           return;
         }
 
-        confirm.classList.add('hidden');
-        confirm.classList.remove('text-red-400');
-
+        clearError();
         startLoader();
         try {
           const res = await fetch('/', {
@@ -95,17 +142,12 @@ import Base from '../layouts/Base.astro';
           if (res.ok) {
             form.classList.add('hidden');
             confirm.classList.remove('hidden');
-            confirm.textContent = '▓ You\'re in. See you at the next event.';
           } else {
-            confirm.classList.remove('hidden');
-            confirm.textContent = '░ Something went wrong. Try again.';
-            confirm.classList.add('text-red-400');
+            showError('░ Something went wrong. Try again.');
           }
         } catch {
           stopLoader();
-          confirm.classList.remove('hidden');
-          confirm.textContent = '░ Network error. Try again.';
-          confirm.classList.add('text-red-400');
+          showError('░ Network error. Try again.');
         }
       });
     })();
