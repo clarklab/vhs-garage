@@ -947,6 +947,7 @@ function wireYouTubePublish() {
   const loading = document.getElementById('yt-pub-loading');
   const errorPanel = document.getElementById('yt-pub-error');
   const errorMsg = document.getElementById('yt-pub-error-msg');
+  const aiNotice = document.getElementById('yt-pub-ai-notice');
   const retryBtn = document.getElementById('yt-pub-retry');
   const errorCloseBtn = document.getElementById('yt-pub-error-close');
   const dismissBtn = document.getElementById('yt-pub-dismiss');
@@ -1053,6 +1054,11 @@ function wireYouTubePublish() {
         return;
       }
 
+      if (res.status === 504) {
+        showError('AI rewrite timed out on the server. Click Retry — it usually succeeds on a second attempt, and falls back to template copy after that.');
+        return;
+      }
+
       if (!res.ok || data.error) {
         showError(data.error || `Server error (${res.status})`);
         return;
@@ -1062,6 +1068,13 @@ function wireYouTubePublish() {
       titleInput.value = data.title;
       descInput.value = data.description;
       tagsInput.value = data.tags;
+
+      if (data.aiFallback) {
+        aiNotice.textContent = '⚠ AI rewrite timed out — using template copy. Edit freely before upload.';
+        aiNotice.classList.remove('hidden');
+      } else {
+        aiNotice.classList.add('hidden');
+      }
 
       stopLoadingAnim();
       loading.classList.add('hidden');

@@ -58,6 +58,7 @@ export default async (req) => {
       title: aiCopy.title,
       description: aiCopy.description,
       tags: aiCopy.tags,
+      aiFallback: aiCopy._aiFallback === true,
     });
   }
 
@@ -139,6 +140,10 @@ Return ONLY valid JSON:
   "tags": "..."
 }`;
 
+  // Must return before Netlify's 10s function timeout kills the whole response.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+
   try {
     const res = await fetch(
       `${GEMINI_BASE_URL}/v1beta/models/${GEMINI_MODEL}:generateContent`,
@@ -151,6 +156,7 @@ Return ONLY valid JSON:
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
         }),
+        signal: controller.signal,
       }
     );
     const data = await res.json();
@@ -158,8 +164,11 @@ Return ONLY valid JSON:
     const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     return JSON.parse(cleaned);
   } catch (e) {
-    console.warn('Gemini rewrite failed, using fallback:', e.message);
-    return fallback;
+    const reason = e.name === 'AbortError' ? 'timeout after 8s' : e.message;
+    console.warn('Gemini rewrite failed, using fallback:', reason);
+    return { ...fallback, _aiFallback: true };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
