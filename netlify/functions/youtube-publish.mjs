@@ -4,6 +4,7 @@
 const YOUTUBE_CLIENT_ID = process.env.YOUTUBE_OAUTH_CLIENT_ID;
 const YOUTUBE_CLIENT_SECRET = process.env.YOUTUBE_OAUTH_CLIENT_SECRET;
 const YOUTUBE_REFRESH_TOKEN = process.env.YOUTUBE_OAUTH_REFRESH_TOKEN;
+const YOUTUBE_PUBLISH_PASSWORD = process.env.YOUTUBE_PUBLISH_PASSWORD;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_BASE_URL = process.env.GOOGLE_GEMINI_BASE_URL;
 const GEMINI_MODEL = 'gemini-3.1-pro-preview';
@@ -17,6 +18,10 @@ export default async (req) => {
     return json({ error: 'YouTube OAuth not configured' }, 500);
   }
 
+  if (!YOUTUBE_PUBLISH_PASSWORD) {
+    return json({ error: 'Publish password not configured' }, 500);
+  }
+
   let body;
   try {
     body = await req.json();
@@ -24,7 +29,11 @@ export default async (req) => {
     return json({ error: 'Invalid JSON' }, 400);
   }
 
-  const { metadata, action } = body;
+  const { metadata, action, password } = body;
+
+  if (password !== YOUTUBE_PUBLISH_PASSWORD) {
+    return json({ error: 'Wrong password' }, 401);
+  }
 
   // Action: just get a fresh access token (for upload)
   if (action === 'token') {
@@ -84,8 +93,7 @@ async function rewriteForYouTube(metadata) {
 
   if (!GEMINI_API_KEY || !GEMINI_BASE_URL) return fallback;
 
-  const prompt = `You are a YouTube SEO expert for a VHS archival channel called "VHS Garage" (@oracrest).
-Given this clip metadata, write a compelling YouTube title, description, and tags.
+  const prompt = `You are a YouTube SEO expert optimizing for maximum discoverability on a VHS archival channel called "VHS Garage" (@oracrest). Your #1 job: make this clip findable by people searching YouTube and Google for retro/VHS content.
 
 METADATA:
 Title: ${metadata.title || 'Untitled'}
@@ -99,10 +107,30 @@ Recording Speed: ${metadata.recordingSpeed || ''}
 Tape Length: ${metadata.tapeLength || ''}
 Condition: ${metadata.condition || ''}
 
-REQUIREMENTS:
-- Title: Catchy, keyword-rich, under 70 chars. Include year if known. Make it interesting for VHS collectors and nostalgia seekers.
-- Description: 2-3 paragraphs. First paragraph hooks the viewer. Include tape details, year, distributor. End with "Captured and archived by VHS Garage — https://vhsgarage.com" and channel info.
-- Tags: Comma-separated, 10-15 relevant tags for YouTube search. Include "VHS", the title, year, genre, distributor, "retro", "analog", "found footage" if applicable.
+SEO PRINCIPLES:
+- Front-load the most searched keywords first (what people actually type into YouTube/Google)
+- Use natural search phrases, not clickbait — think "1987 McDonald's commercial VHS" not "YOU WON'T BELIEVE"
+- Year + content type + "VHS" is usually the highest-intent search pattern
+- Long-tail keywords (specific brands, show names, actors, products, regional networks) beat generic ones
+- Every field should work even if other fields are ignored
+
+TITLE (max 70 chars, ideal 50-60):
+- Start with the most distinctive keyword (show/brand/product name, NOT generic like "Vintage" or "Retro")
+- Include year if known, format as (1987) or "1987" — never omit
+- End with "| VHS" or similar if space permits to catch VHS searchers
+- No emojis, no ALL CAPS, no clickbait
+
+DESCRIPTION (2-3 paragraphs):
+- FIRST LINE is critical — shows in Google search snippets. Pack it with the top 3-5 keywords in a natural sentence describing exactly what this is.
+- Paragraph 2: tape details (distributor, year, recording speed, condition) — this adds long-tail SEO value for collectors searching specific terms.
+- Final lines: "Captured and archived by VHS Garage — https://vhsgarage.com" then channel plug.
+- Include 3-5 naturally-placed keyword variations throughout.
+
+TAGS (comma-separated, 12-20 tags):
+- Mix of: specific (exact show/brand/product names), medium (genre + decade like "80s commercials"), broad ("VHS", "analog", "retro TV")
+- Include distributor, year, decade ("1980s", "80s"), format ("VHS rip", "VHS capture")
+- Add "found footage" only if the clip is off-air / home-recorded content
+- Use actual search terms, not made-up phrases
 
 Return ONLY valid JSON:
 {
