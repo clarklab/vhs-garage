@@ -354,9 +354,17 @@ import Base from '../layouts/Base.astro';
   <!-- Clip playback modal -->
   <!-- YouTube publish modal -->
   <div id="yt-publish-modal" class="hidden fixed inset-0 z-40 bg-black/95 flex items-center justify-center p-4">
-    <div class="max-w-lg w-full bg-[#1a1a1a] border border-white/20 p-5">
+    <div class="max-w-lg w-full bg-[#1a1a1a] border border-white/20 p-5 relative">
+      <button id="yt-pub-dismiss" class="absolute top-3 right-3 text-white/40 hover:text-white text-sm leading-none">✕</button>
       <p class="text-white/70 text-[11px] tracking-wider mb-4">░ Publish to YouTube ░</p>
       <div id="yt-pub-loading" class="text-white/40 text-sm py-8 text-center">Preparing AI copy...</div>
+      <div id="yt-pub-error" class="hidden text-center py-6">
+        <p id="yt-pub-error-msg" class="text-red-400 text-sm mb-4"></p>
+        <div class="flex gap-3 justify-center">
+          <button id="yt-pub-retry" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs transition-colors">Retry</button>
+          <button id="yt-pub-error-close" class="px-4 py-2 border border-white/20 text-white/50 hover:text-white text-xs transition-colors">Close</button>
+        </div>
+      </div>
       <div id="yt-pub-form" class="hidden">
         <div style="margin-bottom:1rem;">
           <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Title</label>

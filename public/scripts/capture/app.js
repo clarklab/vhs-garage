@@ -941,6 +941,11 @@ function wireYouTubePublish() {
   const btn = document.getElementById('publish-yt-btn');
   const modal = document.getElementById('yt-publish-modal');
   const loading = document.getElementById('yt-pub-loading');
+  const errorPanel = document.getElementById('yt-pub-error');
+  const errorMsg = document.getElementById('yt-pub-error-msg');
+  const retryBtn = document.getElementById('yt-pub-retry');
+  const errorCloseBtn = document.getElementById('yt-pub-error-close');
+  const dismissBtn = document.getElementById('yt-pub-dismiss');
   const form = document.getElementById('yt-pub-form');
   const done = document.getElementById('yt-pub-done');
   const titleInput = document.getElementById('yt-pub-title');
@@ -957,30 +962,62 @@ function wireYouTubePublish() {
 
   let currentToken = null;
 
-  btn.addEventListener('click', async () => {
+  function closeModal() {
+    modal.classList.add('hidden');
+    loading.classList.add('hidden');
+    errorPanel.classList.add('hidden');
+    form.classList.add('hidden');
+    done.classList.add('hidden');
+    loading.textContent = 'Preparing AI copy...';
+  }
+
+  function showError(msg) {
+    loading.classList.add('hidden');
+    form.classList.add('hidden');
+    done.classList.add('hidden');
+    errorMsg.textContent = msg;
+    errorPanel.classList.remove('hidden');
+  }
+
+  async function startPrepare() {
     if (!lastClipId) return;
 
-    // Show modal in loading state
+    let password = sessionStorage.getItem('yt-publish-password');
+    if (!password) {
+      password = prompt('Publish password:');
+      if (!password) return;
+      sessionStorage.setItem('yt-publish-password', password);
+    }
+
     modal.classList.remove('hidden');
     loading.classList.remove('hidden');
+    loading.textContent = 'Preparing AI copy...';
+    errorPanel.classList.add('hidden');
     form.classList.add('hidden');
     done.classList.add('hidden');
 
-    // Get current clip metadata
     const clips = getClips();
     const clip = clips.find(c => c.id === lastClipId);
-    if (!clip) return;
+    if (!clip) { showError('Clip not found.'); return; }
 
     try {
       const res = await fetch('/.netlify/functions/youtube-publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'prepare', metadata: clip }),
+        body: JSON.stringify({ action: 'prepare', metadata: clip, password }),
       });
-      const data = await res.json();
 
-      if (data.error) {
-        loading.textContent = 'Error: ' + data.error;
+      let data = {};
+      try { data = await res.json(); } catch {}
+
+      if (res.status === 401 || data.error === 'Wrong password') {
+        sessionStorage.removeItem('yt-publish-password');
+        showError('Wrong publish password. Click Retry to re-enter.');
+        return;
+      }
+
+      if (!res.ok || data.error) {
+        showError(data.error || `Server error (${res.status})`);
         return;
       }
 
@@ -992,8 +1029,17 @@ function wireYouTubePublish() {
       loading.classList.add('hidden');
       form.classList.remove('hidden');
     } catch (e) {
-      loading.textContent = 'Error: ' + e.message;
+      showError(e.message);
     }
+  }
+
+  btn.addEventListener('click', startPrepare);
+  retryBtn.addEventListener('click', startPrepare);
+  errorCloseBtn.addEventListener('click', closeModal);
+  dismissBtn.addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
   });
 
   uploadBtn.addEventListener('click', async () => {
