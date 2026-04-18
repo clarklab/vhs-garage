@@ -1039,7 +1039,7 @@ function wireYouTubePublish() {
       : storedClip;
 
     try {
-      const res = await fetch('/.netlify/functions/youtube-publish', {
+      const res = await fetch('/api/youtube-publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'prepare', metadata, password }),
@@ -1069,9 +1069,13 @@ function wireYouTubePublish() {
       descInput.value = data.description;
       tagsInput.value = data.tags;
 
+      aiNotice.classList.remove('hidden', 'text-yellow-400/80', 'text-white/40');
       if (data.aiFallback) {
-        aiNotice.textContent = '⚠ AI rewrite timed out — using template copy. Edit freely before upload.';
-        aiNotice.classList.remove('hidden');
+        aiNotice.textContent = `⚠ AI rewrite failed — using template copy. (${data.model || '?'}, ${((data.elapsedMs || 0) / 1000).toFixed(1)}s)`;
+        aiNotice.classList.add('text-yellow-400/80');
+      } else if (data.elapsedMs) {
+        aiNotice.textContent = `✓ ${data.model || 'AI'} · ${(data.elapsedMs / 1000).toFixed(1)}s`;
+        aiNotice.classList.add('text-white/40');
       } else {
         aiNotice.classList.add('hidden');
       }

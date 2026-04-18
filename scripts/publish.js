@@ -20,12 +20,18 @@ const fs = require('fs');
 const path = require('path');
 
 const SITE_URL = process.env.SITE_URL || 'https://vhsgarage.com';
-const PUBLISH_ENDPOINT = `${SITE_URL}/.netlify/functions/youtube-publish`;
+const PUBLISH_ENDPOINT = `${SITE_URL}/api/youtube-publish`;
+const PUBLISH_PASSWORD = process.env.YOUTUBE_PUBLISH_PASSWORD;
 
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
 const unlisted = args.includes('--unlisted');
 const folder = args.find(a => !a.startsWith('--'));
+
+if (!PUBLISH_PASSWORD && !dryRun) {
+  console.error('Set YOUTUBE_PUBLISH_PASSWORD env var before publishing.');
+  process.exit(1);
+}
 
 if (!folder) {
   console.log('Usage: node scripts/publish.js <capture-folder> [--dry-run] [--unlisted]');
@@ -72,7 +78,7 @@ async function main() {
       const res = await fetch(PUBLISH_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'prepare', metadata }),
+        body: JSON.stringify({ action: 'prepare', metadata, password: PUBLISH_PASSWORD }),
       });
       prepared = await res.json();
       if (prepared.error) {
