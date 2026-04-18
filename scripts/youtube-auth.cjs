@@ -10,7 +10,7 @@
  * 5. Download the JSON and note the client_id and client_secret
  *
  * Usage:
- *   node scripts/youtube-auth.js <client_id> <client_secret>
+ *   node scripts/youtube-auth.cjs <client_id> <client_secret>
  *
  * This will open a browser for Google login, then print the refresh token.
  * Add these to Netlify env vars:
@@ -29,7 +29,7 @@ const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}`;
 const SCOPE = 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube';
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
-  console.log('Usage: node scripts/youtube-auth.js <client_id> <client_secret>');
+  console.log('Usage: node scripts/youtube-auth.cjs <client_id> <client_secret>');
   process.exit(1);
 }
 
