@@ -858,35 +858,32 @@ function wireMuteToggle() {
 
 // --- Save data button ---
 
+function readFormFields() {
+  const sleeveData = getSleeveData();
+  return {
+    title: document.getElementById('clip-title')?.value || 'Untitled',
+    year: document.getElementById('clip-year')?.value || '',
+    description: document.getElementById('clip-description')?.value || '',
+    tags: document.getElementById('clip-tags')?.value || '',
+    tape: document.getElementById('clip-tape')?.value || '',
+    cassetteNotes: document.getElementById('clip-notes')?.value || '',
+    distributor: document.getElementById('clip-distributor')?.value || '',
+    tapeLength: document.getElementById('clip-tape-length')?.value || '',
+    recordingSpeed: document.getElementById('clip-speed')?.value || '',
+    condition: document.getElementById('clip-condition')?.value || '',
+    sleeveFront: sleeveData.front,
+    sleeveBack: sleeveData.back,
+  };
+}
+
 function wireSaveData() {
   const btn = document.getElementById('save-data-btn');
 
   btn.addEventListener('click', async () => {
     if (!lastClipId || !directoryHandle) return;
 
-    // Read current field values fresh from the form
-    const title = document.getElementById('clip-title')?.value || 'Untitled';
-    const year = document.getElementById('clip-year')?.value || '';
-    const description = document.getElementById('clip-description')?.value || '';
-    const tags = document.getElementById('clip-tags')?.value || '';
-    const tape = document.getElementById('clip-tape')?.value || '';
-    const notes = document.getElementById('clip-notes')?.value || '';
-    const distributor = document.getElementById('clip-distributor')?.value || '';
-    const tapeLength = document.getElementById('clip-tape-length')?.value || '';
-    const speed = document.getElementById('clip-speed')?.value || '';
-    const condition = document.getElementById('clip-condition')?.value || '';
-
-    // Also grab latest sleeve data (in case of retake)
-    const sleeveData = getSleeveData();
-
-    // Update the clip in the catalog with all current data
-    const fields = {
-      title, year, description, tags, tape,
-      cassetteNotes: notes, distributor, tapeLength,
-      recordingSpeed: speed, condition,
-      sleeveFront: sleeveData.front,
-      sleeveBack: sleeveData.back,
-    };
+    // Update the clip in the catalog with all current form data
+    const fields = readFormFields();
     updateClip(lastClipId, fields);
 
     // Get the updated clip from catalog (has the correct filename)
@@ -997,14 +994,18 @@ function wireYouTubePublish() {
     done.classList.add('hidden');
 
     const clips = getClips();
-    const clip = clips.find(c => c.id === lastClipId);
-    if (!clip) { showError('Clip not found.'); return; }
+    const storedClip = clips.find(c => c.id === lastClipId);
+    if (!storedClip) { showError('Clip not found.'); return; }
+
+    // Merge live form values over stored clip so edits made after (or without)
+    // "Save Data" still reach the AI prompt.
+    const metadata = { ...storedClip, ...readFormFields() };
 
     try {
       const res = await fetch('/.netlify/functions/youtube-publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'prepare', metadata: clip, password }),
+        body: JSON.stringify({ action: 'prepare', metadata, password }),
       });
 
       let data = {};
