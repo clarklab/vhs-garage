@@ -94,11 +94,11 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
 
     <!-- Top-right: Channel -->
     <div class="absolute top-0 right-0 pointer-events-auto text-right p-4">
-      <button id="channel-btn" class="panel-btn text-white/40 text-xs flex items-center gap-1 py-2 pl-3">CH ░ <span id="channel-name" class="truncate" style="max-width:28vw;">oracrest</span></button>
+      <button id="channel-btn" class="panel-btn text-white/40 text-xs flex items-center gap-1 py-2 pl-3">CH ░ <span id="channel-name" class="truncate" style="max-width:28vw;">VHS Garage</span></button>
       <div id="channel-panel" class="hidden mt-2 bg-black/90 border border-white/20 p-3 w-64 text-xs text-left">
         <p class="text-white/60 mb-3">Channel</p>
         <div class="space-y-1 mb-3">
-          <button class="channel-preset w-full text-left p-2 border border-white/15 text-white/50 hover:border-white/30 hover:text-white/80 transition-colors" data-channel="oracrest">Oracrest</button>
+          <button class="channel-preset w-full text-left p-2 border border-white/15 text-white/50 hover:border-white/30 hover:text-white/80 transition-colors" data-channel="vhsgarage">VHS Garage</button>
           <button class="channel-preset w-full text-left p-2 border border-white/15 text-white/50 hover:border-white/30 hover:text-white/80 transition-colors" data-channel="vintagevhs">Vintage VHS Videos</button>
         </div>
         <p class="text-white/40 text-[10px] mb-2">Or load a custom channel:</p>
@@ -212,20 +212,12 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
     });
 
     const CHANNELS = {
-      oracrest: {
-        name: 'Oracrest',
-        id: 'UC-wMG2tGhmeBOCO9IVbu4kg',
+      vhsgarage: {
+        name: 'VHS Garage',
+        id: 'UCCmLN-a9b2TUxWcZwovER3w',
         videos: [
-          '1Gdp9w004nE','1O8w3200AVM','2WSNKJ_Ptzc','2_kFa7Prp4A','4eliEspmqoI',
-          '5LxZSYg8JSs','7NoPy_y1ENM','9Jh1s2w4NcA','Bmx7wuU-4gA','CQiDcue0Mwg',
-          'DQ9lv76pOBg','Ds5qi_kGU3s','F41_toRYffU','FFDA-Nj-udU','HMSa88O3JXc',
-          'Iy7VHCOQBHk','J3qldM6Qg7Q','L7yGUTnFhfA','MpsLRrUywMg','OImhhirAFmg',
-          'OTOYO6jbR7Q','P9r7jTIe628','R7o9aGdz92o','Rnak1-QLrJ0','T5y2jcGYZj4',
-          'V1ETmE426Xc','Vbth0K5EyLI','WuhVd5zNTgc','YblSGYjPugQ','YhNkc6axCR4',
-          '_xFuxZZm06w','aqWr9wwfjKo','argK6e8sZrc','cxMS0PEWkIU','edum1muSs7s',
-          'hkFqZGpX2aI','iBAASna0Tgs','jw61byADQS0','kdyGCYCD1I4','lCexOx5_oM8',
-          'mthwgR-cqWk','novMVa7Oa4Q','p9z6EIwg3LI','s9yc0z599u0','scrfKwj4jpQ',
-          'skaEO-fUeIo','t97zLFjpl0g','uEQMTtmeLY8','uL7jB05PV1k','xwNPvh2T8lM'
+          '1LMU0eITMFk','CubWJ4vjZWw','esr36A2y0ag','kegP8ceZQks',
+          'p1P2G0MSFtM','rzX8dm_a9_E','xHC4rkCU5tU'
         ]
       },
       vintagevhs: {
@@ -240,9 +232,11 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
       }
     };
 
-    const SEED_VIDEOS = CHANNELS.oracrest.videos;
+    const SEED_VIDEOS = CHANNELS.vhsgarage.videos;
 
     const STORAGE_KEY = 'vhsg_watch';
+
+    const defaultChannel = CHANNELS[GARAGES[currentGarageIdx].channel];
 
     const App = {
       player: null,
@@ -253,17 +247,20 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
       sleepTimerMs: 0,
       sleepTimeout: null,
       clipTimeout: null,
-      channelId: '',
-      channelName: GARAGES[currentGarageIdx].channel,
+      channelId: defaultChannel?.id || GARAGES[currentGarageIdx].channelId || '',
+      channelName: defaultChannel?.name || GARAGES[currentGarageIdx].channel,
 
       loadSettings() {
         try {
           const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
           if (saved.clipLimit !== undefined) this.clipLimitMs = saved.clipLimit;
           if (saved.sleepTimer !== undefined) this.sleepTimerMs = saved.sleepTimer;
-          if (saved.channelName) this.channelName = saved.channelName;
-          if (saved.channelId) this.channelId = saved.channelId;
-          if (saved.playlist && saved.playlist.length) this.playlist = saved.playlist;
+          // Migrate away from the retired Oracrest default
+          const isOldDefault = saved.channelName === 'oracrest'
+            || saved.channelId === 'UC-wMG2tGhmeBOCO9IVbu4kg';
+          if (saved.channelName && !isOldDefault) this.channelName = saved.channelName;
+          if (saved.channelId && !isOldDefault) this.channelId = saved.channelId;
+          if (saved.playlist && saved.playlist.length && !isOldDefault) this.playlist = saved.playlist;
         } catch (e) {}
       },
 
@@ -307,10 +304,9 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
       },
 
       onPlayerReady() {
-        // Fetch full channel listing in the background (upgrades seed list)
-        if (!App.channelId) {
-          App.fetchChannelVideos(DEFAULT_CHANNEL_ID, App.channelName).catch(() => {});
-        }
+        // Fetch full channel listing in the background (upgrades seed list).
+        // Cache in fetchChannelVideos means this is free on repeat visits.
+        App.fetchChannelVideos(App.channelId || DEFAULT_CHANNEL_ID, App.channelName).catch(() => {});
         if (App.sleepTimerMs > 0) App.startSleepTimer();
       },
 
