@@ -968,8 +968,29 @@ function wireYouTubePublish() {
   // Clip being published in this modal session. May differ from `lastClipId`
   // when the publish is triggered from the library card.
   let publishClipId = null;
+  let loadingTimer = null;
+
+  const BRAILLE = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+
+  function startLoadingAnim(label) {
+    stopLoadingAnim();
+    const t0 = Date.now();
+    let i = 0;
+    const tick = () => {
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      loading.textContent = `${BRAILLE[i % BRAILLE.length]}  ${label}  ${elapsed}s`;
+      i++;
+    };
+    tick();
+    loadingTimer = setInterval(tick, 100);
+  }
+
+  function stopLoadingAnim() {
+    if (loadingTimer) { clearInterval(loadingTimer); loadingTimer = null; }
+  }
 
   function closeModal() {
+    stopLoadingAnim();
     modal.classList.add('hidden');
     loading.classList.add('hidden');
     errorPanel.classList.add('hidden');
@@ -979,6 +1000,7 @@ function wireYouTubePublish() {
   }
 
   function showError(msg) {
+    stopLoadingAnim();
     loading.classList.add('hidden');
     form.classList.add('hidden');
     done.classList.add('hidden');
@@ -999,10 +1021,10 @@ function wireYouTubePublish() {
 
     modal.classList.remove('hidden');
     loading.classList.remove('hidden');
-    loading.textContent = 'Preparing AI copy...';
     errorPanel.classList.add('hidden');
     form.classList.add('hidden');
     done.classList.add('hidden');
+    startLoadingAnim('Preparing AI copy');
 
     const clips = getClips();
     const storedClip = clips.find(c => c.id === publishClipId);
@@ -1041,6 +1063,7 @@ function wireYouTubePublish() {
       descInput.value = data.description;
       tagsInput.value = data.tags;
 
+      stopLoadingAnim();
       loading.classList.add('hidden');
       form.classList.remove('hidden');
     } catch (e) {
