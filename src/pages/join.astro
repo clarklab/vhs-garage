@@ -10,19 +10,29 @@ import Base from '../layouts/Base.astro';
     <p id="join-count" class="text-white/40 text-xs uppercase tracking-widest mb-6"></p>
 
     <h1 class="text-3xl mb-3 text-center">Join us in the Garage</h1>
-    <p class="text-gray-400 text-center max-w-md mb-8">Drop your email and we'll give you a <strong class="text-white">free mystery VHS</strong> at an upcoming event. No spam. Just tapes.</p>
+    <p class="text-gray-400 text-center max-w-md mb-8">Drop your email or phone and we'll give you a <strong class="text-white">free mystery VHS</strong> at an upcoming event. No spam. Just tapes.</p>
 
-    <form id="join-form" name="garage-signup" method="POST" data-netlify="true" class="flex gap-3 w-full max-w-md">
+    <form id="join-form" name="garage-signup" method="POST" data-netlify="true" class="flex flex-col gap-3 w-full max-w-md">
       <input type="hidden" name="form-name" value="garage-signup" />
       <input
         id="join-email"
         type="email"
         name="email"
         placeholder="your@email.com"
-        required
-        class="flex-1 px-4 py-3 bg-black border border-white/30 text-white placeholder-gray-500 focus:outline-none focus:border-white"
+        autocomplete="email"
+        inputmode="email"
+        class="w-full h-14 px-4 bg-black border border-white/30 text-white text-base placeholder-gray-500 focus:outline-none focus:border-white"
       />
-      <button id="join-submit-btn" type="submit" class="px-6 py-3 bg-white text-black hover:bg-gray-200 transition-colors shrink-0 min-w-[100px]">
+      <input
+        id="join-phone"
+        type="tel"
+        name="phone"
+        placeholder="(555) 123-4567"
+        autocomplete="tel"
+        inputmode="tel"
+        class="w-full h-14 px-4 bg-black border border-white/30 text-white text-base placeholder-gray-500 focus:outline-none focus:border-white"
+      />
+      <button id="join-submit-btn" type="submit" class="w-full h-14 bg-white text-black text-base font-medium hover:bg-gray-200 transition-colors">
         Sign Up
       </button>
     </form>
@@ -55,8 +65,25 @@ import Base from '../layouts/Base.astro';
         btn.textContent = 'Sign Up';
       }
 
+      const emailInput = document.getElementById('join-email');
+      const phoneInput = document.getElementById('join-phone');
+
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
+
+        const email = emailInput.value.trim();
+        const phone = phoneInput.value.trim();
+
+        if (!email && !phone) {
+          confirm.classList.remove('hidden');
+          confirm.classList.add('text-red-400');
+          confirm.textContent = '░ Enter an email or phone number.';
+          return;
+        }
+
+        confirm.classList.add('hidden');
+        confirm.classList.remove('text-red-400');
+
         startLoader();
         try {
           const res = await fetch('/', {
