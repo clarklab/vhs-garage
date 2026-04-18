@@ -990,6 +990,21 @@ function wireYouTubePublish() {
     if (loadingTimer) { clearInterval(loadingTimer); loadingTimer = null; }
   }
 
+  function resetUploadUI() {
+    currentToken = null;
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = 'Upload to YouTube';
+    progressDiv.classList.add('hidden');
+    progressBar.style.width = '0%';
+    statusEl.textContent = '';
+    linkEl.href = '';
+    linkEl.textContent = '';
+    titleInput.value = '';
+    descInput.value = '';
+    tagsInput.value = '';
+    aiNotice.classList.add('hidden');
+  }
+
   function closeModal() {
     stopLoadingAnim();
     modal.classList.add('hidden');
@@ -998,6 +1013,7 @@ function wireYouTubePublish() {
     form.classList.add('hidden');
     done.classList.add('hidden');
     loading.textContent = 'Preparing AI copy...';
+    resetUploadUI();
   }
 
   function showError(msg) {
@@ -1020,6 +1036,7 @@ function wireYouTubePublish() {
       sessionStorage.setItem('yt-publish-password', password);
     }
 
+    resetUploadUI();
     modal.classList.remove('hidden');
     loading.classList.remove('hidden');
     errorPanel.classList.add('hidden');
