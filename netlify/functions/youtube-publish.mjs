@@ -7,9 +7,10 @@ const YOUTUBE_REFRESH_TOKEN = process.env.YOUTUBE_OAUTH_REFRESH_TOKEN;
 const YOUTUBE_PUBLISH_PASSWORD = process.env.YOUTUBE_PUBLISH_PASSWORD;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_BASE_URL = process.env.GOOGLE_GEMINI_BASE_URL;
-// Flash variant — ~3-5x faster than pro-preview, plenty smart for SEO copy.
-// If the gateway rejects this ID, check AI gateway logs for allowed models.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+// Stable Flash model from Netlify AI Gateway's allowed list. Plenty smart
+// for structured JSON SEO metadata and ~3-5x faster than pro-preview, which
+// was exceeding Netlify's 10s function timeout.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 export default async (req) => {
   if (req.method !== 'POST') {
