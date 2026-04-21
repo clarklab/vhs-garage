@@ -30,6 +30,11 @@ async function init() {
   }
 
   await startApp();
+
+  // After the main app is wired, handle any OAuth redirect we just came back
+  // from and reflect the signed-in state in the modal.
+  ytUpdateAccountUI();
+  ytHandleOAuthReturn();
 }
 
 async function startApp() {
@@ -939,6 +944,187 @@ function wireResetButtons() {
   });
 }
 
+// --- YouTube OAuth (PKCE, browser-stored refresh token) ---
+
+const YT_REFRESH_KEY = 'yt_refresh_token';
+const YT_CHANNEL_KEY = 'yt_channel';
+const YT_PKCE_KEY = 'yt_pkce_verifier';
+const YT_PENDING_PUBLISH_KEY = 'yt_pending_publish_clip_id';
+const YT_SCOPES = [
+  'https://www.googleapis.com/auth/youtube.upload',
+  'https://www.googleapis.com/auth/youtube.readonly',
+].join(' ');
+
+function ytGetRefreshToken() {
+  return localStorage.getItem(YT_REFRESH_KEY);
+}
+
+function ytGetChannel() {
+  try { return JSON.parse(localStorage.getItem(YT_CHANNEL_KEY) || 'null'); }
+  catch { return null; }
+}
+
+function ytStoreCredentials(refreshToken, channel) {
+  localStorage.setItem(YT_REFRESH_KEY, refreshToken);
+  if (channel) localStorage.setItem(YT_CHANNEL_KEY, JSON.stringify(channel));
+}
+
+function ytClearCredentials() {
+  localStorage.removeItem(YT_REFRESH_KEY);
+  localStorage.removeItem(YT_CHANNEL_KEY);
+}
+
+function ytRedirectUri() {
+  return window.location.origin + '/capture';
+}
+
+function ytBase64UrlEncode(bytes) {
+  let str = '';
+  for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function ytGeneratePkcePair() {
+  const raw = crypto.getRandomValues(new Uint8Array(32));
+  const verifier = ytBase64UrlEncode(raw);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  const challenge = ytBase64UrlEncode(new Uint8Array(digest));
+  return { verifier, challenge };
+}
+
+async function ytStartSignIn() {
+  const configRes = await fetch('/api/youtube-auth');
+  const config = await configRes.json().catch(() => ({}));
+  if (!config.clientId) {
+    alert('YouTube sign-in is not configured on the server.');
+    return;
+  }
+
+  const { verifier, challenge } = await ytGeneratePkcePair();
+  sessionStorage.setItem(YT_PKCE_KEY, verifier);
+
+  const params = new URLSearchParams({
+    client_id: config.clientId,
+    redirect_uri: ytRedirectUri(),
+    response_type: 'code',
+    scope: YT_SCOPES,
+    access_type: 'offline',
+    include_granted_scopes: 'true',
+    // prompt=consent ensures we get a refresh_token every time, even on re-auth
+    prompt: 'consent',
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+  });
+
+  window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+}
+
+async function ytFetchChannelInfo(accessToken) {
+  try {
+    const res = await fetch('https://www.googleapis.com/youtube/v3/channels?mine=true&part=snippet', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const data = await res.json();
+    const ch = data.items?.[0];
+    if (!ch) return null;
+    return {
+      id: ch.id,
+      title: ch.snippet.title,
+      handle: ch.snippet.customUrl || '',
+      thumbnail: ch.snippet.thumbnails?.default?.url || '',
+    };
+  } catch { return null; }
+}
+
+async function ytHandleOAuthReturn() {
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get('code');
+  const error = url.searchParams.get('error');
+
+  if (!code && !error) return;
+
+  // Always strip the query string once we've noticed it, regardless of outcome.
+  const cleanUrl = () => window.history.replaceState({}, '', window.location.pathname);
+
+  if (error) {
+    cleanUrl();
+    alert('Sign-in cancelled or failed: ' + error);
+    return;
+  }
+
+  const verifier = sessionStorage.getItem(YT_PKCE_KEY);
+  sessionStorage.removeItem(YT_PKCE_KEY);
+  if (!verifier) {
+    cleanUrl();
+    alert('Sign-in state lost. Please try again.');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/youtube-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'exchange',
+        code,
+        codeVerifier: verifier,
+        redirectUri: ytRedirectUri(),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || !data.refreshToken) {
+      cleanUrl();
+      alert('Sign-in failed: ' + (data.error || 'unknown error'));
+      return;
+    }
+
+    const channel = await ytFetchChannelInfo(data.accessToken);
+    ytStoreCredentials(data.refreshToken, channel);
+    cleanUrl();
+    ytUpdateAccountUI();
+
+    // If sign-in was triggered mid-publish, reopen the modal for that clip.
+    const pendingClipId = sessionStorage.getItem(YT_PENDING_PUBLISH_KEY);
+    sessionStorage.removeItem(YT_PENDING_PUBLISH_KEY);
+    if (pendingClipId && typeof publishClip === 'function') {
+      publishClip(pendingClipId);
+    }
+  } catch (e) {
+    cleanUrl();
+    alert('Sign-in failed: ' + e.message);
+  }
+}
+
+async function ytSignOut() {
+  const token = ytGetRefreshToken();
+  ytClearCredentials();
+  ytUpdateAccountUI();
+  if (token) {
+    fetch('/api/youtube-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'revoke', token }),
+    }).catch(() => {});
+  }
+}
+
+function ytUpdateAccountUI() {
+  const channel = ytGetChannel();
+  const accountEl = document.getElementById('yt-pub-account');
+  const nameEl = document.getElementById('yt-pub-account-name');
+  const avatarEl = document.getElementById('yt-pub-account-avatar');
+  if (!accountEl) return;
+
+  if (channel) {
+    accountEl.classList.remove('hidden');
+    if (nameEl) nameEl.textContent = channel.handle ? '@' + channel.handle.replace(/^@/, '') : (channel.title || 'your channel');
+    if (avatarEl) avatarEl.src = channel.thumbnail || '';
+  } else {
+    accountEl.classList.add('hidden');
+  }
+}
+
 // --- YouTube publish ---
 
 function wireYouTubePublish() {
@@ -951,6 +1137,9 @@ function wireYouTubePublish() {
   const retryBtn = document.getElementById('yt-pub-retry');
   const errorCloseBtn = document.getElementById('yt-pub-error-close');
   const dismissBtn = document.getElementById('yt-pub-dismiss');
+  const signinPanel = document.getElementById('yt-pub-signin');
+  const signinBtn = document.getElementById('yt-pub-signin-btn');
+  const signoutBtn = document.getElementById('yt-pub-signout');
   const form = document.getElementById('yt-pub-form');
   const done = document.getElementById('yt-pub-done');
   const titleInput = document.getElementById('yt-pub-title');
@@ -1005,43 +1194,51 @@ function wireYouTubePublish() {
     aiNotice.classList.add('hidden');
   }
 
-  function closeModal() {
-    stopLoadingAnim();
-    modal.classList.add('hidden');
+  function hideAllPanels() {
     loading.classList.add('hidden');
     errorPanel.classList.add('hidden');
     form.classList.add('hidden');
     done.classList.add('hidden');
+    signinPanel.classList.add('hidden');
+  }
+
+  function closeModal() {
+    stopLoadingAnim();
+    modal.classList.add('hidden');
+    hideAllPanels();
     loading.textContent = 'Preparing AI copy...';
     resetUploadUI();
   }
 
   function showError(msg) {
     stopLoadingAnim();
-    loading.classList.add('hidden');
-    form.classList.add('hidden');
-    done.classList.add('hidden');
+    hideAllPanels();
     errorMsg.textContent = msg;
     errorPanel.classList.remove('hidden');
+  }
+
+  function showSignInPanel() {
+    stopLoadingAnim();
+    hideAllPanels();
+    signinPanel.classList.remove('hidden');
   }
 
   async function startPrepare(clipId = lastClipId) {
     if (!clipId) return;
     publishClipId = clipId;
 
-    let password = sessionStorage.getItem('yt-publish-password');
-    if (!password) {
-      password = prompt('Publish password:');
-      if (!password) return;
-      sessionStorage.setItem('yt-publish-password', password);
-    }
-
     resetUploadUI();
     modal.classList.remove('hidden');
+    ytUpdateAccountUI();
+
+    // Not signed in yet — prompt sign-in. We'll resume this publish after return.
+    if (!ytGetRefreshToken()) {
+      showSignInPanel();
+      return;
+    }
+
+    hideAllPanels();
     loading.classList.remove('hidden');
-    errorPanel.classList.add('hidden');
-    form.classList.add('hidden');
-    done.classList.add('hidden');
     startLoadingAnim('Preparing AI copy');
 
     const clips = getClips();
@@ -1059,15 +1256,21 @@ function wireYouTubePublish() {
       const res = await fetch('/api/youtube-publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'prepare', metadata, password }),
+        body: JSON.stringify({
+          action: 'prepare',
+          metadata,
+          refreshToken: ytGetRefreshToken(),
+        }),
       });
 
       let data = {};
       try { data = await res.json(); } catch {}
 
-      if (res.status === 401 || data.error === 'Wrong password') {
-        sessionStorage.removeItem('yt-publish-password');
-        showError('Wrong publish password. Click Retry to re-enter.');
+      if (res.status === 401) {
+        // Refresh token rejected by Google (revoked / expired). Clear and re-prompt.
+        ytClearCredentials();
+        ytUpdateAccountUI();
+        showSignInPanel();
         return;
       }
 
@@ -1112,6 +1315,20 @@ function wireYouTubePublish() {
   dismissBtn.addEventListener('click', closeModal);
   // Modal only closes via the X button — no backdrop click or Escape, so
   // a stray click or drag-to-select inside the form can't wipe the AI copy.
+
+  // Sign-in button inside the modal. Remember which clip was being published
+  // so we can resume after the OAuth round-trip redirects us back to /capture.
+  signinBtn.addEventListener('click', () => {
+    if (publishClipId) {
+      sessionStorage.setItem(YT_PENDING_PUBLISH_KEY, publishClipId);
+    }
+    ytStartSignIn();
+  });
+
+  signoutBtn.addEventListener('click', async () => {
+    await ytSignOut();
+    showSignInPanel();
+  });
 
   uploadBtn.addEventListener('click', async () => {
     if (!currentToken || !publishClipId || !directoryHandle) return;

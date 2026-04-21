@@ -357,7 +357,25 @@ import Base from '../layouts/Base.astro';
     <div class="max-w-lg w-full bg-[#1a1a1a] border border-white/20 p-5 relative">
       <button id="yt-pub-dismiss" class="absolute top-3 right-3 text-white/40 hover:text-white text-sm leading-none">✕</button>
       <p class="text-white/70 text-[11px] tracking-wider mb-4">░ Publish to YouTube ░</p>
-      <div id="yt-pub-loading" class="text-white/40 text-sm py-8 text-center">Preparing AI copy...</div>
+      <!-- Signed-in channel banner (shown above the form once signed in) -->
+      <div id="yt-pub-account" class="hidden flex items-center gap-2 mb-3 text-[11px] text-white/50">
+        <img id="yt-pub-account-avatar" src="" alt="" class="w-6 h-6 rounded-full object-cover bg-white/10" />
+        <span>Uploading to <span id="yt-pub-account-name" class="text-white/80"></span></span>
+        <span class="flex-1"></span>
+        <button id="yt-pub-signout" class="text-white/40 hover:text-white/70 underline-offset-2 hover:underline transition-colors">Sign out</button>
+      </div>
+
+      <!-- Sign-in panel (shown when user isn't signed in yet) -->
+      <div id="yt-pub-signin" class="hidden text-center py-6">
+        <p class="text-white/70 text-sm mb-1">Sign in to publish</p>
+        <p class="text-white/40 text-xs mb-5">Uploads go to your own YouTube channel.</p>
+        <button id="yt-pub-signin-btn" class="inline-flex items-center gap-2 px-4 py-2 bg-white text-black text-xs font-medium hover:bg-white/90 transition-colors">
+          <svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.46 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38z"/><path fill="#4285F4" d="M23 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.18c-.27 1.4-1.07 2.59-2.28 3.39l3.54 2.74C21.61 18.58 23 15.68 23 12.27z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.37-.35-2.09s.13-1.43.35-2.09L2.18 7.07C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.54-2.74c-.98.66-2.23 1.05-3.74 1.05-2.86 0-5.29-1.93-6.16-4.53l-3.66 2.84C3.99 20.53 7.7 23 12 23z"/></svg>
+          Sign in with Google
+        </button>
+      </div>
+
+      <div id="yt-pub-loading" class="hidden text-white/40 text-sm py-8 text-center">Preparing AI copy...</div>
       <div id="yt-pub-error" class="hidden text-center py-6">
         <p id="yt-pub-error-msg" class="text-red-400 text-sm mb-4"></p>
         <div class="flex gap-3 justify-center">

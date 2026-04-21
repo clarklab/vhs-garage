@@ -1,8 +1,9 @@
 // YouTube publish helper (Edge Function variant)
 // Runs on Netlify Edge (Deno) — gets ~50s response budget vs. 10s for regular
 // Functions, so the Gemini AI rewrite has much more headroom.
-// Does NOT upload the video — returns a fresh access token and AI copy for
-// the client to perform a direct resumable upload to YouTube.
+// The caller supplies their own refresh token (per-user OAuth). This function
+// exchanges it for a short-lived access token and returns it along with the
+// AI-rewritten copy. Upload itself is done directly from the browser.
 
 export default async (req) => {
   if (req.method !== 'POST') {
@@ -13,18 +14,12 @@ export default async (req) => {
 
   const YOUTUBE_CLIENT_ID = env('YOUTUBE_OAUTH_CLIENT_ID');
   const YOUTUBE_CLIENT_SECRET = env('YOUTUBE_OAUTH_CLIENT_SECRET');
-  const YOUTUBE_REFRESH_TOKEN = env('YOUTUBE_OAUTH_REFRESH_TOKEN');
-  const YOUTUBE_PUBLISH_PASSWORD = env('YOUTUBE_PUBLISH_PASSWORD');
   const GEMINI_API_KEY = env('GEMINI_API_KEY');
   const GEMINI_BASE_URL = env('GOOGLE_GEMINI_BASE_URL');
   const GEMINI_MODEL = env('GEMINI_MODEL') || 'gemini-2.5-flash';
 
-  if (!YOUTUBE_CLIENT_ID || !YOUTUBE_CLIENT_SECRET || !YOUTUBE_REFRESH_TOKEN) {
+  if (!YOUTUBE_CLIENT_ID || !YOUTUBE_CLIENT_SECRET) {
     return json({ error: 'YouTube OAuth not configured' }, 500);
-  }
-
-  if (!YOUTUBE_PUBLISH_PASSWORD) {
-    return json({ error: 'Publish password not configured' }, 500);
   }
 
   let body;
@@ -34,19 +29,19 @@ export default async (req) => {
     return json({ error: 'Invalid JSON' }, 400);
   }
 
-  const { metadata, action, password } = body;
+  const { metadata, action, refreshToken } = body;
 
-  if (password !== YOUTUBE_PUBLISH_PASSWORD) {
-    return json({ error: 'Wrong password' }, 401);
+  if (!refreshToken) {
+    return json({ error: 'Not signed in' }, 401);
   }
 
   if (action === 'token') {
     const token = await getAccessToken({
       clientId: YOUTUBE_CLIENT_ID,
       clientSecret: YOUTUBE_CLIENT_SECRET,
-      refreshToken: YOUTUBE_REFRESH_TOKEN,
+      refreshToken,
     });
-    if (!token) return json({ error: 'Could not get access token' }, 500);
+    if (!token) return json({ error: 'Could not get access token — please sign in again' }, 401);
     return json({ accessToken: token });
   }
 
@@ -58,12 +53,12 @@ export default async (req) => {
       getAccessToken({
         clientId: YOUTUBE_CLIENT_ID,
         clientSecret: YOUTUBE_CLIENT_SECRET,
-        refreshToken: YOUTUBE_REFRESH_TOKEN,
+        refreshToken,
       }),
       rewriteForYouTube(metadata, { apiKey: GEMINI_API_KEY, baseUrl: GEMINI_BASE_URL, model: GEMINI_MODEL }),
     ]);
 
-    if (!token) return json({ error: 'Could not get access token' }, 500);
+    if (!token) return json({ error: 'Could not get access token — please sign in again' }, 401);
 
     return json({
       accessToken: token,

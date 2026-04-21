@@ -1,10 +1,9 @@
-// YouTube publish helper: exchanges refresh token for access token + AI-rewrites metadata
-// Does NOT upload the video — returns the token and copy for the client to upload directly
+// YouTube publish helper: exchanges the caller's refresh token for an access
+// token and (on `prepare`) AI-rewrites metadata for SEO. The caller supplies
+// the refresh token — each signed-in user uploads to their own channel.
 
 const YOUTUBE_CLIENT_ID = process.env.YOUTUBE_OAUTH_CLIENT_ID;
 const YOUTUBE_CLIENT_SECRET = process.env.YOUTUBE_OAUTH_CLIENT_SECRET;
-const YOUTUBE_REFRESH_TOKEN = process.env.YOUTUBE_OAUTH_REFRESH_TOKEN;
-const YOUTUBE_PUBLISH_PASSWORD = process.env.YOUTUBE_PUBLISH_PASSWORD;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_BASE_URL = process.env.GOOGLE_GEMINI_BASE_URL;
 // Stable Flash model from Netlify AI Gateway's allowed list. Plenty smart
@@ -17,12 +16,8 @@ export default async (req) => {
     return json({ error: 'POST required' }, 405);
   }
 
-  if (!YOUTUBE_CLIENT_ID || !YOUTUBE_CLIENT_SECRET || !YOUTUBE_REFRESH_TOKEN) {
+  if (!YOUTUBE_CLIENT_ID || !YOUTUBE_CLIENT_SECRET) {
     return json({ error: 'YouTube OAuth not configured' }, 500);
-  }
-
-  if (!YOUTUBE_PUBLISH_PASSWORD) {
-    return json({ error: 'Publish password not configured' }, 500);
   }
 
   let body;
@@ -32,16 +27,16 @@ export default async (req) => {
     return json({ error: 'Invalid JSON' }, 400);
   }
 
-  const { metadata, action, password } = body;
+  const { metadata, action, refreshToken } = body;
 
-  if (password !== YOUTUBE_PUBLISH_PASSWORD) {
-    return json({ error: 'Wrong password' }, 401);
+  if (!refreshToken) {
+    return json({ error: 'Not signed in' }, 401);
   }
 
   // Action: just get a fresh access token (for upload)
   if (action === 'token') {
-    const token = await getAccessToken();
-    if (!token) return json({ error: 'Could not get access token' }, 500);
+    const token = await getAccessToken(refreshToken);
+    if (!token) return json({ error: 'Could not get access token — please sign in again' }, 401);
     return json({ accessToken: token });
   }
 
@@ -50,11 +45,11 @@ export default async (req) => {
     if (!metadata) return json({ error: 'Missing metadata' }, 400);
 
     const [token, aiCopy] = await Promise.all([
-      getAccessToken(),
+      getAccessToken(refreshToken),
       rewriteForYouTube(metadata),
     ]);
 
-    if (!token) return json({ error: 'Could not get access token' }, 500);
+    if (!token) return json({ error: 'Could not get access token — please sign in again' }, 401);
 
     return json({
       accessToken: token,
@@ -68,7 +63,7 @@ export default async (req) => {
   return json({ error: 'Unknown action. Use "prepare" or "token".' }, 400);
 };
 
-async function getAccessToken() {
+async function getAccessToken(refreshToken) {
   try {
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -76,7 +71,7 @@ async function getAccessToken() {
       body: new URLSearchParams({
         client_id: YOUTUBE_CLIENT_ID,
         client_secret: YOUTUBE_CLIENT_SECRET,
-        refresh_token: YOUTUBE_REFRESH_TOKEN,
+        refresh_token: refreshToken,
         grant_type: 'refresh_token',
       }),
     });
