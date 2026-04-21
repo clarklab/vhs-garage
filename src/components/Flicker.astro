@@ -9,6 +9,8 @@ const { dark = '/images/bg-manchester-01-dark.webp', light = '/images/bg-manches
 <div id="flicker-wrap" class="absolute inset-0 overflow-hidden">
   <img id="bg-dark" src={dark} alt="" class="w-full h-full block relative z-10 object-cover" />
   <img id="bg-light" src={light} alt="" class="absolute inset-0 w-full h-full block z-10 object-cover transition-opacity duration-150" />
+  <img id="bg-dark-fade" src="" alt="" class="absolute inset-0 w-full h-full block z-10 object-cover pointer-events-none opacity-0" style="transition: opacity 500ms ease;" />
+  <img id="bg-light-fade" src="" alt="" class="absolute inset-0 w-full h-full block z-10 object-cover pointer-events-none opacity-0" style="transition: opacity 500ms ease;" />
   <slot />
 </div>
 
