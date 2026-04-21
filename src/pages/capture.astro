@@ -357,14 +357,6 @@ import Base from '../layouts/Base.astro';
     <div class="max-w-lg w-full bg-[#1a1a1a] border border-white/20 p-5 relative">
       <button id="yt-pub-dismiss" class="absolute top-3 right-3 text-white/40 hover:text-white text-sm leading-none">✕</button>
       <p class="text-white/70 text-[11px] tracking-wider mb-4">░ Publish to YouTube ░</p>
-      <!-- Signed-in channel banner (shown above the form once signed in) -->
-      <div id="yt-pub-account" class="hidden flex items-center gap-2 mb-3 text-[11px] text-white/50">
-        <img id="yt-pub-account-avatar" src="" alt="" class="w-6 h-6 rounded-full object-cover bg-white/10" />
-        <span>Uploading to <span id="yt-pub-account-name" class="text-white/80"></span></span>
-        <span class="flex-1"></span>
-        <button id="yt-pub-signout" class="text-white/40 hover:text-white/70 underline-offset-2 hover:underline transition-colors">Sign out</button>
-      </div>
-
       <!-- Sign-in panel (shown when user isn't signed in yet) -->
       <div id="yt-pub-signin" class="hidden text-center py-6">
         <p class="text-white/70 text-sm mb-1">Sign in to publish</p>
@@ -410,6 +402,13 @@ import Base from '../layouts/Base.astro';
             <div id="yt-pub-progress-bar" style="height:100%;width:0%;background:#e53935;transition:width 0.2s;"></div>
           </div>
           <p id="yt-pub-status" class="text-white/40 text-[10px] mt-1"></p>
+        </div>
+        <!-- Signed-in channel line — shown here so it surfaces only once the form is ready -->
+        <div id="yt-pub-account" class="hidden flex items-center gap-2 mb-3 text-[11px] text-white/50">
+          <img id="yt-pub-account-avatar" src="" alt="" class="w-5 h-5 rounded-full object-cover bg-white/10" />
+          <span>Logged in as <span id="yt-pub-account-name" class="text-white/80"></span></span>
+          <span class="flex-1"></span>
+          <button id="yt-pub-signout" class="text-white/40 hover:text-white/70 underline-offset-2 hover:underline transition-colors">Sign out</button>
         </div>
         <div class="flex gap-3">
           <button id="yt-pub-upload" class="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white text-xs transition-colors">Upload to YouTube</button>
