@@ -12,6 +12,24 @@ const ogImageUrl = ogImage || 'https://vhsgarage.com/unfurl.png';
 const fullTitle = title === 'VHS Garage'
   ? 'VHS Garage — A Lo-Fi Love Letter to the Golden Age of Video'
   : `${title} — VHS Garage`;
+
+// Per-page manifest so PWA installs open the page the user installed from.
+// `id` is fixed so all installs resolve to the same app identity.
+const manifest = {
+  name: 'VHS Garage',
+  short_name: 'VHS Garage',
+  description: 'A lo-fi love letter to the golden age of video.',
+  id: '/',
+  scope: '/',
+  start_url: Astro.url.pathname,
+  display: 'standalone',
+  background_color: '#000000',
+  theme_color: '#000000',
+  icons: [
+    { src: 'https://vhsgarage.com/favicon.png', sizes: 'any', type: 'image/png' },
+  ],
+};
+const manifestHref = `data:application/manifest+json;base64,${Buffer.from(JSON.stringify(manifest)).toString('base64')}`;
 ---
 
 <!DOCTYPE html>
@@ -35,7 +53,7 @@ const fullTitle = title === 'VHS Garage'
 
   <link rel="icon" type="image/png" href="https://vhsgarage.com/favicon.png">
   <link rel="apple-touch-icon" href="https://vhsgarage.com/favicon.png">
-  <link rel="manifest" href="/site.webmanifest">
+  <link rel="manifest" href={manifestHref}>
 
   <slot name="head" />
 </head>
