@@ -619,8 +619,12 @@ import Base from '../layouts/Base.astro';
        are requested) and again whenever the Help button in the status bar
        is clicked. Five slides: three ASCII intros, a layout/shortcut tour,
        and a device setup form that mirrors the Device Settings modal. -->
-  <div id="welcome-modal" class="hidden fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4">
-    <div class="w-full max-w-2xl bg-black/95 border border-white/20 p-6 text-sm">
+  <div id="welcome-modal" class="hidden fixed inset-0 z-40 flex items-center justify-center bg-black p-4">
+    <!-- VHS static backdrop — runs only while the modal is visible.
+         Low-res buffer stretched to the viewport with pixelated rendering
+         so the pixels read as chunky analog noise, not fine grain. -->
+    <canvas id="welcome-static" class="absolute inset-0 w-full h-full pointer-events-none" style="image-rendering: pixelated; opacity: 0.45;"></canvas>
+    <div class="relative w-full max-w-2xl bg-black/95 border border-white/20 p-6 text-sm">
       <!-- Header -->
       <div class="flex items-center justify-between mb-4">
         <span class="text-white/80 text-base tracking-wider">░ Quick Start ░</span>

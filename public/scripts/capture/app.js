@@ -127,6 +127,56 @@ let welcomeSlideIdx = 0;
 let welcomeDismissResolver = null;
 let welcomeSlide5Prepared = false;
 
+// --- VHS static backdrop (canvas noise, runs only while the modal is open) ---
+// Low-res buffer (chunky pixels read as analog noise rather than fine grain).
+// putImageData with a Uint8ClampedArray is the fast path; fillStyle'ing each
+// pixel with rgba() strings tanks framerate because of string parsing.
+const STATIC_W = 320;
+const STATIC_H = 180;
+let staticCtx = null;
+let staticImageData = null;
+let staticRafId = null;
+
+function ensureStaticCanvas() {
+  if (staticCtx) return true;
+  const canvas = document.getElementById('welcome-static');
+  if (!canvas) return false;
+  canvas.width = STATIC_W;
+  canvas.height = STATIC_H;
+  staticCtx = canvas.getContext('2d');
+  staticImageData = staticCtx.createImageData(STATIC_W, STATIC_H);
+  // Opaque alpha channel once, so the tick loop only has to touch the RGB bytes.
+  const data = staticImageData.data;
+  for (let i = 3; i < data.length; i += 4) data[i] = 255;
+  return true;
+}
+
+function tickStatic() {
+  if (!staticCtx) return;
+  const data = staticImageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const v = (Math.random() * 255) | 0;
+    data[i] = v;
+    data[i + 1] = v;
+    data[i + 2] = v;
+  }
+  staticCtx.putImageData(staticImageData, 0, 0);
+  staticRafId = requestAnimationFrame(tickStatic);
+}
+
+function startWelcomeStatic() {
+  if (staticRafId) return;
+  if (!ensureStaticCanvas()) return;
+  tickStatic();
+}
+
+function stopWelcomeStatic() {
+  if (staticRafId) {
+    cancelAnimationFrame(staticRafId);
+    staticRafId = null;
+  }
+}
+
 function openWelcomeModal({ onDismiss } = {}) {
   const modal = document.getElementById('welcome-modal');
   if (!modal) return;
@@ -135,12 +185,14 @@ function openWelcomeModal({ onDismiss } = {}) {
   welcomeDismissResolver = typeof onDismiss === 'function' ? onDismiss : null;
   renderWelcomeSlide();
   modal.classList.remove('hidden');
+  startWelcomeStatic();
 }
 
 function dismissWelcomeModal() {
   localStorage.setItem(WELCOME_SEEN_KEY, '1');
   const modal = document.getElementById('welcome-modal');
   if (modal) modal.classList.add('hidden');
+  stopWelcomeStatic();
   const cb = welcomeDismissResolver;
   welcomeDismissResolver = null;
   if (cb) cb();
