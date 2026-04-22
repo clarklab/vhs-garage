@@ -115,7 +115,7 @@ function wireKeyboardShortcuts() {
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
   };
   const isModalOpen = () => {
-    const ids = ['yt-publish-modal', 'clip-player-modal', 'settings-popover', 'device-popover'];
+    const ids = ['yt-publish-modal', 'clip-player-modal', 'settings-popover', 'device-popover', 'help-popover'];
     return ids.some(id => {
       const el = document.getElementById(id);
       return el && !el.classList.contains('hidden');
@@ -649,17 +649,19 @@ function wireViewToggle() {
 // --- Device popover (triggered by clicking status bar) ---
 
 function wireDevicePopover() {
-  const statusBar = document.getElementById('status-bar');
+  const trigger = document.getElementById('status-segments');
   const popover = document.getElementById('device-popover');
+  const helpPopover = document.getElementById('help-popover');
   const closeBtn = document.getElementById('device-popover-close');
   const applyBtn = document.getElementById('dp-apply');
   const pickDir = document.getElementById('dp-pick-dir');
   const settingsPopover = document.getElementById('settings-popover');
 
-  statusBar.addEventListener('click', async (e) => {
+  trigger.addEventListener('click', async (e) => {
     e.stopPropagation();
-    // Close settings popover if open
+    // Close other popovers if open
     if (settingsPopover) settingsPopover.classList.add('hidden');
+    if (helpPopover) helpPopover.classList.add('hidden');
 
     if (!popover.classList.contains('hidden')) {
       popover.classList.add('hidden');
@@ -689,10 +691,32 @@ function wireDevicePopover() {
   });
 
   document.addEventListener('click', (e) => {
-    if (!popover.classList.contains('hidden') && !popover.contains(e.target) && !statusBar.contains(e.target)) {
+    if (!popover.classList.contains('hidden') && !popover.contains(e.target) && !trigger.contains(e.target)) {
       popover.classList.add('hidden');
     }
   });
+
+  // Help popover — its own isolated open/close, plus outside-click to dismiss.
+  const helpBtn = document.getElementById('help-btn');
+  const helpClose = document.getElementById('help-close');
+  if (helpBtn && helpPopover) {
+    helpBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      popover.classList.add('hidden');
+      if (settingsPopover) settingsPopover.classList.add('hidden');
+      helpPopover.classList.toggle('hidden');
+    });
+  }
+  if (helpClose && helpPopover) {
+    helpClose.addEventListener('click', () => helpPopover.classList.add('hidden'));
+  }
+  if (helpPopover) {
+    document.addEventListener('click', (e) => {
+      if (!helpPopover.classList.contains('hidden') && !helpPopover.contains(e.target) && !helpBtn.contains(e.target)) {
+        helpPopover.classList.add('hidden');
+      }
+    });
+  }
 
   pickDir.addEventListener('click', async () => {
     try {
