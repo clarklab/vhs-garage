@@ -100,13 +100,23 @@ const g = GARAGES[0];
         <a href="https://x.com/oracrest" target="_blank" class="text-[#39ff14] text-xs hover:underline">Get announcements →</a>
       </div>
 
-      <!-- Past events -->
-      <p class="text-white/40 text-[10px] uppercase tracking-widest mb-3">Past</p>
-      <div class="border border-white/10 p-5 mb-6 opacity-70">
-        <p class="text-white/70 text-lg mb-1">ABW Sunday Funday</p>
-        <p class="text-gray-500 text-sm mb-3">Sunday, April 19 — 4:30pm · Sprinkle Valley at Austin Beerworks · Austin, TX</p>
-        <p class="text-gray-400 text-sm mb-3">Vintage and retro vendors, VHS swap, video screenings, and good hangs.</p>
-        <a href="https://www.instagram.com/p/DWeZWoICXg8/" target="_blank" class="text-[#39ff14] text-xs hover:underline">See the post on Instagram →</a>
+      <!-- Past events (collapsed by default) -->
+      <button
+        type="button"
+        id="past-events-toggle"
+        aria-expanded="false"
+        aria-controls="past-events"
+        class="text-white/50 hover:text-white/80 text-xs transition-colors mb-4"
+      >
+        <span id="past-events-toggle-label">See past events →</span>
+      </button>
+      <div id="past-events" class="hidden mb-6">
+        <div class="border border-white/10 p-5 opacity-70">
+          <p class="text-white/70 text-lg mb-1">ABW Sunday Funday</p>
+          <p class="text-gray-500 text-sm mb-3">Sunday, April 19 — 4:30pm · Sprinkle Valley at Austin Beerworks · Austin, TX</p>
+          <p class="text-gray-400 text-sm mb-3">Vintage and retro vendors, VHS swap, video screenings, and good hangs.</p>
+          <a href="https://www.instagram.com/p/DWeZWoICXg8/" target="_blank" class="text-[#39ff14] text-xs hover:underline">See the post on Instagram →</a>
+        </div>
       </div>
 
       <p class="text-gray-400">Follow <a href="https://x.com/oracrest" target="_blank" class="text-white underline hover:text-gray-300">Matt on Twitter</a> for more event announcements, or send us an invite to your event. We'll probably show up!</p>
@@ -263,6 +273,21 @@ const g = GARAGES[0];
           confirm.textContent = '░ Network error. Try again.';
           confirm.classList.add('text-red-400');
         }
+      });
+    })();
+  </script>
+
+  <script is:inline>
+    (() => {
+      const btn = document.getElementById('past-events-toggle');
+      const panel = document.getElementById('past-events');
+      const label = document.getElementById('past-events-toggle-label');
+      if (!btn || !panel || !label) return;
+      btn.addEventListener('click', () => {
+        const open = !panel.classList.contains('hidden');
+        panel.classList.toggle('hidden');
+        btn.setAttribute('aria-expanded', String(!open));
+        label.textContent = open ? 'See past events →' : 'Hide past events ↑';
       });
     })();
   </script>
