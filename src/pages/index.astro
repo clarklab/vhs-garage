@@ -115,18 +115,31 @@ const g = GARAGES[0];
     <!-- Signup -->
     <div id="signup">
       <h3 class="text-2xl mb-2">#Join us in the Garage</h3>
-      <p class="text-gray-400 mb-6">Drop your email and we'll give you a <strong class="text-white">free mystery VHS</strong> at an upcoming event. No spam. Just tapes.</p>
-      <form id="garage-form" name="garage-signup" method="POST" data-netlify="true" class="flex gap-3">
+      <p class="text-gray-400 mb-2">Drop your email or phone and we'll give you a <strong class="text-white">free mystery VHS</strong> at an upcoming event. No spam. Just tapes.</p>
+      <p class="text-white/40 text-xs mb-5">Either one works — we only need one. Drop both if you're feeling extra.</p>
+      <form id="garage-form" name="garage-signup" method="POST" data-netlify="true" class="flex flex-col gap-3">
         <input type="hidden" name="form-name" value="garage-signup" />
-        <input
-          id="garage-email"
-          type="email"
-          name="email"
-          placeholder="your@email.com"
-          required
-          class="flex-1 px-4 py-3 rounded-lg bg-black border border-white/30 text-white placeholder-gray-500 focus:outline-none focus:border-white"
-        />
-        <button id="garage-submit-btn" type="submit" class="px-6 py-3 bg-white text-black rounded-lg hover:bg-gray-200 transition-colors shrink-0 min-w-[100px]">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <input
+            id="garage-email"
+            type="email"
+            name="email"
+            placeholder="your@email.com"
+            autocomplete="email"
+            inputmode="email"
+            class="w-full px-4 py-3 rounded-lg bg-black border border-white/30 text-white placeholder-gray-500 focus:outline-none focus:border-white"
+          />
+          <input
+            id="garage-phone"
+            type="tel"
+            name="phone"
+            placeholder="(555) 123-4567"
+            autocomplete="tel"
+            inputmode="tel"
+            class="w-full px-4 py-3 rounded-lg bg-black border border-white/30 text-white placeholder-gray-500 focus:outline-none focus:border-white"
+          />
+        </div>
+        <button id="garage-submit-btn" type="submit" class="px-6 py-3 bg-white text-black rounded-lg hover:bg-gray-200 transition-colors min-w-[100px]">
           Sign Up
         </button>
       </form>
@@ -192,6 +205,7 @@ const g = GARAGES[0];
       const form = document.getElementById('garage-form');
       const btn = document.getElementById('garage-submit-btn');
       const email = document.getElementById('garage-email');
+      const phone = document.getElementById('garage-phone');
       const confirm = document.getElementById('garage-confirm');
       const frames = ['░░░', '▒░░', '▓▒░', '▓▓▒', '▓▓▓', '▓▓▒', '▓▒░', '▒░░'];
       let tick;
@@ -214,6 +228,18 @@ const g = GARAGES[0];
 
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
+
+        // At least one contact method is required — Netlify collects both.
+        if (!email.value.trim() && !phone.value.trim()) {
+          confirm.classList.remove('hidden', 'text-white');
+          confirm.classList.add('text-red-400');
+          confirm.textContent = '░ Enter an email or phone number.';
+          return;
+        }
+        // Clear any stale error before submitting
+        confirm.classList.add('hidden');
+        confirm.classList.remove('text-red-400');
+
         startLoader();
         try {
           const res = await fetch('/', {
