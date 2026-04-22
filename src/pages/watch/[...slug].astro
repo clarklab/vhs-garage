@@ -133,9 +133,15 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
           <span class="setting-opt active" data-val="0">&#8734;</span>
         </div>
         <p class="text-white/60 mb-2">Shuffle Garage</p>
-        <div class="flex gap-1" id="shuffle-options">
+        <div class="flex gap-1 mb-3" id="shuffle-options">
           <span class="setting-opt active" data-val="0">Off</span>
           <span class="setting-opt" data-val="1">On</span>
+        </div>
+        <p class="text-white/60 mb-2">Channel Change</p>
+        <div class="flex gap-1" id="channel-change-options">
+          <span class="setting-opt active" data-val="static">Static</span>
+          <span class="setting-opt" data-val="offair">Off Air</span>
+          <span class="setting-opt" data-val="none">None</span>
         </div>
       </div>
       <button id="settings-btn" class="panel-btn text-white/40 text-xs py-2 pr-3">▒ Settings</button>
@@ -255,6 +261,14 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
     const SHUFFLE_PRELOAD_LEAD_MS = 2500;
     const SHUFFLE_FADE_MS = 500;
 
+    // Channel change modes. 'none' skips the transition entirely;
+    // 'offair' will swap in /video/off-air.mp4 once we ship that clip —
+    // until then it gracefully falls through via the <video> error handler.
+    const CHANNEL_CHANGE_SRCS = {
+      static: '/video/channel-change.mp4',
+      offair: '/video/off-air.mp4',
+    };
+
     const App = {
       player: null,
       apiReady: false,
@@ -263,6 +277,7 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
       clipLimitMs: 0,
       sleepTimerMs: 0,
       shuffleGarage: false,
+      channelChange: 'static', // 'static' | 'offair' | 'none'
       sleepTimeout: null,
       clipTimeout: null,
       garagePreloadTimeout: null,
@@ -277,6 +292,9 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
           if (saved.clipLimit !== undefined) this.clipLimitMs = saved.clipLimit;
           if (saved.sleepTimer !== undefined) this.sleepTimerMs = saved.sleepTimer;
           if (saved.shuffleGarage !== undefined) this.shuffleGarage = !!saved.shuffleGarage;
+          if (['static', 'offair', 'none'].includes(saved.channelChange)) {
+            this.channelChange = saved.channelChange;
+          }
           // Migrate away from the retired Oracrest default
           const isOldDefault = saved.channelName === 'oracrest'
             || saved.channelId === 'UC-wMG2tGhmeBOCO9IVbu4kg';
@@ -291,6 +309,7 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
           clipLimit: this.clipLimitMs,
           sleepTimer: this.sleepTimerMs,
           shuffleGarage: this.shuffleGarage,
+          channelChange: this.channelChange,
           channelName: this.channelName,
           channelId: this.channelId,
           playlist: this.playlist
@@ -363,32 +382,53 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
       // Play transition clip, then switch to next video
       playRandom() {
         if (!App.player || !App.playlist.length || App.transitioning) return;
-        App.transitioning = true;
 
-        const trans = document.getElementById('yt-transition');
-        trans.currentTime = 0;
-        trans.volume = 0.5;
-        trans.classList.remove('hidden');
-        trans.play().catch(() => {});
-
-        // Pick the next video while transition plays
+        // Pick the next video up-front so we're ready either way
         let idx;
         do {
           idx = Math.floor(Math.random() * App.playlist.length);
         } while (idx === App.currentIndex && App.playlist.length > 1);
         App.currentIndex = idx;
+
+        // Channel Change = None — skip the transition clip entirely
+        if (App.channelChange === 'none') {
+          App.player.loadVideoById(App.playlist[idx]);
+          return;
+        }
+
+        App.transitioning = true;
+        const trans = document.getElementById('yt-transition');
+
+        // Swap the src if we've switched mode since last time. Compare with
+        // endsWith so we're not fooled by the absolute URL the DOM returns.
+        const desiredSrc = CHANNEL_CHANGE_SRCS[App.channelChange] || CHANNEL_CHANGE_SRCS.static;
+        if (!trans.src || !trans.src.endsWith(desiredSrc)) {
+          trans.src = desiredSrc;
+        }
+        trans.currentTime = 0;
+        trans.volume = 0.5;
+        trans.classList.remove('hidden');
+        trans.play().catch(() => {});
+
         App.player.loadVideoById(App.playlist[idx]);
 
-        trans.addEventListener('ended', () => {
+        const endTransition = () => {
           trans.classList.add('hidden');
           App.transitioning = false;
-        }, { once: true });
+        };
 
-        // Safety fallback if transition doesn't end
-        setTimeout(() => {
-          trans.classList.add('hidden');
-          App.transitioning = false;
-        }, 3000);
+        // 'ended' is the happy path. 'error' fires when the chosen clip 404s
+        // (e.g. Off Air before its file ships) — end the transition immediately
+        // instead of waiting the full 3s safety timeout.
+        trans.addEventListener('ended', endTransition, { once: true });
+        trans.addEventListener('error', endTransition, { once: true });
+
+        setTimeout(endTransition, 3000);
+      },
+
+      setChannelChange(mode) {
+        App.channelChange = mode;
+        App.saveSettings();
       },
 
       transitioning: false,
@@ -778,6 +818,16 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
         });
       });
 
+      // Settings: channel change style
+      const changeOpts = document.querySelectorAll('#channel-change-options .setting-opt');
+      changeOpts.forEach(opt => {
+        opt.addEventListener('click', () => {
+          changeOpts.forEach(o => o.classList.remove('active'));
+          opt.classList.add('active');
+          App.setChannelChange(opt.dataset.val);
+        });
+      });
+
       // Restore active states from saved settings
       App.loadSettings();
       clipOpts.forEach(o => {
@@ -796,6 +846,12 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
         const want = App.shuffleGarage ? '1' : '0';
         if (o.dataset.val === want) {
           shuffleOpts.forEach(x => x.classList.remove('active'));
+          o.classList.add('active');
+        }
+      });
+      changeOpts.forEach(o => {
+        if (o.dataset.val === App.channelChange) {
+          changeOpts.forEach(x => x.classList.remove('active'));
           o.classList.add('active');
         }
       });
