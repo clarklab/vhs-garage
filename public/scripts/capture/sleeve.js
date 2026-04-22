@@ -53,11 +53,12 @@ export function resetSleeve() {
   frontData = null;
   backData = null;
 
-  // Reset UI — show webcam for front capture
+  // Reset UI — show webcam for front capture, back skeleton as placeholder
   const captureView = document.getElementById('sleeve-capture-view');
   const reviewView = document.getElementById('sleeve-review-view');
   const frontSection = document.getElementById('sleeve-front-section');
   const backSection = document.getElementById('sleeve-back-section');
+  const backSkeleton = document.getElementById('sleeve-back-skeleton');
 
   if (captureView) captureView.classList.remove('hidden');
   if (reviewView) reviewView.classList.add('hidden');
@@ -67,17 +68,18 @@ export function resetSleeve() {
   frontPreview.innerHTML = '<span class="flex items-center justify-center w-full h-full text-white/10 text-[10px]">--</span>';
   frontPreview.classList.add('hidden');
 
-  // Hide back section
-  if (backSection) backSection.classList.add('hidden');
+  // Show back skeleton, hide back preview
   const backPreview = document.getElementById('sleeve-back-preview');
   backPreview.innerHTML = '<span class="flex items-center justify-center w-full h-full text-white/10 text-[10px]">--</span>';
+  backPreview.classList.add('hidden');
+  if (backSkeleton) backSkeleton.classList.remove('hidden');
 
   const label = document.getElementById('sleeve-capture-label');
   if (label) label.textContent = 'Capture Front';
 
-  // Move webcam section above (front section has no preview yet)
-  if (frontSection && captureView) {
-    frontSection.parentNode.insertBefore(captureView, frontSection.nextSibling);
+  // Put webcam between front and back sections — front is where capture is aimed
+  if (frontSection && captureView && backSection) {
+    frontSection.parentNode.insertBefore(captureView, backSection);
   }
 }
 
@@ -116,15 +118,15 @@ export function capturePhoto() {
 export function handleSleeveCapture() {
   const captureView = document.getElementById('sleeve-capture-view');
   const reviewView = document.getElementById('sleeve-review-view');
-  const frontSection = document.getElementById('sleeve-front-section');
   const backSection = document.getElementById('sleeve-back-section');
+  const backSkeleton = document.getElementById('sleeve-back-skeleton');
   const label = document.getElementById('sleeve-capture-label');
 
   if (sleeveState === 'idle') {
     // Capture front photo
     frontData = capturePhoto();
 
-    // Show front preview above webcam
+    // Show front preview (it replaces the webcam visually in the front slot)
     const frontPreview = document.getElementById('sleeve-front-preview');
     frontPreview.innerHTML = `<img src="${frontData}" class="w-full h-full object-contain" alt="Front">`;
     frontPreview.classList.remove('hidden');
@@ -132,9 +134,11 @@ export function handleSleeveCapture() {
     sleeveState = 'front_captured';
     label.textContent = 'Capture Back';
 
-    // Move webcam below front preview for back capture
-    if (backSection) {
-      frontSection.parentNode.insertBefore(captureView, backSection);
+    // Move the live webcam INTO the back section (takes over the skeleton's
+    // slot) so the webcam visibly fills the "Back" position it's now capturing.
+    if (backSection && backSkeleton) {
+      backSkeleton.classList.add('hidden');
+      backSection.appendChild(captureView);
     }
 
     return { captured: 'front', data: frontData };
@@ -145,7 +149,7 @@ export function handleSleeveCapture() {
     // Show back preview, hide webcam, show retake
     const backPreview = document.getElementById('sleeve-back-preview');
     backPreview.innerHTML = `<img src="${backData}" class="w-full h-full object-contain" alt="Back">`;
-    backSection.classList.remove('hidden');
+    backPreview.classList.remove('hidden');
 
     captureView.classList.add('hidden');
     reviewView.classList.remove('hidden');

@@ -214,11 +214,16 @@ import Base from '../layouts/Base.astro';
               </button>
             </div>
 
-            <!-- Back preview (shown after back captured) -->
-            <div id="sleeve-back-section" class="hidden" style="margin-top:0.5rem;">
+            <!-- Back section: always visible. Shows a dim skeleton while waiting
+                 for the front to be captured, the live webcam during back
+                 capture (moved in by JS), then the captured back preview. -->
+            <div id="sleeve-back-section" style="margin-top:0.5rem;">
               <p class="text-white/40 text-[10px] uppercase tracking-widest mb-1">Back</p>
-              <div id="sleeve-back-preview" class="aspect-[4/3] bg-[#141214] border border-white/10 mb-2 overflow-hidden">
+              <div id="sleeve-back-preview" class="hidden aspect-[4/3] bg-[#141214] border border-white/10 mb-2 overflow-hidden">
                 <span class="flex items-center justify-center w-full h-full text-white/10 text-[10px]">--</span>
+              </div>
+              <div id="sleeve-back-skeleton" class="aspect-[4/3] bg-[#0a0a0a] border border-dashed border-white/10 flex items-center justify-center mb-2">
+                <span class="text-white/15 text-[10px] uppercase tracking-widest">Waits for front</span>
               </div>
             </div>
 

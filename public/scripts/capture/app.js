@@ -101,7 +101,52 @@ async function startApp() {
   wireSaveData();
   wireResetButtons();
   wireYouTubePublish();
+  wireKeyboardShortcuts();
   wireBeforeUnload();
+}
+
+// Global keyboard shortcuts. Space snaps a sleeve photo, R toggles recording.
+// Both are ignored when the user is typing in a form field so they don't
+// hijack "Press space to scroll" or typing spaces in titles/descriptions.
+function wireKeyboardShortcuts() {
+  const isEditable = (el) => {
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+  };
+  const isModalOpen = () => {
+    const ids = ['yt-publish-modal', 'clip-player-modal', 'settings-popover', 'device-popover'];
+    return ids.some(id => {
+      const el = document.getElementById(id);
+      return el && !el.classList.contains('hidden');
+    });
+  };
+
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (isEditable(e.target)) return;
+    if (isModalOpen()) return;
+
+    // Space: trigger sleeve snap, but only if the webcam is actually live
+    // and we're still capturing (idle or front_captured, not done).
+    if (e.code === 'Space') {
+      const sleeveBtn = document.getElementById('sleeve-capture-btn');
+      const captureView = document.getElementById('sleeve-capture-view');
+      if (!sleeveBtn || !captureView || captureView.classList.contains('hidden')) return;
+      e.preventDefault();
+      sleeveBtn.click();
+      return;
+    }
+
+    // R: toggle main recording (same button behavior as clicking REC)
+    if (e.key === 'r' || e.key === 'R') {
+      const recBtn = document.getElementById('rec-btn');
+      if (!recBtn) return;
+      e.preventDefault();
+      recBtn.click();
+      return;
+    }
+  });
 }
 
 // --- Inline device selection (capture card) ---
