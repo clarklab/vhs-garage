@@ -29,6 +29,16 @@ async function init() {
     return;
   }
 
+  // Wire the welcome modal first so the Help button works from the very start
+  // and the first-visit gate below can use it.
+  wireWelcomeModal();
+
+  // Block on the welcome modal for first-time visitors so they see the intro
+  // *before* the browser's camera/mic permission prompts kick in.
+  if (!localStorage.getItem(WELCOME_SEEN_KEY)) {
+    await new Promise(resolve => openWelcomeModal({ onDismiss: resolve }));
+  }
+
   await startApp();
 
   // After the main app is wired, handle any OAuth redirect we just came back
@@ -105,6 +115,206 @@ async function startApp() {
   wireBeforeUnload();
 }
 
+// --- Welcome / Quick Start modal ---
+// Shown on first visit (blocking the main init until dismissed) and again
+// whenever the Help button in the status bar is clicked. Five slides: three
+// ASCII intros, a three-panel tour, and a device-setup form that lets the
+// user pick video/audio/webcam/save folder up front so they don't have to
+// fuss with the inline pickers once they're recording.
+
+const WELCOME_SEEN_KEY = 'vhsg_welcome_seen';
+let welcomeSlideIdx = 0;
+let welcomeDismissResolver = null;
+let welcomeSlide5Prepared = false;
+
+function openWelcomeModal({ onDismiss } = {}) {
+  const modal = document.getElementById('welcome-modal');
+  if (!modal) return;
+  welcomeSlideIdx = 0;
+  welcomeSlide5Prepared = false;
+  welcomeDismissResolver = typeof onDismiss === 'function' ? onDismiss : null;
+  renderWelcomeSlide();
+  modal.classList.remove('hidden');
+}
+
+function dismissWelcomeModal() {
+  localStorage.setItem(WELCOME_SEEN_KEY, '1');
+  const modal = document.getElementById('welcome-modal');
+  if (modal) modal.classList.add('hidden');
+  const cb = welcomeDismissResolver;
+  welcomeDismissResolver = null;
+  if (cb) cb();
+}
+
+function renderWelcomeSlide() {
+  const slides = Array.from(document.querySelectorAll('.welcome-slide'));
+  const dots = Array.from(document.querySelectorAll('.welcome-dot'));
+  const backBtn = document.getElementById('welcome-back');
+  const nextBtn = document.getElementById('welcome-next');
+  const skipBtn = document.getElementById('welcome-skip');
+  if (!slides.length) return;
+  const last = slides.length - 1;
+
+  slides.forEach((s, i) => s.classList.toggle('hidden', i !== welcomeSlideIdx));
+  dots.forEach((d, i) => {
+    d.classList.toggle('bg-white/70', i === welcomeSlideIdx);
+    d.classList.toggle('bg-white/20', i !== welcomeSlideIdx);
+  });
+  if (backBtn) backBtn.classList.toggle('invisible', welcomeSlideIdx === 0);
+
+  if (welcomeSlideIdx === last) {
+    if (nextBtn) nextBtn.textContent = "Let's go ▶";
+    if (skipBtn) skipBtn.classList.remove('hidden');
+    // Reaching the device-setup slide for the first time: prompt for camera/mic
+    // permission and populate the device dropdowns. Permissions requested here
+    // cover the rest of the session.
+    if (!welcomeSlide5Prepared) {
+      welcomeSlide5Prepared = true;
+      prepareWelcomeDeviceSlide();
+    }
+  } else {
+    if (nextBtn) nextBtn.textContent = 'Next →';
+    if (skipBtn) skipBtn.classList.add('hidden');
+  }
+}
+
+async function prepareWelcomeDeviceSlide() {
+  try {
+    await requestPermissions();
+    const { video, audio } = await enumerateDevices();
+    populateSelect('welcome-video', video);
+    populateSelect('welcome-audio', audio);
+    populateSelect('welcome-webcam', video);
+    const settings = loadSettings();
+    if (settings.videoDeviceId) document.getElementById('welcome-video').value = settings.videoDeviceId;
+    if (settings.audioDeviceId) document.getElementById('welcome-audio').value = settings.audioDeviceId;
+    if (settings.webcamDeviceId) document.getElementById('welcome-webcam').value = settings.webcamDeviceId;
+    if (directoryHandle) document.getElementById('welcome-dir-name').textContent = directoryHandle.name;
+  } catch (e) {
+    console.warn('[welcome] permission/enumerate failed:', e);
+  }
+}
+
+// Apply the user's slide-5 selections. Always writes them to localStorage so
+// startApp() picks them up on first visit. If the main app is already running
+// (help button case), also switches the live streams in place — same work as
+// the Device Settings modal's Apply button.
+async function applyWelcomeDevices() {
+  const videoSel = document.getElementById('welcome-video');
+  const audioSel = document.getElementById('welcome-audio');
+  const webcamSel = document.getElementById('welcome-webcam');
+  if (!videoSel || !audioSel || !webcamSel) return;
+
+  const videoId = videoSel.value;
+  const audioId = audioSel.value;
+  const webcamId = webcamSel.value;
+  const videoLabel = videoSel.options[videoSel.selectedIndex]?.textContent || '';
+  const audioLabel = audioSel.options[audioSel.selectedIndex]?.textContent || '';
+  const webcamLabel = webcamSel.options[webcamSel.selectedIndex]?.textContent || '';
+
+  saveSettings({
+    ...loadSettings(),
+    videoDeviceId: videoId,
+    videoDeviceLabel: videoLabel,
+    audioDeviceId: audioId,
+    audioDeviceLabel: audioLabel,
+    webcamDeviceId: webcamId,
+    webcamDeviceLabel: webcamLabel,
+  });
+
+  const appAlreadyRunning = captureStream !== null;
+  if (!appAlreadyRunning) return;
+
+  if (videoId && audioId) {
+    try {
+      captureStream.getTracks().forEach(t => t.stop());
+      captureStream = await openStream(videoId, audioId);
+      document.getElementById('preview').srcObject = captureStream;
+      document.getElementById('no-signal').classList.add('hidden');
+      stopMeter();
+      initMeter(captureStream);
+      updateStatus('video', { deviceId: videoId, label: videoLabel });
+      updateStatus('audio', { deviceId: audioId, label: audioLabel });
+    } catch (e) {
+      console.warn('[welcome] stream switch failed:', e);
+    }
+  }
+  if (webcamId) {
+    try {
+      await initWebcam(webcamId);
+      updateStatusWebcam({ deviceId: webcamId, label: webcamLabel });
+    } catch (e) {
+      console.warn('[welcome] webcam switch failed:', e);
+    }
+  }
+}
+
+function wireWelcomeModal() {
+  const modal = document.getElementById('welcome-modal');
+  if (!modal) return;
+
+  const nextBtn = document.getElementById('welcome-next');
+  const backBtn = document.getElementById('welcome-back');
+  const skipBtn = document.getElementById('welcome-skip');
+  const closeBtn = document.getElementById('welcome-close');
+  const pickDirBtn = document.getElementById('welcome-pick-dir');
+  const helpBtn = document.getElementById('help-btn');
+
+  if (nextBtn) {
+    nextBtn.addEventListener('click', async () => {
+      const slides = document.querySelectorAll('.welcome-slide');
+      const last = slides.length - 1;
+      if (welcomeSlideIdx < last) {
+        welcomeSlideIdx++;
+        renderWelcomeSlide();
+      } else {
+        await applyWelcomeDevices();
+        dismissWelcomeModal();
+      }
+    });
+  }
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      if (welcomeSlideIdx > 0) {
+        welcomeSlideIdx--;
+        renderWelcomeSlide();
+      }
+    });
+  }
+  if (skipBtn) skipBtn.addEventListener('click', dismissWelcomeModal);
+  if (closeBtn) closeBtn.addEventListener('click', dismissWelcomeModal);
+
+  // Backdrop click dismisses
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) dismissWelcomeModal();
+  });
+
+  // Folder picker on slide 5
+  if (pickDirBtn) {
+    pickDirBtn.addEventListener('click', async () => {
+      try {
+        directoryHandle = await window.showDirectoryPicker();
+        const name = directoryHandle.name;
+        document.getElementById('welcome-dir-name').textContent = name;
+        const settingDir = document.getElementById('setting-dir-name');
+        if (settingDir) settingDir.textContent = name;
+        const statusDir = document.getElementById('status-dir-label');
+        if (statusDir) statusDir.textContent = name;
+      } catch {}
+    });
+  }
+
+  // Help button opens the welcome modal (resets to slide 1)
+  if (helpBtn) {
+    helpBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const devicePopover = document.getElementById('device-popover');
+      if (devicePopover) devicePopover.classList.add('hidden');
+      openWelcomeModal();
+    });
+  }
+}
+
 // Global keyboard shortcuts. Space snaps a sleeve photo, R toggles recording.
 // Both are ignored when the user is typing in a form field so they don't
 // hijack "Press space to scroll" or typing spaces in titles/descriptions.
@@ -115,7 +325,7 @@ function wireKeyboardShortcuts() {
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
   };
   const isModalOpen = () => {
-    const ids = ['yt-publish-modal', 'clip-player-modal', 'settings-popover', 'device-popover', 'help-popover'];
+    const ids = ['yt-publish-modal', 'clip-player-modal', 'settings-popover', 'device-popover', 'welcome-modal'];
     return ids.some(id => {
       const el = document.getElementById(id);
       return el && !el.classList.contains('hidden');
@@ -651,17 +861,17 @@ function wireViewToggle() {
 function wireDevicePopover() {
   const trigger = document.getElementById('status-segments');
   const popover = document.getElementById('device-popover');
-  const helpPopover = document.getElementById('help-popover');
   const closeBtn = document.getElementById('device-popover-close');
   const applyBtn = document.getElementById('dp-apply');
   const pickDir = document.getElementById('dp-pick-dir');
   const settingsPopover = document.getElementById('settings-popover');
+  const welcomeModal = document.getElementById('welcome-modal');
 
   trigger.addEventListener('click', async (e) => {
     e.stopPropagation();
     // Close other popovers if open
     if (settingsPopover) settingsPopover.classList.add('hidden');
-    if (helpPopover) helpPopover.classList.add('hidden');
+    if (welcomeModal) welcomeModal.classList.add('hidden');
 
     if (!popover.classList.contains('hidden')) {
       popover.classList.add('hidden');
@@ -694,28 +904,6 @@ function wireDevicePopover() {
   popover.addEventListener('click', (e) => {
     if (e.target === popover) popover.classList.add('hidden');
   });
-
-  // Help popover — its own isolated open/close, plus outside-click to dismiss.
-  const helpBtn = document.getElementById('help-btn');
-  const helpClose = document.getElementById('help-close');
-  if (helpBtn && helpPopover) {
-    helpBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      popover.classList.add('hidden');
-      if (settingsPopover) settingsPopover.classList.add('hidden');
-      helpPopover.classList.toggle('hidden');
-    });
-  }
-  if (helpClose && helpPopover) {
-    helpClose.addEventListener('click', () => helpPopover.classList.add('hidden'));
-  }
-  if (helpPopover) {
-    document.addEventListener('click', (e) => {
-      if (!helpPopover.classList.contains('hidden') && !helpPopover.contains(e.target) && !helpBtn.contains(e.target)) {
-        helpPopover.classList.add('hidden');
-      }
-    });
-  }
 
   pickDir.addEventListener('click', async () => {
     try {

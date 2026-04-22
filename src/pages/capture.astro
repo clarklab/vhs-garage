@@ -17,6 +17,35 @@ import Base from '../layouts/Base.astro';
     }
     .rec-btn:hover { background: rgba(229, 57, 53, 0.1); }
 
+    /* Library button mirrors .rec-btn geometry (same padding, border weight,
+       font size, letter-spacing) but in neutral white — gives the two primary
+       deck buttons a matched pair. */
+    .lib-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 18px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      background: transparent;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
+      color: rgba(255, 255, 255, 0.6);
+      font-family: monospace;
+      font-size: 14px;
+      font-weight: bold;
+      letter-spacing: 0.08em;
+    }
+    .lib-btn:hover {
+      color: rgba(255, 255, 255, 0.9);
+      border-color: rgba(255, 255, 255, 0.6);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .lib-btn svg {
+      width: 24px;
+      height: 24px;
+      fill: currentColor;
+    }
+
     /* Chunky pixel-corner treatment shared by outlined control buttons.
        A 2px step is clipped out of each corner so the outline reads as
        a slightly stair-stepped, VCR-ish silhouette rather than a sharp
@@ -170,8 +199,8 @@ import Base from '../layouts/Base.astro';
             <button id="save-data-btn" class="hidden text-xs py-1.5 px-3 border-2 border-red-500 text-red-500 hover:bg-red-500 hover:text-black transition-colors">Save Data</button>
             <button id="publish-yt-btn" class="hidden text-xs py-1.5 px-3 border border-white/30 text-white/50 hover:text-white hover:border-white/60 transition-colors">▶ YouTube</button>
             <button id="delete-recording-btn" class="hidden text-red-500 hover:text-red-400 transition-colors text-xs">Delete</button>
-            <button id="to-library-btn" class="pixel-btn shrink-0 inline-flex items-center gap-1.5 py-1.5 px-3 border border-white/30 text-white/60 hover:text-white/90 hover:border-white/60 transition-colors text-xs" title="Library">
-              <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 1200 1200" aria-hidden="true">
+            <button id="to-library-btn" class="lib-btn pixel-btn shrink-0" title="Library">
+              <svg viewBox="0 0 1200 1200" aria-hidden="true">
                 <path d="m626.62 262.9h81.336v81.332h-81.336z"/>
                 <path d="m535.12 351.86h81.336v81.332h-81.336z"/>
                 <path d="m809.62 351.86h81.332v81.332h-81.332z"/>
@@ -445,30 +474,6 @@ import Base from '../layouts/Base.astro';
       </div>
     </div>
 
-    <!-- Help popover -->
-    <div id="help-popover" class="hidden fixed bottom-10 right-4 z-30 bg-black/95 border border-white/20 p-4 w-72 text-xs">
-      <div class="flex items-center justify-between mb-3">
-        <span class="text-white/70 text-[11px] tracking-wider">░ Help ░</span>
-        <button id="help-close" class="text-white/50 hover:text-white/70 transition-colors">Close</button>
-      </div>
-      <p class="text-white/40 text-[10px] uppercase tracking-widest mb-2">Shortcuts</p>
-      <ul class="text-white/60 space-y-1 mb-3">
-        <li class="flex items-center justify-between">
-          <span>Record / stop</span>
-          <kbd class="px-1.5 py-0.5 border border-white/25 text-white/80 bg-black/50 text-[10px]">R</kbd>
-        </li>
-        <li class="flex items-center justify-between">
-          <span>Snap sleeve photo</span>
-          <kbd class="px-1.5 py-0.5 border border-white/25 text-white/80 bg-black/50 text-[10px]">Space</kbd>
-        </li>
-      </ul>
-      <p class="text-white/40 text-[10px] uppercase tracking-widest mb-2">Tips</p>
-      <ul class="text-white/50 space-y-1.5 text-[11px] leading-snug">
-        <li>Click the preview title to switch Live ↔ Last Recording.</li>
-        <li>Click the status bar for device settings.</li>
-        <li>Sign in with Google in the Publish dialog to upload to your own YouTube channel.</li>
-      </ul>
-    </div>
   </div>
 
   <!-- Library view (full page overlay, toggled) -->
@@ -606,6 +611,135 @@ import Base from '../layouts/Base.astro';
         <button id="setting-pick-dir" class="w-full py-1 border border-white/20 text-white/60 hover:text-white text-left px-2">
           <span id="setting-dir-name">Choose save folder...</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Welcome / Quick-start modal. Shown on first visit (before permissions
+       are requested) and again whenever the Help button in the status bar
+       is clicked. Five slides: three ASCII intros, a layout/shortcut tour,
+       and a device setup form that mirrors the Device Settings modal. -->
+  <div id="welcome-modal" class="hidden fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4">
+    <div class="w-full max-w-2xl bg-black/95 border border-white/20 p-6 text-sm">
+      <!-- Header -->
+      <div class="flex items-center justify-between mb-4">
+        <span class="text-white/80 text-base tracking-wider">░ Quick Start ░</span>
+        <button id="welcome-close" class="text-white/40 hover:text-white/70 transition-colors text-sm">Close</button>
+      </div>
+
+      <!-- Slides (only one visible at a time; others hidden) -->
+      <div id="welcome-slides" class="min-h-[320px] flex flex-col justify-center">
+
+        <!-- Slide 1: What is this? -->
+        <div class="welcome-slide" data-slide="0">
+<pre class="font-mono text-white/80 text-center text-[11px] leading-[1.25] my-4 whitespace-pre">    ┌────────────────────────┐
+    │                        │
+    │  ╔═══╗        ╔═══╗    │
+    │  ║ ◉ ║════════║ ◉ ║    │
+    │  ╚═══╝        ╚═══╝    │
+    │                        │
+    │  ▓▓▓▓▓▓ V H S ▓▓▓▓▓▓   │
+    └────────────────────────┘</pre>
+          <h3 class="text-white/90 text-base mb-2">Welcome to VHS Garage</h3>
+          <p class="text-white/60 text-[13px] leading-snug">A simple way to turn your old VHS tapes into digital videos on your computer. Let's get you started.</p>
+        </div>
+
+        <!-- Slide 2: What you need -->
+        <div class="welcome-slide hidden" data-slide="1">
+<pre class="font-mono text-white/80 text-center text-[11px] leading-[1.25] my-4 whitespace-pre">    ┌──────┐                ┌──────┐
+    │ ▓▓▓▓ │                │ ▒▒▒▒ │
+    │ VCR  │════════════════│ MAC  │
+    │ ▓▓▓▓ │      USB       │ ▒▒▒▒ │
+    └──────┘                └──────┘</pre>
+          <h3 class="text-white/90 text-base mb-2">Works with your gear</h3>
+          <p class="text-white/60 text-[13px] leading-snug">Plug in a USB capture card, HDMI grabber, or even point a webcam at a TV. If your computer can see the signal, VHS Garage can record it.</p>
+        </div>
+
+        <!-- Slide 3: Publish to YouTube -->
+        <div class="welcome-slide hidden" data-slide="2">
+<pre class="font-mono text-white/80 text-center text-[11px] leading-[1.25] my-4 whitespace-pre">      ┏━━━━━━━━━━━━━━━━━┓
+      ┃                 ┃
+      ┃       ▶         ┃
+      ┃       ▶▶        ┃
+      ┃       ▶▶▶       ┃
+      ┃       ▶▶        ┃
+      ┃       ▶         ┃
+      ┃                 ┃
+      ┗━━━━━━━━━━━━━━━━━┛
+            YouTube</pre>
+          <h3 class="text-white/90 text-base mb-2">Share straight to YouTube</h3>
+          <p class="text-white/60 text-[13px] leading-snug">Once you've recorded a clip, sign in with Google and we'll write a title and description from the tape's cover for you — then upload straight to your own channel.</p>
+        </div>
+
+        <!-- Slide 4: Three panels / how it works -->
+        <div class="welcome-slide hidden" data-slide="3">
+<pre class="font-mono text-white/80 text-center text-[11px] leading-[1.25] my-4 whitespace-pre">    ╔═══════════╦═════════╦═════════╗
+    ║           ║         ║         ║
+    ║  PREVIEW  ║ SLEEVE  ║  INFO   ║
+    ║           ║         ║         ║
+    ║    ▶▶     ║   ▢▢    ║  ░░░░░  ║
+    ║   [REC]   ║   ▢▢    ║  ░░░░░  ║
+    ║           ║         ║  ░░     ║
+    ╚═══════════╩═════════╩═════════╝
+         [R]        [SPACE]</pre>
+          <h3 class="text-white/90 text-base mb-2">Three panels, one job</h3>
+          <p class="text-white/60 text-[13px] leading-snug mb-2">
+            <strong class="text-white/80">Left — preview:</strong> live video from your capture card. Hit <kbd class="px-1.5 py-0.5 border border-white/25 text-white/80 bg-black/50 text-[10px]">REC</kbd> or press <kbd class="px-1.5 py-0.5 border border-white/25 text-white/80 bg-black/50 text-[10px]">R</kbd> to record.
+          </p>
+          <p class="text-white/60 text-[13px] leading-snug mb-2">
+            <strong class="text-white/80">Middle — sleeve:</strong> hold the tape's front and back cover up to your webcam. They'll snap automatically, or press <kbd class="px-1.5 py-0.5 border border-white/25 text-white/80 bg-black/50 text-[10px]">Space</kbd>.
+          </p>
+          <p class="text-white/60 text-[13px] leading-snug">
+            <strong class="text-white/80">Right — info:</strong> give your clip a title and any notes. AI can fill in the rest from the cover.
+          </p>
+        </div>
+
+        <!-- Slide 5: Device setup -->
+        <div class="welcome-slide hidden" data-slide="4">
+          <h3 class="text-white/90 text-base mb-1">Set up your devices</h3>
+          <p class="text-white/60 text-[13px] leading-snug mb-4">Tell VHS Garage what to read from and where to save. You can change any of this later from the bottom bar.</p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="text-gray-400 block mb-1 text-sm">Video input</label>
+              <select id="welcome-video" class="w-full bg-black border border-white/20 text-white text-sm p-2"></select>
+              <span class="block mt-1 text-white/30 text-[11px]">usually your capture card</span>
+            </div>
+            <div>
+              <label class="text-gray-400 block mb-1 text-sm">Audio input</label>
+              <select id="welcome-audio" class="w-full bg-black border border-white/20 text-white text-sm p-2"></select>
+              <span class="block mt-1 text-white/30 text-[11px]">usually the same capture card</span>
+            </div>
+            <div>
+              <label class="text-gray-400 block mb-1 text-sm">Box capture device</label>
+              <select id="welcome-webcam" class="w-full bg-black border border-white/20 text-white text-sm p-2"></select>
+              <span class="block mt-1 text-white/30 text-[11px]">a webcam for the tape's cover</span>
+            </div>
+            <div>
+              <label class="text-gray-400 block mb-1 text-sm">Save folder</label>
+              <button id="welcome-pick-dir" class="w-full py-2 border border-white/20 text-white/60 hover:text-white text-left px-2 text-sm">
+                <span id="welcome-dir-name">Choose folder...</span>
+              </button>
+              <span class="block mt-1 text-white/30 text-[11px]">where clips are saved on your computer</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Footer: Back · dots · Skip + Next -->
+      <div class="flex items-center justify-between mt-6 pt-4 border-t border-white/10">
+        <button id="welcome-back" class="text-white/50 hover:text-white/80 transition-colors text-sm">← Back</button>
+        <div id="welcome-dots" class="flex gap-2">
+          <span class="welcome-dot inline-block w-2 h-2 bg-white/70"></span>
+          <span class="welcome-dot inline-block w-2 h-2 bg-white/20"></span>
+          <span class="welcome-dot inline-block w-2 h-2 bg-white/20"></span>
+          <span class="welcome-dot inline-block w-2 h-2 bg-white/20"></span>
+          <span class="welcome-dot inline-block w-2 h-2 bg-white/20"></span>
+        </div>
+        <div class="flex items-center gap-4">
+          <button id="welcome-skip" class="hidden text-white/40 hover:text-white/70 transition-colors text-sm">Skip for now</button>
+          <button id="welcome-next" class="text-white/80 hover:text-white transition-colors text-sm">Next →</button>
+        </div>
       </div>
     </div>
   </div>
