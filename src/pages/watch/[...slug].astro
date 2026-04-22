@@ -69,7 +69,12 @@ const garageIdx = initialIdx >= 0 ? initialIdx : 0;
       <div id="yt-player-wrap" class="absolute z-0 opacity-0 transition-opacity duration-500">
         <div id="yt-player"></div>
       </div>
-      <video id="yt-transition" src="/video/channel-change.mp4" preload="auto" playsinline class="absolute z-10 hidden object-cover" style="aspect-ratio:4/3;"></video>
+      <!-- z-0 puts this *behind* the garage PNG just like #yt-player-wrap, so
+           the transparent TV-screen cutout masks it too. Being DOM-ordered
+           after the player means it still stacks on top of the player while
+           both are clipped by the same mask. At z-10 it used to render over
+           the PNG entirely, showing as a bare 4:3 rectangle of static. -->
+      <video id="yt-transition" src="/video/channel-change.mp4" preload="auto" playsinline class="absolute z-0 hidden object-cover" style="aspect-ratio:4/3;"></video>
     </Flicker>
   </div>
 
