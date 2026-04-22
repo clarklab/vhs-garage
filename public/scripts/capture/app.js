@@ -1508,15 +1508,37 @@ function wireBeforeUnload() {
   });
 }
 
-// --- Playback tabs ---
+// --- Playback / Live toggle (via legend click) ---
+
+// Does a "Last Recording" currently exist? (set when recording ends)
+let hasPlayback = false;
+// Which pane is showing — legend reflects this.
+let previewMode = 'live'; // 'live' | 'playback'
+
+function updateLegendAffordance() {
+  const legend = document.getElementById('preview-legend');
+  if (!legend) return;
+  // Legend becomes clickable only when a second mode is available to switch to.
+  if (hasPlayback) {
+    legend.classList.add('cursor-pointer', 'hover:text-white');
+    legend.title = previewMode === 'live' ? 'Click to review last recording' : 'Click to return to live';
+  } else {
+    legend.classList.remove('cursor-pointer', 'hover:text-white');
+    legend.title = '';
+  }
+}
 
 function wirePlaybackTabs() {
-  const tabLive = document.getElementById('tab-live');
-  const tabPlayback = document.getElementById('tab-playback');
+  const legend = document.getElementById('preview-legend');
   const deleteBtn = document.getElementById('delete-recording-btn');
 
-  tabLive.addEventListener('click', () => showLiveTab());
-  tabPlayback.addEventListener('click', () => showPlaybackTab());
+  if (legend) {
+    legend.addEventListener('click', () => {
+      if (!hasPlayback) return;
+      if (previewMode === 'live') showPlaybackTab();
+      else showLiveTab();
+    });
+  }
 
   let deleteConfirmPending = false;
   deleteBtn.addEventListener('click', async () => {
@@ -1562,8 +1584,8 @@ function wirePlaybackTabs() {
     }
     lastClipId = null;
 
+    hasPlayback = false;
     showLiveTab();
-    document.getElementById('tab-playback').classList.add('hidden');
     deleteBtn.classList.add('hidden');
     deleteBtn.textContent = 'Delete';
     deleteBtn.classList.remove('text-red-400');
@@ -1571,19 +1593,12 @@ function wirePlaybackTabs() {
 }
 
 function showPlaybackTab() {
-  const tabLive = document.getElementById('tab-live');
-  const tabPlayback = document.getElementById('tab-playback');
   const preview = document.getElementById('preview');
   const playback = document.getElementById('playback');
   const deleteBtn = document.getElementById('delete-recording-btn');
 
-  tabPlayback.classList.remove('hidden');
-  tabPlayback.classList.replace('text-white/30', 'text-white/70');
-  tabPlayback.classList.replace('bg-black', 'bg-[#141214]');
-  tabPlayback.classList.replace('border-white/10', 'border-white/20');
-  tabLive.classList.replace('text-white/70', 'text-white/30');
-  tabLive.classList.replace('bg-[#141214]', 'bg-black');
-  tabLive.classList.replace('border-white/20', 'border-white/10');
+  previewMode = 'playback';
+  hasPlayback = true;
 
   preview.classList.add('hidden');
   preview.muted = true;
@@ -1596,9 +1611,9 @@ function showPlaybackTab() {
   document.getElementById('mute-icon-on').classList.add('hidden');
   document.getElementById('mute-icon-off').classList.remove('hidden');
 
-  // Update legend
   const legend = document.getElementById('preview-legend');
   if (legend) legend.textContent = '░ Last Recording ░';
+  updateLegendAffordance();
 
   // Switch meter to playback audio
   pauseMeter();
@@ -1608,20 +1623,11 @@ function showPlaybackTab() {
 }
 
 function showLiveTab() {
-  const tabLive = document.getElementById('tab-live');
-  const tabPlayback = document.getElementById('tab-playback');
   const preview = document.getElementById('preview');
   const playback = document.getElementById('playback');
   const deleteBtn = document.getElementById('delete-recording-btn');
 
-  tabLive.classList.replace('text-white/30', 'text-white/70');
-  tabLive.classList.replace('bg-black', 'bg-[#141214]');
-  tabLive.classList.replace('border-white/10', 'border-white/20');
-  if (!tabPlayback.classList.contains('hidden')) {
-    tabPlayback.classList.replace('text-white/70', 'text-white/30');
-    tabPlayback.classList.replace('bg-[#141214]', 'bg-black');
-    tabPlayback.classList.replace('border-white/20', 'border-white/10');
-  }
+  previewMode = 'live';
 
   playback.classList.add('hidden');
   preview.classList.remove('hidden');
@@ -1629,9 +1635,9 @@ function showLiveTab() {
   document.getElementById('save-data-btn').classList.add('hidden');
   document.getElementById('publish-yt-btn').classList.add('hidden');
 
-  // Update legend
   const legend = document.getElementById('preview-legend');
   if (legend) legend.textContent = '░ Live ░';
+  updateLegendAffordance();
 
   // Switch meter back to live capture stream
   pauseMeter();
