@@ -16,6 +16,28 @@ import Base from '../layouts/Base.astro';
       transition: background 0.2s;
     }
     .rec-btn:hover { background: rgba(229, 57, 53, 0.1); }
+
+    /* Chunky pixel-corner treatment shared by outlined control buttons.
+       A 2px step is clipped out of each corner so the outline reads as
+       a slightly stair-stepped, VCR-ish silhouette rather than a sharp
+       rectangle — the corner radius looks "pixelated" rather than smooth. */
+    .pixel-btn {
+      --p: 2px;
+      clip-path: polygon(
+        0 var(--p),
+        var(--p) var(--p),
+        var(--p) 0,
+        calc(100% - var(--p)) 0,
+        calc(100% - var(--p)) var(--p),
+        100% var(--p),
+        100% calc(100% - var(--p)),
+        calc(100% - var(--p)) calc(100% - var(--p)),
+        calc(100% - var(--p)) 100%,
+        var(--p) 100%,
+        var(--p) calc(100% - var(--p)),
+        0 calc(100% - var(--p))
+      );
+    }
     .rec-btn .rec-dot {
       width: 10px;
       height: 10px;
@@ -135,7 +157,7 @@ import Base from '../layouts/Base.astro';
 
           <!-- Controls below preview -->
           <div class="flex items-center gap-3 py-2">
-            <button id="rec-btn" class="rec-btn shrink-0" title="Record">
+            <button id="rec-btn" class="rec-btn pixel-btn shrink-0" title="Record">
               <span class="rec-dot"></span><span class="rec-label">REC</span>
             </button>
             <button id="mute-btn" class="shrink-0 text-white/40 hover:text-white/70 transition-colors" title="Toggle audio">
@@ -148,7 +170,41 @@ import Base from '../layouts/Base.astro';
             <button id="save-data-btn" class="hidden text-xs py-1.5 px-3 border-2 border-red-500 text-red-500 hover:bg-red-500 hover:text-black transition-colors">Save Data</button>
             <button id="publish-yt-btn" class="hidden text-xs py-1.5 px-3 border border-white/30 text-white/50 hover:text-white hover:border-white/60 transition-colors">▶ YouTube</button>
             <button id="delete-recording-btn" class="hidden text-red-500 hover:text-red-400 transition-colors text-xs">Delete</button>
-            <button id="to-library-btn" class="text-white/60 hover:text-white/80 transition-colors text-xs">Library →</button>
+            <button id="to-library-btn" class="pixel-btn shrink-0 inline-flex items-center gap-1.5 py-1.5 px-3 border border-white/30 text-white/60 hover:text-white/90 hover:border-white/60 transition-colors text-xs" title="Library">
+              <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 1200 1200" aria-hidden="true">
+                <path d="m626.62 262.9h81.336v81.332h-81.336z"/>
+                <path d="m535.12 351.86h81.336v81.332h-81.336z"/>
+                <path d="m809.62 351.86h81.332v81.332h-81.332z"/>
+                <path d="m352.12 440.82h81.332v81.336h-81.332z"/>
+                <path d="m443.62 440.82h81.332v81.336h-81.332z"/>
+                <path d="m626.62 440.82h81.336v81.336h-81.336z"/>
+                <path d="m718.12 440.82h81.332v81.336h-81.332z"/>
+                <path d="m535.12 529.78h81.336v81.332h-81.336z"/>
+                <path d="m626.62 529.78h81.336v81.332h-81.336z"/>
+                <path d="m352.12 618.74h81.332v81.332h-81.332z"/>
+                <path d="m443.62 618.74h81.332v81.332h-81.332z"/>
+                <path d="m535.12 618.74h81.336v81.332h-81.336z"/>
+                <path d="m626.62 618.74h81.336v81.332h-81.336z"/>
+                <path d="m809.62 618.74h81.332v81.332h-81.332z"/>
+                <path d="m443.62 707.7h81.332v81.336h-81.332z"/>
+                <path d="m535.12 707.7h81.336v81.336h-81.336z"/>
+                <path d="m718.12 707.7h81.332v81.336h-81.332z"/>
+                <path d="m809.62 707.7h81.332v81.336h-81.332z"/>
+                <path d="m352.12 796.66h81.332v81.332h-81.332z"/>
+                <path d="m443.62 796.66h81.332v81.332h-81.332z"/>
+                <path d="m535.12 796.66h81.336v81.332h-81.336z"/>
+                <path d="m626.62 796.66h81.336v81.332h-81.336z"/>
+                <path d="m718.12 796.66h81.332v81.332h-81.332z"/>
+                <path d="m809.62 796.66h81.332v81.332h-81.332z"/>
+                <path d="m352.12 885.62h81.332v81.332h-81.332z"/>
+                <path d="m443.62 885.62h81.332v81.332h-81.332z"/>
+                <path d="m535.12 885.62h81.336v81.332h-81.336z"/>
+                <path d="m626.62 885.62h81.336v81.332h-81.336z"/>
+                <path d="m718.12 885.62h81.332v81.332h-81.332z"/>
+                <path d="m809.62 885.62h81.332v81.332h-81.332z"/>
+              </svg>
+              Library
+            </button>
           </div>
         </fieldset>
       </div>
@@ -317,7 +373,7 @@ import Base from '../layouts/Base.astro';
          like a classic desktop-software status bar: thin top border, segment
          dividers, bold logo on the left, clickable device segments in the
          middle, help on the right. -->
-    <div id="status-bar" class="flex items-stretch text-[10px] text-white/60 border-t border-white/20 bg-[#141214] shrink-0 select-none" style="box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);">
+    <div id="status-bar" class="flex items-stretch text-[10px] text-white/60 border-t border-white/20 bg-[#141214] shrink-0 select-none py-[5px]" style="box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);">
       <!-- Logo (decorative) -->
       <div class="flex items-center gap-2 px-3 py-2 border-r border-white/15 shrink-0">
         <span class="inline-block w-1.5 h-1.5 bg-red-500" style="box-shadow: 0 0 6px rgba(229,57,53,0.6);"></span>
@@ -354,34 +410,38 @@ import Base from '../layouts/Base.astro';
       </button>
     </div>
 
-    <!-- Device settings popover (triggered by clicking status bar) -->
-    <div id="device-popover" class="hidden fixed bottom-10 left-4 right-4 z-30 max-w-xl mx-auto bg-black/95 border border-white/20 p-4 text-xs">
-      <div class="flex items-center justify-between mb-3">
-        <span class="text-white/70">Device Settings</span>
-        <button id="device-popover-close" class="text-white/50 hover:text-white/70 transition-colors">Close</button>
-      </div>
-      <div class="grid md:grid-cols-2 gap-3">
-        <div>
-          <label class="text-gray-400 block mb-1">Video Source</label>
-          <select id="dp-video" class="w-full bg-black border border-white/20 text-white text-xs p-1.5"></select>
+    <!-- Device settings modal (triggered by clicking status bar). Backdrop
+         is the outer div; clicking it dismisses. Content card is centered on
+         the viewport and sized ~2x the old inline popover. -->
+    <div id="device-popover" class="hidden fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
+      <div class="w-full max-w-3xl bg-black/95 border border-white/20 p-6 text-sm">
+        <div class="flex items-center justify-between mb-5">
+          <span class="text-white/80 text-base tracking-wider">░ Device Settings ░</span>
+          <button id="device-popover-close" class="text-white/50 hover:text-white/80 transition-colors text-sm">Close</button>
         </div>
-        <div>
-          <label class="text-gray-400 block mb-1">Audio Source</label>
-          <select id="dp-audio" class="w-full bg-black border border-white/20 text-white text-xs p-1.5"></select>
+        <div class="grid md:grid-cols-2 gap-5">
+          <div>
+            <label class="text-gray-400 block mb-2 text-sm">Video Source</label>
+            <select id="dp-video" class="w-full bg-black border border-white/20 text-white text-sm p-2.5"></select>
+          </div>
+          <div>
+            <label class="text-gray-400 block mb-2 text-sm">Audio Source</label>
+            <select id="dp-audio" class="w-full bg-black border border-white/20 text-white text-sm p-2.5"></select>
+          </div>
+          <div>
+            <label class="text-gray-400 block mb-2 text-sm">Webcam</label>
+            <select id="dp-webcam" class="w-full bg-black border border-white/20 text-white text-sm p-2.5"></select>
+          </div>
+          <div>
+            <label class="text-gray-400 block mb-2 text-sm">Save Location</label>
+            <button id="dp-pick-dir" class="w-full py-2.5 border border-white/20 text-white/60 hover:text-white text-left px-3 text-sm">
+              <span id="dp-dir-name">Choose folder...</span>
+            </button>
+          </div>
         </div>
-        <div>
-          <label class="text-gray-400 block mb-1">Webcam</label>
-          <select id="dp-webcam" class="w-full bg-black border border-white/20 text-white text-xs p-1.5"></select>
+        <div class="mt-6 flex justify-end">
+          <button id="dp-apply" class="px-6 py-2.5 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-sm">Apply</button>
         </div>
-        <div>
-          <label class="text-gray-400 block mb-1">Save Location</label>
-          <button id="dp-pick-dir" class="w-full py-1.5 border border-white/20 text-white/60 hover:text-white text-left px-2">
-            <span id="dp-dir-name">Choose folder...</span>
-          </button>
-        </div>
-      </div>
-      <div class="mt-3 flex justify-end">
-        <button id="dp-apply" class="px-4 py-1.5 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors">Apply</button>
       </div>
     </div>
 

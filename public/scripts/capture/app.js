@@ -690,10 +690,9 @@ function wireDevicePopover() {
     popover.classList.add('hidden');
   });
 
-  document.addEventListener('click', (e) => {
-    if (!popover.classList.contains('hidden') && !popover.contains(e.target) && !trigger.contains(e.target)) {
-      popover.classList.add('hidden');
-    }
+  // Click on the backdrop (popover element itself, not the card content) dismisses.
+  popover.addEventListener('click', (e) => {
+    if (e.target === popover) popover.classList.add('hidden');
   });
 
   // Help popover — its own isolated open/close, plus outside-click to dismiss.
