@@ -1014,10 +1014,9 @@ function wireDevicePopover() {
     popover.classList.add('hidden');
   });
 
-  // Also wire the settings popover gear for quality/format
-  const settingsGear = statusBar; // gear is inside status bar, handled above
+  // Settings popover close on outside click. The gear glyph itself lives
+  // inside the status bar and is handled by the trigger handler above.
   if (settingsPopover) {
-    // Settings popover close on outside click
     document.addEventListener('click', (e) => {
       if (!settingsPopover.classList.contains('hidden') && !settingsPopover.contains(e.target)) {
         settingsPopover.classList.add('hidden');
