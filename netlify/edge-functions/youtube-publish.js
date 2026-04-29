@@ -71,7 +71,26 @@ export default async (req) => {
     });
   }
 
-  return json({ error: 'Unknown action. Use "prepare" or "token".' }, 400);
+  // AI-only rewrite — used by the on-demand sparkle buttons in the publish
+  // modal. No token roundtrip; the client already has its access token from
+  // a separate `action: 'token'` call.
+  if (action === 'rewrite') {
+    if (!metadata) return json({ error: 'Missing metadata' }, 400);
+
+    const started = Date.now();
+    const aiCopy = await rewriteForYouTube(metadata, { apiKey: GEMINI_API_KEY, baseUrl: GEMINI_BASE_URL, model: GEMINI_MODEL });
+
+    return json({
+      title: aiCopy.title,
+      description: aiCopy.description,
+      tags: aiCopy.tags,
+      aiFallback: aiCopy._aiFallback === true,
+      model: GEMINI_MODEL,
+      elapsedMs: Date.now() - started,
+    });
+  }
+
+  return json({ error: 'Unknown action. Use "prepare", "rewrite", or "token".' }, 400);
 };
 
 export const config = { path: '/api/youtube-publish' };

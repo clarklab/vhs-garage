@@ -512,7 +512,7 @@ import Base from '../layouts/Base.astro';
         </button>
       </div>
 
-      <div id="yt-pub-loading" class="hidden text-white/40 text-sm py-8 text-center">Preparing AI copy...</div>
+      <div id="yt-pub-loading" class="hidden text-white/40 text-sm py-8 text-center">Generating AI copy...</div>
       <div id="yt-pub-error" class="hidden text-center py-6">
         <p id="yt-pub-error-msg" class="text-red-400 text-sm mb-4"></p>
         <div class="flex gap-3 justify-center">
@@ -521,14 +521,33 @@ import Base from '../layouts/Base.astro';
         </div>
       </div>
       <div id="yt-pub-form" class="hidden">
-        <p id="yt-pub-ai-notice" class="hidden text-yellow-400/80 text-[10px] mb-3"></p>
+        <!-- Main AI button — rewrites title, description, AND tags via the
+             suggestion-preview panel. Per-field sparkles below scope to
+             just that field. -->
+        <div class="flex justify-end mb-3">
+          <button id="yt-pub-ai-all" type="button"
+                  class="pixel-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-400 hover:to-fuchsia-400 transition-colors"
+                  title="Rewrite title, description, and tags">
+            <span>✨</span> AI
+          </button>
+        </div>
         <div style="margin-bottom:1rem;">
           <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Title</label>
-          <input id="yt-pub-title" type="text" class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40" />
+          <div class="relative">
+            <input id="yt-pub-title" type="text" class="w-full pl-2 pr-8 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40" />
+            <button id="yt-pub-ai-title" type="button"
+                    class="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-fuchsia-400 transition-colors text-sm leading-none"
+                    title="AI rewrite title">✨</button>
+          </div>
         </div>
         <div style="margin-bottom:1rem;">
           <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Description</label>
-          <textarea id="yt-pub-desc" rows="6" class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40 resize-none"></textarea>
+          <div class="relative">
+            <textarea id="yt-pub-desc" rows="6" class="w-full pl-2 pr-8 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40 resize-none"></textarea>
+            <button id="yt-pub-ai-desc" type="button"
+                    class="absolute right-2 top-2 text-white/30 hover:text-fuchsia-400 transition-colors text-sm leading-none"
+                    title="AI rewrite description">✨</button>
+          </div>
         </div>
         <div style="margin-bottom:1rem;">
           <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tags</label>
@@ -560,6 +579,37 @@ import Base from '../layouts/Base.astro';
           <button id="yt-pub-cancel" class="px-4 py-2 border border-white/20 text-white/50 hover:text-white text-xs transition-colors">Cancel</button>
         </div>
       </div>
+
+      <!-- AI suggestion preview. The "scope" of which fields are visible is
+           set by JS based on which sparkle button was clicked. "Use this"
+           writes the visible fields back into the form. -->
+      <div id="yt-pub-suggestion" class="hidden">
+        <p class="text-white/60 text-[11px] tracking-wider mb-3">░ AI Suggestion ░</p>
+        <p id="yt-pub-suggestion-meta" class="text-white/30 text-[10px] mb-3"></p>
+        <p id="yt-pub-suggestion-fallback" class="hidden text-yellow-400/80 text-[10px] mb-3"></p>
+
+        <div id="yt-pub-suggestion-title-group" class="hidden mb-3">
+          <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Title</label>
+          <p id="yt-pub-suggestion-title" class="text-white/90 text-xs bg-black/50 border border-white/10 p-2"></p>
+        </div>
+
+        <div id="yt-pub-suggestion-desc-group" class="hidden mb-3">
+          <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Description</label>
+          <p id="yt-pub-suggestion-desc" class="text-white/90 text-xs bg-black/50 border border-white/10 p-2 whitespace-pre-wrap max-h-40 overflow-y-auto"></p>
+        </div>
+
+        <div id="yt-pub-suggestion-tags-group" class="hidden mb-4">
+          <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tags</label>
+          <p id="yt-pub-suggestion-tags" class="text-white/90 text-xs bg-black/50 border border-white/10 p-2"></p>
+        </div>
+
+        <div class="flex gap-3">
+          <button id="yt-pub-suggestion-use" class="flex-1 py-2 bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-400 hover:to-fuchsia-400 text-white text-xs transition-colors">Use this</button>
+          <button id="yt-pub-suggestion-retry" class="px-4 py-2 border border-white/30 text-white/70 hover:text-white hover:border-white/60 text-xs transition-colors">Try again</button>
+          <button id="yt-pub-suggestion-cancel" class="px-4 py-2 border border-white/20 text-white/50 hover:text-white text-xs transition-colors">Cancel</button>
+        </div>
+      </div>
+
       <div id="yt-pub-done" class="hidden text-center py-4">
         <p class="text-white text-sm mb-2">Uploaded!</p>
         <a id="yt-pub-link" href="" target="_blank" class="text-red-400 hover:text-red-300 text-xs">View on YouTube →</a>

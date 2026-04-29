@@ -60,7 +60,20 @@ export default async (req) => {
     });
   }
 
-  return json({ error: 'Unknown action. Use "prepare" or "token".' }, 400);
+  // AI-only rewrite for the on-demand sparkle buttons.
+  if (action === 'rewrite') {
+    if (!metadata) return json({ error: 'Missing metadata' }, 400);
+
+    const aiCopy = await rewriteForYouTube(metadata);
+    return json({
+      title: aiCopy.title,
+      description: aiCopy.description,
+      tags: aiCopy.tags,
+      aiFallback: aiCopy._aiFallback === true,
+    });
+  }
+
+  return json({ error: 'Unknown action. Use "prepare", "rewrite", or "token".' }, 400);
 };
 
 async function getAccessToken(refreshToken) {

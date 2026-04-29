@@ -1440,7 +1440,6 @@ function wireYouTubePublish() {
   const loading = document.getElementById('yt-pub-loading');
   const errorPanel = document.getElementById('yt-pub-error');
   const errorMsg = document.getElementById('yt-pub-error-msg');
-  const aiNotice = document.getElementById('yt-pub-ai-notice');
   const retryBtn = document.getElementById('yt-pub-retry');
   const errorCloseBtn = document.getElementById('yt-pub-error-close');
   const dismissBtn = document.getElementById('yt-pub-dismiss');
@@ -1461,11 +1460,32 @@ function wireYouTubePublish() {
   const statusEl = document.getElementById('yt-pub-status');
   const linkEl = document.getElementById('yt-pub-link');
 
+  // On-demand AI sparkle buttons + suggestion preview panel
+  const aiAllBtn = document.getElementById('yt-pub-ai-all');
+  const aiTitleBtn = document.getElementById('yt-pub-ai-title');
+  const aiDescBtn = document.getElementById('yt-pub-ai-desc');
+  const suggestionPanel = document.getElementById('yt-pub-suggestion');
+  const suggestionMeta = document.getElementById('yt-pub-suggestion-meta');
+  const suggestionFallback = document.getElementById('yt-pub-suggestion-fallback');
+  const suggestionTitleGroup = document.getElementById('yt-pub-suggestion-title-group');
+  const suggestionTitle = document.getElementById('yt-pub-suggestion-title');
+  const suggestionDescGroup = document.getElementById('yt-pub-suggestion-desc-group');
+  const suggestionDesc = document.getElementById('yt-pub-suggestion-desc');
+  const suggestionTagsGroup = document.getElementById('yt-pub-suggestion-tags-group');
+  const suggestionTags = document.getElementById('yt-pub-suggestion-tags');
+  const suggestionUseBtn = document.getElementById('yt-pub-suggestion-use');
+  const suggestionRetryBtn = document.getElementById('yt-pub-suggestion-retry');
+  const suggestionCancelBtn = document.getElementById('yt-pub-suggestion-cancel');
+
   let currentToken = null;
   // Clip being published in this modal session. May differ from `lastClipId`
   // when the publish is triggered from the library card.
   let publishClipId = null;
   let loadingTimer = null;
+  // Last fetched suggestion + which fields were asked for (so "Use this" only
+  // applies the visible fields, and "Try again" re-fetches the same scope).
+  let currentSuggestion = null;
+  let currentSuggestionScope = 'all'; // 'all' | 'title' | 'description'
 
   const BRAILLE = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
 
@@ -1498,7 +1518,7 @@ function wireYouTubePublish() {
     titleInput.value = '';
     descInput.value = '';
     tagsInput.value = '';
-    aiNotice.classList.add('hidden');
+    currentSuggestion = null;
   }
 
   function hideAllPanels() {
@@ -1507,13 +1527,20 @@ function wireYouTubePublish() {
     form.classList.add('hidden');
     done.classList.add('hidden');
     signinPanel.classList.add('hidden');
+    suggestionPanel.classList.add('hidden');
+  }
+
+  function showForm() {
+    stopLoadingAnim();
+    hideAllPanels();
+    form.classList.remove('hidden');
   }
 
   function closeModal() {
     stopLoadingAnim();
     modal.classList.add('hidden');
     hideAllPanels();
-    loading.textContent = 'Preparing AI copy...';
+    loading.textContent = 'Generating AI copy...';
     resetUploadUI();
   }
 
@@ -1530,7 +1557,70 @@ function wireYouTubePublish() {
     signinPanel.classList.remove('hidden');
   }
 
-  async function startPrepare(clipId = lastClipId) {
+  // Build the metadata payload sent to the AI rewrite endpoint. For the active
+  // clip we merge in the live editor form so the AI sees the user's most
+  // recent edits; for library clips we use the stored fields. Modal field
+  // values override both so any tweaks the user made inside the modal flow
+  // through to the next suggestion.
+  function buildMetadata() {
+    const clips = getClips();
+    const storedClip = clips.find(c => c.id === publishClipId);
+    if (!storedClip) return null;
+    const base = publishClipId === lastClipId
+      ? { ...storedClip, ...readFormFields() }
+      : storedClip;
+    return {
+      ...base,
+      title: titleInput.value || base.title,
+      description: descInput.value || base.description,
+      tags: tagsInput.value || base.tags,
+    };
+  }
+
+  function populateFormFromEditor() {
+    const m = buildMetadata();
+    if (!m) return false;
+    titleInput.value = m.title || '';
+    descInput.value = m.description || '';
+    tagsInput.value = m.tags || '';
+    return true;
+  }
+
+  // Pre-warm the upload access token in the background so that 1) Upload
+  // can start instantly without an extra round trip, and 2) a stale refresh
+  // token surfaces immediately as a re-sign-in prompt instead of after the
+  // user has spent time editing copy.
+  async function fetchAccessTokenInBackground() {
+    if (currentToken) return currentToken;
+    try {
+      const res = await fetch('/api/youtube-publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'token',
+          refreshToken: ytGetRefreshToken(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        ytClearCredentials();
+        ytUpdateAccountUI();
+        showSignInPanel();
+        return null;
+      }
+      if (!res.ok || !data.accessToken) {
+        console.warn('[publish] token fetch failed:', data.error);
+        return null;
+      }
+      currentToken = data.accessToken;
+      return currentToken;
+    } catch (e) {
+      console.warn('[publish] token fetch threw:', e.message);
+      return null;
+    }
+  }
+
+  async function startPublish(clipId = lastClipId) {
     if (!clipId) return;
     publishClipId = clipId;
 
@@ -1544,84 +1634,128 @@ function wireYouTubePublish() {
       return;
     }
 
+    if (!populateFormFromEditor()) {
+      showError('Clip not found.');
+      return;
+    }
+    showForm();
+    fetchAccessTokenInBackground();
+  }
+
+  function showSuggestionPanel(scope, data) {
+    currentSuggestion = data;
+    currentSuggestionScope = scope;
+
+    hideAllPanels();
+    suggestionPanel.classList.remove('hidden');
+
+    suggestionMeta.textContent = data.elapsedMs
+      ? `${data.model || 'AI'} · ${(data.elapsedMs / 1000).toFixed(1)}s`
+      : '';
+
+    if (data.aiFallback) {
+      suggestionFallback.textContent = '⚠ AI rewrite failed — showing template copy.';
+      suggestionFallback.classList.remove('hidden');
+    } else {
+      suggestionFallback.classList.add('hidden');
+    }
+
+    const showTitle = scope === 'all' || scope === 'title';
+    const showDesc = scope === 'all' || scope === 'description';
+    const showTags = scope === 'all';
+
+    suggestionTitleGroup.classList.toggle('hidden', !showTitle);
+    suggestionDescGroup.classList.toggle('hidden', !showDesc);
+    suggestionTagsGroup.classList.toggle('hidden', !showTags);
+
+    suggestionTitle.textContent = data.title || '';
+    suggestionDesc.textContent = data.description || '';
+    suggestionTags.textContent = data.tags || '';
+  }
+
+  async function fetchSuggestion(scope) {
+    const metadata = buildMetadata();
+    if (!metadata) {
+      showError('Clip not found.');
+      return;
+    }
+
     hideAllPanels();
     loading.classList.remove('hidden');
-    startLoadingAnim('Preparing AI copy');
-
-    const clips = getClips();
-    const storedClip = clips.find(c => c.id === publishClipId);
-    if (!storedClip) { showError('Clip not found.'); return; }
-
-    // For the active clip, merge live form values so edits after (or without)
-    // "Save Data" still reach the AI prompt. For a library clip, use stored
-    // metadata — the form reflects a different clip or nothing.
-    const metadata = publishClipId === lastClipId
-      ? { ...storedClip, ...readFormFields() }
-      : storedClip;
+    startLoadingAnim('Generating');
 
     try {
       const res = await fetch('/api/youtube-publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'prepare',
+          action: 'rewrite',
           metadata,
           refreshToken: ytGetRefreshToken(),
         }),
       });
-
-      let data = {};
-      try { data = await res.json(); } catch {}
+      const data = await res.json().catch(() => ({}));
 
       if (res.status === 401) {
-        // Refresh token rejected by Google (revoked / expired). Clear and re-prompt.
         ytClearCredentials();
         ytUpdateAccountUI();
         showSignInPanel();
         return;
       }
-
       if (res.status === 504) {
-        showError('AI rewrite timed out on the server. Click Retry — it usually succeeds on a second attempt, and falls back to template copy after that.');
+        showError('AI rewrite timed out. Click Retry — it usually succeeds on a second attempt, and falls back to template copy after that.');
         return;
       }
-
       if (!res.ok || data.error) {
-        showError(data.error || `Server error (${res.status})`);
+        showError(data.error || `AI request failed (${res.status})`);
         return;
-      }
-
-      currentToken = data.accessToken;
-      titleInput.value = data.title;
-      descInput.value = data.description;
-      tagsInput.value = data.tags;
-
-      aiNotice.classList.remove('hidden', 'text-yellow-400/80', 'text-white/40');
-      if (data.aiFallback) {
-        aiNotice.textContent = `⚠ AI rewrite failed — using template copy. (${data.model || '?'}, ${((data.elapsedMs || 0) / 1000).toFixed(1)}s)`;
-        aiNotice.classList.add('text-yellow-400/80');
-      } else if (data.elapsedMs) {
-        aiNotice.textContent = `✓ ${data.model || 'AI'} · ${(data.elapsedMs / 1000).toFixed(1)}s`;
-        aiNotice.classList.add('text-white/40');
-      } else {
-        aiNotice.classList.add('hidden');
       }
 
       stopLoadingAnim();
-      loading.classList.add('hidden');
-      form.classList.remove('hidden');
+      showSuggestionPanel(scope, data);
     } catch (e) {
       showError(e.message);
     }
   }
 
-  btn.addEventListener('click', () => startPrepare());
-  retryBtn.addEventListener('click', () => startPrepare(publishClipId));
-  publishClip = startPrepare;
+  function applySuggestion() {
+    if (!currentSuggestion) return;
+    const s = currentSuggestion;
+    if (currentSuggestionScope === 'all' || currentSuggestionScope === 'title') {
+      if (s.title) titleInput.value = s.title;
+    }
+    if (currentSuggestionScope === 'all' || currentSuggestionScope === 'description') {
+      if (s.description) descInput.value = s.description;
+    }
+    if (currentSuggestionScope === 'all') {
+      if (s.tags) tagsInput.value = s.tags;
+    }
+    currentSuggestion = null;
+    showForm();
+  }
+
+  btn.addEventListener('click', () => startPublish());
+  retryBtn.addEventListener('click', () => startPublish(publishClipId));
+  publishClip = startPublish;
   errorCloseBtn.addEventListener('click', closeModal);
   dismissBtn.addEventListener('click', closeModal);
   // Modal only closes via the X button — no backdrop click or Escape, so
   // a stray click or drag-to-select inside the form can't wipe the AI copy.
+
+  // Sparkle buttons — main button rewrites everything; per-field sparkles
+  // scope the suggestion panel to just that one field.
+  if (aiAllBtn) aiAllBtn.addEventListener('click', () => fetchSuggestion('all'));
+  if (aiTitleBtn) aiTitleBtn.addEventListener('click', () => fetchSuggestion('title'));
+  if (aiDescBtn) aiDescBtn.addEventListener('click', () => fetchSuggestion('description'));
+
+  // Suggestion panel: Use this writes the visible fields back into the form,
+  // Try again re-fetches with the same scope, Cancel just discards.
+  if (suggestionUseBtn) suggestionUseBtn.addEventListener('click', applySuggestion);
+  if (suggestionRetryBtn) suggestionRetryBtn.addEventListener('click', () => fetchSuggestion(currentSuggestionScope));
+  if (suggestionCancelBtn) suggestionCancelBtn.addEventListener('click', () => {
+    currentSuggestion = null;
+    showForm();
+  });
 
   // Sign-in button inside the modal. Remember which clip was being published
   // so we can resume after the OAuth round-trip redirects us back to /capture.
@@ -1638,11 +1772,22 @@ function wireYouTubePublish() {
   });
 
   uploadBtn.addEventListener('click', async () => {
-    if (!currentToken || !publishClipId || !directoryHandle) return;
+    if (!publishClipId || !directoryHandle) return;
 
     const clips = getClips();
     const clip = clips.find(c => c.id === publishClipId);
     if (!clip || !clip.filename) return;
+
+    // If the background token fetch hasn't returned yet (slow network) or
+    // hasn't been kicked off, do it now before we attempt the upload.
+    if (!currentToken) {
+      uploadBtn.disabled = true;
+      uploadBtn.textContent = 'Preparing...';
+      const tok = await fetchAccessTokenInBackground();
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = 'Upload to YouTube';
+      if (!tok) return;
+    }
 
     uploadBtn.disabled = true;
     uploadBtn.textContent = 'Uploading...';
