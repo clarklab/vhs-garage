@@ -758,8 +758,8 @@ function wireRecordButton() {
       btn.querySelector('.rec-label').textContent = 'REC';
       document.getElementById('preview-container').classList.remove('recording-active');
       document.getElementById('rec-overlay-timer').classList.add('hidden');
-      const legend = document.getElementById('preview-legend');
-      if (legend) legend.textContent = '░ Live ░';
+      const liveTab = document.getElementById('tab-live');
+      if (liveTab) liveTab.textContent = '░ Live Feed ░';
       stopRecording();
       return;
     }
@@ -799,8 +799,8 @@ function wireRecordButton() {
     btn.querySelector('.rec-label').textContent = 'STOP';
     document.getElementById('preview-container').classList.add('recording-active');
     document.getElementById('rec-overlay-timer').classList.remove('hidden');
-    const legend = document.getElementById('preview-legend');
-    if (legend) legend.textContent = '░ Recording ░';
+    const liveTab = document.getElementById('tab-live');
+    if (liveTab) liveTab.textContent = '░ Recording ░';
     resetSleeve();
 
     await startRecording(captureStream, directoryHandle, currentFilename, bitrate, videoFormat, {
@@ -1770,35 +1770,55 @@ function wireBeforeUnload() {
   });
 }
 
-// --- Playback / Live toggle (via legend click) ---
+// --- Source toggle: Live vs. Last Recording ---
 
 // Does a "Last Recording" currently exist? (set when recording ends)
 let hasPlayback = false;
-// Which pane is showing — legend reflects this.
+// Which pane is showing — both tabs reflect this.
 let previewMode = 'live'; // 'live' | 'playback'
 
-function updateLegendAffordance() {
-  const legend = document.getElementById('preview-legend');
-  if (!legend) return;
-  // Legend becomes clickable only when a second mode is available to switch to.
-  if (hasPlayback) {
-    legend.classList.add('cursor-pointer', 'hover:text-white');
-    legend.title = previewMode === 'live' ? 'Click to review last recording' : 'Click to return to live';
+// Render the two source tabs to match the current state. Both tabs always
+// exist in the DOM; the playback tab stays hidden until a recording lands.
+function syncSourceTabs() {
+  const liveTab = document.getElementById('tab-live');
+  const playbackTab = document.getElementById('tab-playback');
+  if (!liveTab || !playbackTab) return;
+
+  playbackTab.classList.toggle('hidden', !hasPlayback);
+
+  const activate = (el) => {
+    el.classList.add('text-white/70');
+    el.classList.remove('text-white/30', 'cursor-pointer');
+  };
+  const deactivate = (el) => {
+    el.classList.add('text-white/30', 'cursor-pointer');
+    el.classList.remove('text-white/70');
+  };
+
+  if (previewMode === 'live') {
+    activate(liveTab);
+    deactivate(playbackTab);
   } else {
-    legend.classList.remove('cursor-pointer', 'hover:text-white');
-    legend.title = '';
+    activate(playbackTab);
+    deactivate(liveTab);
   }
 }
 
 function wirePlaybackTabs() {
-  const legend = document.getElementById('preview-legend');
+  const liveTab = document.getElementById('tab-live');
+  const playbackTab = document.getElementById('tab-playback');
   const deleteBtn = document.getElementById('delete-recording-btn');
 
-  if (legend) {
-    legend.addEventListener('click', () => {
-      if (!hasPlayback) return;
-      if (previewMode === 'live') showPlaybackTab();
-      else showLiveTab();
+  if (liveTab) {
+    liveTab.addEventListener('click', () => {
+      if (previewMode === 'live') return;
+      showLiveTab();
+    });
+  }
+  if (playbackTab) {
+    playbackTab.addEventListener('click', () => {
+      if (!hasPlayback || previewMode === 'playback') return;
+      showPlaybackTab();
     });
   }
 
@@ -1873,9 +1893,7 @@ function showPlaybackTab() {
   document.getElementById('mute-icon-on').classList.add('hidden');
   document.getElementById('mute-icon-off').classList.remove('hidden');
 
-  const legend = document.getElementById('preview-legend');
-  if (legend) legend.textContent = '░ Last Recording ░';
-  updateLegendAffordance();
+  syncSourceTabs();
 
   // Switch meter to playback audio
   pauseMeter();
@@ -1897,9 +1915,7 @@ function showLiveTab() {
   document.getElementById('save-data-btn').classList.add('hidden');
   document.getElementById('publish-yt-btn').classList.add('hidden');
 
-  const legend = document.getElementById('preview-legend');
-  if (legend) legend.textContent = '░ Live ░';
-  updateLegendAffordance();
+  syncSourceTabs();
 
   // Switch meter back to live capture stream
   pauseMeter();

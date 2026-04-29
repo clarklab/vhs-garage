@@ -154,7 +154,15 @@ import Base from '../layouts/Base.astro';
       <!-- Left: Main Capture -->
       <div class="flex flex-col min-h-0">
         <fieldset class="flex-1 flex flex-col min-h-0 border border-white/20 p-3">
-          <legend id="preview-legend" class="text-white/70 text-[11px] tracking-wider px-2 transition-colors">░ Live ░</legend>
+          <!-- Source toggle: both Live and Last Recording always render (the
+               playback tab stays hidden until a recording exists) so the
+               control is discoverable rather than hiding behind a single
+               clickable legend. Styled to look like a fieldset legend so it
+               keeps the same chrome as the other panels. -->
+          <legend id="preview-legend" class="text-[11px] tracking-wider px-2 leading-none flex items-center gap-3">
+            <button id="tab-live" type="button" class="text-white/70 transition-colors leading-none">░ Live Feed ░</button>
+            <button id="tab-playback" type="button" class="hidden text-white/30 hover:text-white/70 transition-colors leading-none">░ Last Recording ░</button>
+          </legend>
           <!-- Preview -->
           <div id="preview-container" class="relative flex-1 bg-[#141214] border border-white/10 overflow-hidden cursor-pointer">
             <video id="preview" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
