@@ -246,18 +246,17 @@ import Base from '../layouts/Base.astro';
     <div class="flex-1 min-h-0 flex flex-col">
     <div class="flex-1 grid md:grid-cols-[1fr_320px] lg:grid-cols-[1fr_300px_320px] min-h-0">
 
-      <!-- Left: Main Capture -->
-      <div class="flex flex-col min-h-0">
-        <fieldset class="flex-1 flex flex-col min-h-0 border border-white/20 p-3">
-          <!-- Source toggle: both Live and Last Recording always render (the
-               playback tab stays hidden until a recording exists) so the
-               control is discoverable rather than hiding behind a single
-               clickable legend. Styled to look like a fieldset legend so it
-               keeps the same chrome as the other panels. -->
-          <legend id="preview-legend" class="text-[11px] tracking-wider px-2 leading-none flex items-center gap-3">
-            <button id="tab-live" type="button" class="text-white/70 transition-colors leading-none">░ Live Feed ░</button>
-            <button id="tab-playback" type="button" class="hidden text-white/30 hover:text-white/70 transition-colors leading-none">░ Last Recording ░</button>
-          </legend>
+      <!-- Column 1: Live preview + recording controls. Plain div, no outer
+           border — the column dividers (border-l on cols 2 and 3) are the
+           only verticals between sections. -->
+      <div class="flex flex-col min-h-0 p-4">
+        <!-- Source toggle. Both Live and Last Recording render; playback
+             stays hidden until a recording exists. Sits at the column top
+             as a plain header strip (was a fieldset legend before). -->
+        <div id="preview-legend" class="text-[11px] tracking-wider leading-none flex items-center gap-3 mb-3">
+          <button id="tab-live" type="button" class="text-white/70 transition-colors leading-none">░ Live Feed ░</button>
+          <button id="tab-playback" type="button" class="hidden text-white/30 hover:text-white/70 transition-colors leading-none">░ Last Recording ░</button>
+        </div>
           <!-- Preview -->
           <div id="preview-container" class="relative flex-1 bg-[#141214] border border-white/10 overflow-hidden cursor-pointer">
             <video id="preview" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
@@ -312,19 +311,18 @@ import Base from '../layouts/Base.astro';
               Library
             </button>
           </div>
-        </fieldset>
       </div>
 
       <!-- Columns 2+3: stacked at md, side-by-side at lg -->
       <div class="md:flex md:flex-col md:gap-3 md:min-h-0 md:overflow-y-auto lg:contents">
 
-        <!-- Column 2: Cover Snap (top) + Thumbnail picker (below, when a clip
-             is loaded). Sleeve fieldset takes the remaining height; Thumbnail
-             sits at content-height beneath. Picker moved here from column 3
-             to free up vertical room there for Clip Info + Publish. -->
-        <div class="flex flex-col min-h-0 gap-3">
-          <fieldset class="flex-1 min-h-0 flex flex-col border border-white/20 p-3">
-            <legend class="text-white/70 text-[11px] tracking-wider px-2">░ VHS Sleeve ░</legend>
+        <!-- Column 2: VHS Sleeve (top) + Thumbnail picker (below, when a clip
+             is loaded). border-l makes this the only vertical between col 1
+             and col 2 — no outer fieldset chrome. Sleeve area flexes 1;
+             Thumbnail sits at content-height beneath. -->
+        <div class="flex flex-col min-h-0 p-4 gap-3 border-l border-white/20">
+          <div class="flex-1 min-h-0 flex flex-col">
+            <p class="shrink-0 text-white/70 text-[11px] tracking-wider mb-3">░ VHS Sleeve ░</p>
             <div class="flex-1 min-h-0 overflow-y-auto vhs-scroll">
 
             <!-- Front capture/preview -->
@@ -400,16 +398,13 @@ import Base from '../layouts/Base.astro';
               <span class="inline-flex items-center justify-center w-3 h-3 border border-current leading-none text-[9px]">×</span>
               Reset covers
             </button>
-          </fieldset>
+          </div>
 
           <!-- Thumbnail picker — only relevant once a clip is loaded into the
-               editor. Hidden until lastClipId is set. Lives in column 2 below
-               the sleeve photos so the YouTube thumbnail conceptually belongs
-               with the rest of the visual cover material. Generation kicks off
-               automatically the moment a clip's video blob is available — no
-               "Pick thumbnail" button to click first. -->
-          <fieldset id="cap-thumb-fieldset" class="hidden shrink-0 border border-white/20 p-3">
-            <legend class="text-white/70 text-[11px] tracking-wider px-2">░ Thumbnail ░</legend>
+               editor. Hidden until lastClipId is set. Subsection inside col 2,
+               separated by a top border instead of a full fieldset frame. -->
+          <div id="cap-thumb-fieldset" class="hidden shrink-0 pt-3 border-t border-white/15">
+            <p class="text-white/70 text-[11px] tracking-wider mb-3">░ Thumbnail ░</p>
             <!-- Placeholder grid: a 6-cell skeleton that's visible until real
                  frames arrive, so the layout doesn't pop. -->
             <div id="player-thumb-empty" class="grid grid-cols-3 gap-2">
@@ -427,15 +422,17 @@ import Base from '../layouts/Base.astro';
                 <button id="player-thumb-refresh" class="text-white/40 hover:text-white/70 text-xs flex items-center gap-1 transition-colors" title="Get 6 different frames">↻ Refresh</button>
               </div>
             </div>
-          </fieldset>
+          </div>
         </div>
 
-        <!-- Column 3: Clip Info + (when a clip is loaded) Thumbnail picker
-             and Publish to YouTube. Scroll lives on the column wrapper so
-             stacked fieldsets read naturally as separate sections. -->
-        <div class="flex flex-col min-h-0 overflow-y-auto space-y-3">
-          <fieldset class="border border-white/20 p-3 shrink-0">
-            <legend class="text-white/70 text-[11px] tracking-wider px-2">░ Clip Info ░</legend>
+        <!-- Column 3: Clip Info (top) + Publish to YouTube (below, when a
+             clip is loaded). border-l makes the column edge the only vertical
+             between col 2 and col 3 — no outer fieldset chrome. Wrapper
+             scrolls; scroll bar will be replaced by a custom always-visible
+             one in the next commit. -->
+        <div id="col3-content" class="flex flex-col min-h-0 p-4 space-y-3 overflow-y-auto vhs-scroll border-l border-white/20">
+          <div class="shrink-0">
+            <p class="text-white/70 text-[11px] tracking-wider mb-3">░ Clip Info ░</p>
             <div id="clip-info-fields" class="space-y-2 text-xs">
               <div>
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Clip Title</label>
@@ -516,17 +513,16 @@ import Base from '../layouts/Base.astro';
               <span class="inline-flex items-center justify-center w-3 h-3 border border-current leading-none text-[9px]">×</span>
               Reset info
             </button>
-          </fieldset>
+          </div>
 
-          <!-- (Thumbnail picker moved to column 2 — see below — so the
-               far-right column has more vertical room for Clip Info +
-               Publish without scrolling.) -->
+          <!-- (Thumbnail picker moved to column 2 — see above — so this
+               column has more vertical room for Clip Info + Publish.) -->
 
-          <!-- Publish to YouTube — only relevant once a clip is loaded. State
-               machine swaps inside the fieldset (signin / form / loading /
-               suggestion / done / error). -->
-          <fieldset id="cap-pub-fieldset" class="hidden border border-white/20 p-3 shrink-0">
-            <legend class="text-white/70 text-[11px] tracking-wider px-2">░ Publish to YouTube ░</legend>
+          <!-- Publish to YouTube — only relevant once a clip is loaded.
+               Subsection inside col 3, separated by a top border instead
+               of a full fieldset frame. -->
+          <div id="cap-pub-fieldset" class="hidden shrink-0 pt-3 border-t border-white/15">
+            <p class="text-white/70 text-[11px] tracking-wider mb-3">░ Publish to YouTube ░</p>
 
             <!-- Signed-in account banner (visible when signed in) -->
             <div id="yt-pub-account" class="hidden flex items-center gap-2 mb-3 text-[11px] text-white/50">
@@ -621,7 +617,7 @@ import Base from '../layouts/Base.astro';
               <a id="yt-pub-link" href="" target="_blank" class="text-red-400 hover:text-red-300 text-xs">View on YouTube →</a>
               <p id="yt-pub-thumb-warn" class="hidden text-yellow-400/70 text-[10px] mt-3"></p>
             </div>
-          </fieldset>
+          </div>
         </div>
 
       </div>
