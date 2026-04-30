@@ -104,33 +104,32 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
   }
 
   emptyMsg.classList.add('hidden');
+  // Compact row layout: small thumbnail | title + date/duration/size | status +
+  // small action buttons. Whole row is the click target. select-none on the
+  // row prevents a stray double-click from highlighting text and triggering
+  // Mac's "Look Up" dictionary popup.
   container.innerHTML = clips.map(clip => {
     const hasFile = !!clip.filename;
     const canUpload = onUpload && hasFile && !clip.youtubeUrl;
     const uploadedMarker = clip.youtubeUrl
-      ? `<a href="${clip.youtubeUrl}" target="_blank" class="text-red-400/60 hover:text-red-400 transition-colors" title="View on YouTube">▶ Uploaded</a>`
-      : (hasFile && !onUpload
-          ? `<span class="text-white/20" title="Pick a save folder to enable upload">▶ Pick folder</span>`
-          : '');
-    // Whole card is the click target when onOpen is wired, with select-none on
-    // non-button content so a stray double-click doesn't trip Mac's "Look Up"
-    // popup. The action buttons stop propagation so they don't also fire open.
-    const cardClass = `library-card border border-white/20 p-3 text-xs select-none ${onOpen ? 'cursor-pointer hover:border-white/40 transition-colors' : ''}`;
+      ? `<a href="${clip.youtubeUrl}" target="_blank" class="text-red-400/70 hover:text-red-400 transition-colors text-[10px]" title="View on YouTube">▶ Uploaded</a>`
+      : '';
+    const rowClass = `library-card flex items-center gap-3 p-2 border border-white/10 ${onOpen ? 'cursor-pointer hover:border-white/30 hover:bg-white/5' : ''} transition-colors select-none text-xs`;
     return `
-    <div class="${cardClass}" data-id="${clip.id}" data-filename="${clip.filename || ''}" ${onOpen ? `title="Click to open in editor"` : ''}>
-      <div class="aspect-[4/3] bg-[#141214] mb-2 overflow-hidden flex items-center justify-center transition-opacity" data-id="${clip.id}">
-        ${clip.thumbnail ? `<img src="${clip.thumbnail}" class="w-full h-full object-contain pointer-events-none" alt="">` : '<span class="text-white/10 pointer-events-none">No thumbnail</span>'}
+    <div class="${rowClass}" data-id="${clip.id}" data-filename="${clip.filename || ''}" ${onOpen ? `title="Click to open in editor"` : ''}>
+      <div class="w-16 h-12 bg-[#141214] flex-shrink-0 overflow-hidden flex items-center justify-center">
+        ${clip.thumbnail ? `<img src="${clip.thumbnail}" class="w-full h-full object-cover pointer-events-none" alt="">` : '<span class="text-white/10 text-[9px] pointer-events-none">--</span>'}
       </div>
-      <p class="text-white truncate mb-1">${clip.title}</p>
-      <p class="text-gray-500">${new Date(clip.date).toLocaleDateString()} · ${formatDuration(clip.duration)} · ${formatLibSize(clip.fileSize)}</p>
-      <p class="text-gray-600 truncate text-[10px] mt-1">${clip.filename || ''}</p>
-      ${clip.sleeveFront ? '<p class="text-gray-500 mt-1">Sleeve: Front' + (clip.sleeveBack ? ' + Back' : '') + '</p>' : ''}
-      <div class="flex gap-3 mt-2 flex-wrap">
-        <button class="copy-yt text-white/40 hover:text-white/70 transition-colors" data-id="${clip.id}" title="Copy YouTube text">YT ░</button>
-        <button class="copy-json text-white/40 hover:text-white/70 transition-colors" data-id="${clip.id}" title="Copy JSON">JSON ░</button>
-        ${canUpload ? `<button class="upload-clip text-red-400/60 hover:text-red-400 transition-colors" data-id="${clip.id}" title="Upload to YouTube">▶ Upload</button>` : uploadedMarker}
-        <span class="flex-1"></span>
-        <button class="delete-clip text-red-400/50 hover:text-red-400 transition-colors" data-id="${clip.id}">Delete</button>
+      <div class="flex-1 min-w-0">
+        <p class="text-white truncate">${clip.title || 'Untitled'}</p>
+        <p class="text-gray-500 text-[10px] truncate">${new Date(clip.date).toLocaleDateString()} · ${formatDuration(clip.duration)} · ${formatLibSize(clip.fileSize)}</p>
+      </div>
+      <div class="flex items-center gap-2 flex-shrink-0">
+        ${uploadedMarker}
+        ${canUpload ? `<button class="upload-clip text-red-400/60 hover:text-red-400 transition-colors text-[10px]" data-id="${clip.id}" title="Upload to YouTube">▶ Upload</button>` : ''}
+        <button class="copy-yt text-white/30 hover:text-white/70 transition-colors text-[10px]" data-id="${clip.id}" title="Copy YouTube text">YT</button>
+        <button class="copy-json text-white/30 hover:text-white/70 transition-colors text-[10px]" data-id="${clip.id}" title="Copy JSON">JSON</button>
+        <button class="delete-clip text-red-400/50 hover:text-red-400 transition-colors text-base leading-none" data-id="${clip.id}" title="Delete">×</button>
       </div>
     </div>
   `;

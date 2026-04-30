@@ -623,27 +623,39 @@ import Base from '../layouts/Base.astro';
 
   </div>
 
-  <!-- Library view (full page overlay, toggled) -->
-  <div id="view-library" class="hidden fixed inset-0 z-30 bg-black p-4 overflow-y-auto">
-    <div class="max-w-4xl mx-auto">
-      <div class="flex items-center justify-between mb-4">
-        <button id="to-capture-btn" class="text-xs text-white/60 hover:text-white/80">← Back to Capture</button>
-        <button id="export-catalog-btn" class="text-xs text-white/60 hover:text-white/80">Export catalog.json</button>
+  <!-- Library: a draggable "computer window" overlay rather than a full-page
+       view. Click and drag the title bar; red [×] in the title bar closes it.
+       When no save folder has been picked, the body shows ONLY the folder
+       picker — no file list — so it's obvious we don't know where the user's
+       clips live until they tell us. -->
+  <div id="view-library" class="hidden fixed z-30" style="top:50%; left:50%; transform:translate(-50%, -50%); width:680px; max-width:calc(100vw - 32px); max-height:calc(100vh - 80px);">
+    <div class="bg-black border-2 border-white/30 flex flex-col" style="box-shadow: 4px 4px 0 0 rgba(0,0,0,0.7), inset 1px 1px 0 0 rgba(255,255,255,0.06); max-height:inherit;">
+      <!-- Title bar — drag handle. Window chrome borrows old-software cues:
+           inset highlight, monospace, tracking, single accent dot. -->
+      <div id="library-titlebar" class="flex items-center gap-2 px-2 py-1.5 bg-white/10 border-b border-white/25 select-none" style="cursor: grab; font-family: monospace; box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.08);">
+        <span class="inline-block w-1.5 h-1.5 bg-red-500 ml-1" style="box-shadow: 0 0 6px rgba(229,57,53,0.6);"></span>
+        <span class="text-white/85 font-bold text-[11px] tracking-[0.15em] uppercase">VHS Garage — Library</span>
+        <span class="flex-1"></span>
+        <button id="to-capture-btn" type="button" class="w-5 h-5 flex items-center justify-center bg-red-600 hover:bg-red-500 text-white text-sm leading-none transition-colors" title="Close" style="font-family: monospace;">×</button>
       </div>
-      <!-- Shown only when no save folder is selected this session. Without a
-           folder handle we can't read clip files, so the catalog cards still
-           render but their open/upload affordances stay disabled until a
-           folder is picked. -->
-      <div id="library-folder-banner" class="hidden mb-4 border border-yellow-400/30 bg-yellow-400/5 p-4 flex items-center gap-3 text-sm">
-        <span class="text-yellow-400/80 text-lg leading-none">▒</span>
-        <div class="flex-1">
-          <p class="text-white/80 mb-0.5">Pick your local drive folder to view your clips</p>
-          <p class="text-white/40 text-xs">VHS Garage needs read access to the folder where your recordings are saved.</p>
+
+      <!-- Body — scrolls internally. Either the folder placeholder OR the file list. -->
+      <div class="flex-1 min-h-0 overflow-y-auto" style="background:#0a0a0a;">
+        <div id="library-folder-banner" class="hidden flex flex-col items-center justify-center text-center py-16 px-6">
+          <span class="text-white/20 text-3xl mb-3">▒</span>
+          <p class="text-white/80 text-sm mb-2">Pick your local drive folder to view your clips</p>
+          <p class="text-white/40 text-xs mb-5 max-w-sm">VHS Garage doesn't know where your recordings are saved until you point it at the folder. Read access only.</p>
+          <button id="library-pick-dir" class="px-4 py-2 border border-white/30 text-white/80 hover:text-white hover:border-white text-xs transition-colors">Choose folder…</button>
         </div>
-        <button id="library-pick-dir" class="shrink-0 px-3 py-2 border border-white/30 text-white/80 hover:text-white hover:border-white text-xs transition-colors">Choose folder…</button>
+
+        <div id="library-grid" class="space-y-1 p-2"></div>
+        <p id="library-empty" class="text-gray-400 text-xs text-center py-12">No clips captured yet.</p>
       </div>
-      <div id="library-grid" class="grid grid-cols-2 md:grid-cols-3 gap-4"></div>
-      <p id="library-empty" class="text-gray-400 text-sm text-center py-12">No clips captured yet.</p>
+
+      <!-- Footer — small action strip -->
+      <div class="flex items-center justify-end gap-3 px-3 py-1.5 border-t border-white/15 bg-white/5">
+        <button id="export-catalog-btn" class="text-[10px] text-white/40 hover:text-white/70 transition-colors uppercase tracking-wider">Export catalog.json</button>
+      </div>
     </div>
   </div>
 

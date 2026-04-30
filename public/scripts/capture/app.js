@@ -113,6 +113,7 @@ async function startApp() {
   wireYouTubePublish();
   wireMainEditorAutosave();
   wireThumbnailPicker();
+  wireLibraryDrag();
   wireKeyboardShortcuts();
   wireBeforeUnload();
   // No clip loaded at first paint — keep the clip-dependent fieldsets hidden.
@@ -1096,8 +1097,81 @@ function wireLibrary() {
 
 function updateLibraryFolderBanner() {
   const banner = document.getElementById('library-folder-banner');
+  const grid = document.getElementById('library-grid');
+  const empty = document.getElementById('library-empty');
   if (!banner) return;
-  banner.classList.toggle('hidden', !!directoryHandle);
+  if (directoryHandle) {
+    banner.classList.add('hidden');
+    if (grid) grid.classList.remove('hidden');
+    // The empty state's own visibility is owned by renderLibrary.
+  } else {
+    banner.classList.remove('hidden');
+    // No file grid until they pick a folder — drives home that we don't
+    // know where the clips live yet.
+    if (grid) grid.classList.add('hidden');
+    if (empty) empty.classList.add('hidden');
+  }
+}
+
+// Vintage-OS dragging for the library window. Position is held in fixed
+// top/left after the first drag; the initial centered transform is dropped
+// on first mousedown so subsequent moves are absolute, not relative to the
+// translate(-50%, -50%) origin.
+function wireLibraryDrag() {
+  const win = document.getElementById('view-library');
+  const handle = document.getElementById('library-titlebar');
+  if (!win || !handle) return;
+
+  let dragging = false;
+  let startX = 0, startY = 0, originLeft = 0, originTop = 0;
+
+  function clamp(left, top) {
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const w = win.offsetWidth;
+    const h = win.offsetHeight;
+    // Keep at least 80px of width and 30px of height visible so the user can
+    // always grab the title bar back if they drag too far.
+    const minLeft = 80 - w;
+    const maxLeft = W - 80;
+    const minTop = 0;
+    const maxTop = H - 30;
+    return [
+      Math.max(minLeft, Math.min(maxLeft, left)),
+      Math.max(minTop, Math.min(maxTop, top)),
+    ];
+  }
+
+  handle.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest('button, a')) return;
+    dragging = true;
+    handle.style.cursor = 'grabbing';
+    // Convert the centered transform into an absolute top/left pair so the
+    // window can stay where it is at the start of the drag.
+    const rect = win.getBoundingClientRect();
+    win.style.transform = 'none';
+    win.style.left = rect.left + 'px';
+    win.style.top = rect.top + 'px';
+    startX = e.clientX;
+    startY = e.clientY;
+    originLeft = rect.left;
+    originTop = rect.top;
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const [left, top] = clamp(originLeft + (e.clientX - startX), originTop + (e.clientY - startY));
+    win.style.left = left + 'px';
+    win.style.top = top + 'px';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.style.cursor = 'grab';
+  });
 }
 
 function refreshLibrary() {
