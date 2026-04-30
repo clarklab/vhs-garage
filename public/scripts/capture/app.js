@@ -901,6 +901,9 @@ function wireRecordButton() {
               playbackVideo.removeEventListener('loadeddata', onReady);
               showPlaybackTab();
             }, 3000);
+            // Now that the blob is ready, fire the thumbnail picker
+            // automatically so the user doesn't have to click anything.
+            triggerThumbnailGenForActiveClip();
           }
         } catch (err) {
           console.warn('Could not load playback:', err);
@@ -1334,6 +1337,9 @@ async function loadClipIntoEditor(clipId) {
   // 7. Reveal the Thumbnail + Publish fieldsets and re-init the publish UI
   //    state machine for the loaded clip (signin / form / done).
   updateClipDependentPanels();
+
+  // 8. Auto-generate 6 thumbnail frames now that the blob is ready.
+  triggerThumbnailGenForActiveClip();
 }
 
 // --- Active-clip-dependent panels ---
@@ -1344,6 +1350,10 @@ async function loadClipIntoEditor(clipId) {
 // `lastClipId` and re-syncs the publish state machine to the current clip.
 
 let mainEditorAutoSaveTimer = null;
+// Tracks which clip the thumbnail picker last generated frames for, so
+// publishStateForClip refreshes (which call updateClipDependentPanels for
+// the same clip) don't re-trigger generation needlessly.
+let lastThumbedClipId = null;
 
 function updateClipDependentPanels() {
   const thumb = document.getElementById('cap-thumb-fieldset');
@@ -1359,23 +1369,43 @@ function updateClipDependentPanels() {
     if (clip) publishStateForClip_external(lastClipId, clip);
   }
 
-  // Reset the thumbnail picker so we don't show stale frames from a prior clip.
+  // Thumbnail picker visibility only — actual frame generation is gated on
+  // the playback blob URL being ready (see triggerThumbnailGenForActiveClip)
+  // since updateClipDependentPanels can run before the blob exists.
+  if (!visible) {
+    if (typeof resetThumbnailPicker === 'function') resetThumbnailPicker();
+    lastThumbedClipId = null;
+  }
+}
+
+// Kick off thumbnail generation for the active clip once both the clip ID
+// and the playback blob URL are set. Idempotent per clip — calling it
+// repeatedly for the same clip is a no-op once we've already generated.
+function triggerThumbnailGenForActiveClip() {
+  if (!lastClipId || !playbackBlobUrl) return;
+  if (lastClipId === lastThumbedClipId) return;
   if (typeof resetThumbnailPicker === 'function') resetThumbnailPicker();
+  if (typeof autoGenerateThumbnails === 'function') autoGenerateThumbnails();
+  lastThumbedClipId = lastClipId;
 }
 
 // Thumbnail picker. Generates 6 random frames from the currently-loaded
 // clip's playback blob URL, lets the user click to pick one, and Refresh
 // pulls 6 more. Selection persists per-clip and doubles as the library tile.
+//
+// Generation now fires automatically the moment a clip's blob is available
+// (no "Pick thumbnail" button to click), via autoGenerateThumbnails which
+// updateClipDependentPanels invokes on every new active clip.
 let resetThumbnailPicker = null;
+let autoGenerateThumbnails = null;
 
 function wireThumbnailPicker() {
-  const pickBtn = document.getElementById('player-thumb-pick');
   const refreshBtn = document.getElementById('player-thumb-refresh');
   const emptyState = document.getElementById('player-thumb-empty');
   const loadingState = document.getElementById('player-thumb-loading');
   const gridWrap = document.getElementById('player-thumb-grid-wrap');
   const grid = document.getElementById('player-thumb-grid');
-  if (!pickBtn || !grid) return;
+  if (!grid) return;
 
   let currentThumbnails = [];
 
@@ -1441,8 +1471,11 @@ function wireThumbnailPicker() {
     showState('empty');
   }
   resetThumbnailPicker = reset;
+  // Auto-generate is identical to manual generate — exposed at module level
+  // so updateClipDependentPanels can fire it whenever a new clip becomes
+  // active without the user clicking anything.
+  autoGenerateThumbnails = generate;
 
-  pickBtn.addEventListener('click', generate);
   refreshBtn.addEventListener('click', generate);
 }
 

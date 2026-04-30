@@ -361,14 +361,20 @@ import Base from '../layouts/Base.astro';
           <!-- Thumbnail picker — only relevant once a clip is loaded into the
                editor. Hidden until lastClipId is set. Lives in column 2 below
                the sleeve photos so the YouTube thumbnail conceptually belongs
-               with the rest of the visual cover material. -->
+               with the rest of the visual cover material. Generation kicks off
+               automatically the moment a clip's video blob is available — no
+               "Pick thumbnail" button to click first. -->
           <fieldset id="cap-thumb-fieldset" class="hidden shrink-0 border border-white/20 p-3">
             <legend class="text-white/70 text-[11px] tracking-wider px-2">░ Thumbnail ░</legend>
-            <div id="player-thumb-empty">
-              <div class="flex items-center gap-3">
-                <button id="player-thumb-pick" class="text-xs px-3 py-1.5 border border-white/30 text-white/70 hover:text-white hover:border-white transition-colors">Pick thumbnail</button>
-                <p class="text-white/30 text-[10px]">Choose which frame appears on YouTube and in your library.</p>
-              </div>
+            <!-- Placeholder grid: a 6-cell skeleton that's visible until real
+                 frames arrive, so the layout doesn't pop. -->
+            <div id="player-thumb-empty" class="grid grid-cols-3 gap-2">
+              <div class="aspect-video bg-white/5 border border-white/10"></div>
+              <div class="aspect-video bg-white/5 border border-white/10"></div>
+              <div class="aspect-video bg-white/5 border border-white/10"></div>
+              <div class="aspect-video bg-white/5 border border-white/10"></div>
+              <div class="aspect-video bg-white/5 border border-white/10"></div>
+              <div class="aspect-video bg-white/5 border border-white/10"></div>
             </div>
             <div id="player-thumb-loading" class="hidden text-white/40 text-xs py-4 text-center">Generating thumbnails…</div>
             <div id="player-thumb-grid-wrap" class="hidden">
