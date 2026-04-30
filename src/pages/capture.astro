@@ -153,6 +153,38 @@ import Base from '../layouts/Base.astro';
       animation: lib-shoop 240ms cubic-bezier(0.2, 0.9, 0.3, 1.1);
       transform-origin: center bottom;
     }
+
+    /* Old-school chunky scrollbar: red pill thumb on a dark track. Applied
+       page-wide so any overflow on /capture (sidebar columns, library window
+       body, modals, textareas, popovers) gets the same treatment. The thumb
+       border matches the track color so the colored area reads as an inset
+       pill floating in the channel; background-clip: padding-box keeps the
+       colored fill from leaking under the border. */
+    *::-webkit-scrollbar {
+      width: 12px;
+      height: 12px;
+    }
+    *::-webkit-scrollbar-track {
+      background: #141214;
+    }
+    *::-webkit-scrollbar-thumb {
+      background: #dc2626;
+      border: 3px solid #141214;
+      background-clip: padding-box;
+      border-radius: 2px;
+    }
+    *::-webkit-scrollbar-thumb:hover {
+      background: #ef4444;
+      background-clip: padding-box;
+    }
+    *::-webkit-scrollbar-corner {
+      background: #141214;
+    }
+    /* Firefox */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #dc2626 #141214;
+    }
   </style>
 
   <!-- Browser check -->
@@ -268,11 +300,14 @@ import Base from '../layouts/Base.astro';
       <!-- Columns 2+3: stacked at md, side-by-side at lg -->
       <div class="md:flex md:flex-col md:gap-3 md:min-h-0 md:overflow-y-auto lg:contents">
 
-        <!-- Column 2: Cover Snap -->
-        <div class="flex flex-col min-h-0">
+        <!-- Column 2: Cover Snap (top) + Thumbnail picker (below, when a clip
+             is loaded). Sleeve fieldset takes the remaining height; Thumbnail
+             sits at content-height beneath. Picker moved here from column 3
+             to free up vertical room there for Clip Info + Publish. -->
+        <div class="flex flex-col min-h-0 gap-3">
           <fieldset class="flex-1 min-h-0 flex flex-col border border-white/20 p-3">
             <legend class="text-white/70 text-[11px] tracking-wider px-2">░ VHS Sleeve ░</legend>
-            <div class="flex-1 min-h-0 overflow-y-auto">
+            <div class="flex-1 min-h-0 overflow-y-auto vhs-scroll">
 
             <!-- Front capture/preview -->
             <div id="sleeve-front-section">
@@ -347,6 +382,27 @@ import Base from '../layouts/Base.astro';
               <span class="inline-flex items-center justify-center w-3 h-3 border border-current leading-none text-[9px]">×</span>
               Reset covers
             </button>
+          </fieldset>
+
+          <!-- Thumbnail picker — only relevant once a clip is loaded into the
+               editor. Hidden until lastClipId is set. Lives in column 2 below
+               the sleeve photos so the YouTube thumbnail conceptually belongs
+               with the rest of the visual cover material. -->
+          <fieldset id="cap-thumb-fieldset" class="hidden shrink-0 border border-white/20 p-3">
+            <legend class="text-white/70 text-[11px] tracking-wider px-2">░ Thumbnail ░</legend>
+            <div id="player-thumb-empty">
+              <div class="flex items-center gap-3">
+                <button id="player-thumb-pick" class="text-xs px-3 py-1.5 border border-white/30 text-white/70 hover:text-white hover:border-white transition-colors">Pick thumbnail</button>
+                <p class="text-white/30 text-[10px]">Choose which frame appears on YouTube and in your library.</p>
+              </div>
+            </div>
+            <div id="player-thumb-loading" class="hidden text-white/40 text-xs py-4 text-center">Generating thumbnails…</div>
+            <div id="player-thumb-grid-wrap" class="hidden">
+              <div id="player-thumb-grid" class="grid grid-cols-3 gap-2"></div>
+              <div class="flex items-center justify-end mt-2">
+                <button id="player-thumb-refresh" class="text-white/40 hover:text-white/70 text-xs flex items-center gap-1 transition-colors" title="Get 6 different frames">↻ Refresh</button>
+              </div>
+            </div>
           </fieldset>
         </div>
 
@@ -438,24 +494,9 @@ import Base from '../layouts/Base.astro';
             </button>
           </fieldset>
 
-          <!-- Thumbnail picker — only relevant once a clip is loaded into the
-               editor. Hidden until lastClipId is set. -->
-          <fieldset id="cap-thumb-fieldset" class="hidden border border-white/20 p-3 shrink-0">
-            <legend class="text-white/70 text-[11px] tracking-wider px-2">░ Thumbnail ░</legend>
-            <div id="player-thumb-empty">
-              <div class="flex items-center gap-3">
-                <button id="player-thumb-pick" class="text-xs px-3 py-1.5 border border-white/30 text-white/70 hover:text-white hover:border-white transition-colors">Pick thumbnail</button>
-                <p class="text-white/30 text-[10px]">Choose which frame appears on YouTube and in your library.</p>
-              </div>
-            </div>
-            <div id="player-thumb-loading" class="hidden text-white/40 text-xs py-4 text-center">Generating thumbnails…</div>
-            <div id="player-thumb-grid-wrap" class="hidden">
-              <div id="player-thumb-grid" class="grid grid-cols-3 gap-2"></div>
-              <div class="flex items-center justify-end mt-2">
-                <button id="player-thumb-refresh" class="text-white/40 hover:text-white/70 text-xs flex items-center gap-1 transition-colors" title="Get 6 different frames">↻ Refresh</button>
-              </div>
-            </div>
-          </fieldset>
+          <!-- (Thumbnail picker moved to column 2 — see below — so the
+               far-right column has more vertical room for Clip Info +
+               Publish without scrolling.) -->
 
           <!-- Publish to YouTube — only relevant once a clip is loaded. State
                machine swaps inside the fieldset (signin / form / loading /

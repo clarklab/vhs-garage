@@ -4,3 +4,14 @@
 
 [build.environment]
   NODE_VERSION = "22"
+
+# During active development we want every page refresh to pull the latest
+# deploy — testers (some non-technical) shouldn't have to figure out hard
+# refresh / DevTools to see new code. Disable browser caching for the
+# whole site for now; revisit and tighten once the codebase calms down.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+    Pragma = "no-cache"
+    Expires = "0"

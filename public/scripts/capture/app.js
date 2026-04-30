@@ -1217,6 +1217,27 @@ function refreshLibrary() {
   }, onOpen, onUpload);
 }
 
+// Read a saved sleeve image from disk and return it as a data URL. Returns
+// null if the file isn't present or can't be read. Used as a fallback for
+// clips whose catalog entry doesn't carry the sleeve data URLs (older
+// recordings, transferred catalogs, etc.).
+async function readSleeveFromDisk(dirHandle, basename, side) {
+  if (!dirHandle || !basename) return null;
+  const filename = `${basename}_${side}.jpg`;
+  try {
+    const fh = await dirHandle.getFileHandle(filename);
+    const file = await fh.getFile();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  } catch {
+    return null;
+  }
+}
+
 // Load a previously-captured clip back into the main capture screen so the
 // user can review / edit / publish it using the same UI as a fresh capture.
 // This is the new "primary" way to interact with library clips — it replaces
@@ -1257,12 +1278,30 @@ async function loadClipIntoEditor(clipId) {
   setVal('clip-condition', clip.condition);
   setVal('clip-notes', clip.cassetteNotes);
 
-  // 4. Restore sleeve previews from the catalog. restoreSleeve also re-syncs
-  // the sleeve module's internal state machine so Retake / Capture Back
-  // behave naturally afterward — both captured sits at "done" with the
-  // Retake button visible; front-only sits at "front_captured" with the
-  // webcam moved into the back slot.
-  restoreSleeve(clip.sleeveFront, clip.sleeveBack);
+  // 4. Restore sleeve previews. Prefer the data URLs already in the catalog,
+  // but fall back to reading the matching {basename}_front.jpg /
+  // {basename}_back.jpg from disk if the catalog entry doesn't carry them
+  // (older recordings, catalog imported from another machine, sleeve data
+  // URLs ever pruned for catalog size, etc.). When found on disk, also
+  // backfill the catalog so subsequent loads are fast.
+  let frontData = clip.sleeveFront || null;
+  let backData = clip.sleeveBack || null;
+  if (clip.filename && directoryHandle) {
+    const baseForSleeve = clip.filename.replace(/\.(webm|mp4)$/, '');
+    if (!frontData) {
+      frontData = await readSleeveFromDisk(directoryHandle, baseForSleeve, 'front');
+      if (frontData) updateClip(clipId, { sleeveFront: frontData });
+    }
+    if (!backData) {
+      backData = await readSleeveFromDisk(directoryHandle, baseForSleeve, 'back');
+      if (backData) updateClip(clipId, { sleeveBack: backData });
+    }
+  }
+  // restoreSleeve also re-syncs the sleeve module's internal state machine
+  // so Retake / Capture Back behave naturally afterward — both captured
+  // sits at "done" with the Retake button visible; front-only sits at
+  // "front_captured" with the webcam moved into the back slot.
+  restoreSleeve(frontData, backData);
 
   // 5. Wire up the Last Recording playback with this clip's blob URL and
   // switch to that tab so the user sees the clip immediately. Library-open
