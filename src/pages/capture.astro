@@ -331,24 +331,44 @@ import Base from '../layouts/Base.astro';
           </fieldset>
         </div>
 
-        <!-- Column 3: Details -->
-        <div class="flex flex-col min-h-0">
-          <fieldset class="flex-1 min-h-0 flex flex-col border border-white/20 p-3">
+        <!-- Column 3: Clip Info + (when a clip is loaded) Thumbnail picker
+             and Publish to YouTube. Scroll lives on the column wrapper so
+             stacked fieldsets read naturally as separate sections. -->
+        <div class="flex flex-col min-h-0 overflow-y-auto space-y-3">
+          <fieldset class="border border-white/20 p-3 shrink-0">
             <legend class="text-white/70 text-[11px] tracking-wider px-2">░ Clip Info ░</legend>
-            <div class="flex-1 min-h-0 overflow-y-auto">
             <div id="clip-info-fields" class="space-y-2 text-xs">
               <div>
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Clip Title</label>
-                <input id="clip-title" type="text" placeholder="My Home Videos 1994"
-                  class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                <div class="relative">
+                  <input id="clip-title" type="text" placeholder="My Home Videos 1994"
+                    class="w-full pl-2 pr-8 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                  <button id="yt-pub-ai-title" type="button"
+                          class="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-red-400 transition-colors leading-none"
+                          title="AI rewrite title">
+                    <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 100 100" aria-hidden="true">
+                      <path d="m71.293 57.371c-20.738-4.6836-23.953-7.8945-28.637-28.637-0.21484-0.94922-1.0586-1.6211-2.0352-1.6211-0.97656 0-1.8203 0.67578-2.0352 1.6211-4.6836 20.738-7.8945 23.953-28.637 28.637-0.94922 0.21484-1.625 1.0586-1.625 2.0352s0.67578 1.8164 1.625 2.0352c20.738 4.6836 23.949 7.8984 28.637 28.637 0.21484 0.94922 1.0586 1.6211 2.0352 1.6211 0.97656 0 1.8203-0.67578 2.0352-1.6211 4.6836-20.738 7.8945-23.949 28.637-28.637 0.94922-0.21484 1.6211-1.0586 1.6211-2.0352s-0.67578-1.8164-1.6211-2.0352z"/>
+                      <path d="m90.043 25.082c-11.023-2.4883-12.574-4.0391-15.062-15.059-0.21484-0.94922-1.0586-1.6211-2.0352-1.6211-0.97656 0-1.8164 0.67188-2.0352 1.6211-2.4883 11.023-4.0391 12.57-15.059 15.059-0.94922 0.21484-1.6211 1.0586-1.6211 2.0352 0 0.97656 0.67188 1.8164 1.6211 2.0352 11.023 2.4883 12.57 4.0391 15.059 15.062 0.21484 0.94922 1.0586 1.6211 2.0352 1.6211 0.97656 0 1.8164-0.67578 2.0352-1.6211 2.4883-11.023 4.0391-12.574 15.062-15.062 0.94922-0.21484 1.6211-1.0586 1.6211-2.0352 0-0.97656-0.67578-1.8164-1.6211-2.0352z"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
               <div>
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Description</label>
-                <textarea id="clip-description" rows="2" placeholder="What's on this clip..."
-                  class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
+                <div class="relative">
+                  <textarea id="clip-description" rows="2" placeholder="What's on this clip..."
+                    class="w-full pl-2 pr-8 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
+                  <button id="yt-pub-ai-desc" type="button"
+                          class="absolute right-2 top-2 text-white/30 hover:text-red-400 transition-colors leading-none"
+                          title="AI rewrite description">
+                    <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 100 100" aria-hidden="true">
+                      <path d="m71.293 57.371c-20.738-4.6836-23.953-7.8945-28.637-28.637-0.21484-0.94922-1.0586-1.6211-2.0352-1.6211-0.97656 0-1.8203 0.67578-2.0352 1.6211-4.6836 20.738-7.8945 23.953-28.637 28.637-0.94922 0.21484-1.625 1.0586-1.625 2.0352s0.67578 1.8164 1.625 2.0352c20.738 4.6836 23.949 7.8984 28.637 28.637 0.21484 0.94922 1.0586 1.6211 2.0352 1.6211 0.97656 0 1.8203-0.67578 2.0352-1.6211 4.6836-20.738 7.8945-23.949 28.637-28.637 0.94922-0.21484 1.6211-1.0586 1.6211-2.0352s-0.67578-1.8164-1.6211-2.0352z"/>
+                      <path d="m90.043 25.082c-11.023-2.4883-12.574-4.0391-15.062-15.059-0.21484-0.94922-1.0586-1.6211-2.0352-1.6211-0.97656 0-1.8164 0.67188-2.0352 1.6211-2.4883 11.023-4.0391 12.57-15.059 15.059-0.94922 0.21484-1.6211 1.0586-1.6211 2.0352 0 0.97656 0.67188 1.8164 1.6211 2.0352 11.023 2.4883 12.57 4.0391 15.059 15.062 0.21484 0.94922 1.0586 1.6211 2.0352 1.6211 0.97656 0 1.8164-0.67578 2.0352-1.6211 2.4883-11.023 4.0391-12.574 15.062-15.062 0.94922-0.21484 1.6211-1.0586 1.6211-2.0352 0-0.97656-0.67578-1.8164-1.6211-2.0352z"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
               <div id="ai-fields" class="space-y-2">
-                <div id="clip-info-loader" class="hidden py-4 text-center text-white/40 text-sm ai-loader"></div>
                 <div>
                   <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Year</label>
                   <input id="clip-year" type="text" placeholder="1994"
@@ -393,11 +413,130 @@ import Base from '../layouts/Base.astro';
                 </div>
               </div>
             </div>
-            </div><!-- /scroll wrapper -->
             <button id="reset-info-btn" class="shrink-0 flex items-center gap-1.5 mt-3 pt-2 border-t border-white/10 text-white/30 hover:text-white/70 text-[10px] text-left transition-colors">
               <span class="inline-flex items-center justify-center w-3 h-3 border border-current leading-none text-[9px]">×</span>
               Reset info
             </button>
+          </fieldset>
+
+          <!-- Thumbnail picker — only relevant once a clip is loaded into the
+               editor. Hidden until lastClipId is set. -->
+          <fieldset id="cap-thumb-fieldset" class="hidden border border-white/20 p-3 shrink-0">
+            <legend class="text-white/70 text-[11px] tracking-wider px-2">░ Thumbnail ░</legend>
+            <div id="player-thumb-empty">
+              <div class="flex items-center gap-3">
+                <button id="player-thumb-pick" class="text-xs px-3 py-1.5 border border-white/30 text-white/70 hover:text-white hover:border-white transition-colors">Pick thumbnail</button>
+                <p class="text-white/30 text-[10px]">Choose which frame appears on YouTube and in your library.</p>
+              </div>
+            </div>
+            <div id="player-thumb-loading" class="hidden text-white/40 text-xs py-4 text-center">Generating thumbnails…</div>
+            <div id="player-thumb-grid-wrap" class="hidden">
+              <div id="player-thumb-grid" class="grid grid-cols-3 gap-2"></div>
+              <div class="flex items-center justify-end mt-2">
+                <button id="player-thumb-refresh" class="text-white/40 hover:text-white/70 text-xs flex items-center gap-1 transition-colors" title="Get 6 different frames">↻ Refresh</button>
+              </div>
+            </div>
+          </fieldset>
+
+          <!-- Publish to YouTube — only relevant once a clip is loaded. State
+               machine swaps inside the fieldset (signin / form / loading /
+               suggestion / done / error). -->
+          <fieldset id="cap-pub-fieldset" class="hidden border border-white/20 p-3 shrink-0">
+            <legend class="text-white/70 text-[11px] tracking-wider px-2">░ Publish to YouTube ░</legend>
+
+            <!-- Signed-in account banner (visible when signed in) -->
+            <div id="yt-pub-account" class="hidden flex items-center gap-2 mb-3 text-[11px] text-white/50">
+              <img id="yt-pub-account-avatar" src="" alt="" class="w-5 h-5 rounded-full object-cover bg-white/10" />
+              <span>Logged in as <span id="yt-pub-account-name" class="text-white/80"></span></span>
+              <span class="flex-1"></span>
+              <button id="yt-pub-signout" class="text-white/40 hover:text-white/70 underline-offset-2 hover:underline transition-colors">Sign out</button>
+            </div>
+
+            <!-- Sign-in panel (visible when not signed in) -->
+            <div id="yt-pub-signin" class="hidden text-center py-4">
+              <p class="text-white/70 text-sm mb-1">Sign in to publish</p>
+              <p class="text-white/40 text-xs mb-4">Uploads go to your own YouTube channel.</p>
+              <button id="yt-pub-signin-btn" class="inline-flex items-center gap-2 px-4 py-2 bg-white text-black text-xs font-medium hover:bg-white/90 transition-colors">
+                <svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.46 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38z"/><path fill="#4285F4" d="M23 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.18c-.27 1.4-1.07 2.59-2.28 3.39l3.54 2.74C21.61 18.58 23 15.68 23 12.27z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.37-.35-2.09s.13-1.43.35-2.09L2.18 7.07C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.54-2.74c-.98.66-2.23 1.05-3.74 1.05-2.86 0-5.29-1.93-6.16-4.53l-3.66 2.84C3.99 20.53 7.7 23 12 23z"/></svg>
+                Sign in with Google
+              </button>
+            </div>
+
+            <!-- Default state: AI button + visibility + Upload + progress -->
+            <div id="yt-pub-form" class="hidden">
+              <div class="flex items-center gap-2 mb-3 flex-wrap">
+                <button id="yt-pub-ai-all" type="button"
+                        class="pixel-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-red-600 hover:bg-red-500 transition-colors"
+                        title="Rewrite title, description, and tags">
+                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 100 100" aria-hidden="true">
+                    <path d="m71.293 57.371c-20.738-4.6836-23.953-7.8945-28.637-28.637-0.21484-0.94922-1.0586-1.6211-2.0352-1.6211-0.97656 0-1.8203 0.67578-2.0352 1.6211-4.6836 20.738-7.8945 23.953-28.637 28.637-0.94922 0.21484-1.625 1.0586-1.625 2.0352s0.67578 1.8164 1.625 2.0352c20.738 4.6836 23.949 7.8984 28.637 28.637 0.21484 0.94922 1.0586 1.6211 2.0352 1.6211 0.97656 0 1.8203-0.67578 2.0352-1.6211 4.6836-20.738 7.8945-23.949 28.637-28.637 0.94922-0.21484 1.6211-1.0586 1.6211-2.0352s-0.67578-1.8164-1.6211-2.0352z"/>
+                    <path d="m90.043 25.082c-11.023-2.4883-12.574-4.0391-15.062-15.059-0.21484-0.94922-1.0586-1.6211-2.0352-1.6211-0.97656 0-1.8164 0.67188-2.0352 1.6211-2.4883 11.023-4.0391 12.57-15.059 15.059-0.94922 0.21484-1.6211 1.0586-1.6211 2.0352 0 0.97656 0.67188 1.8164 1.6211 2.0352 11.023 2.4883 12.57 4.0391 15.059 15.062 0.21484 0.94922 1.0586 1.6211 2.0352 1.6211 0.97656 0 1.8164-0.67578 2.0352-1.6211 2.4883-11.023 4.0391-12.574 15.062-15.062 0.94922-0.21484 1.6211-1.0586 1.6211-2.0352 0-0.97656-0.67578-1.8164-1.6211-2.0352z"/>
+                  </svg>
+                  AI
+                </button>
+                <span class="flex-1"></span>
+                <label class="text-white/40 text-[10px] uppercase tracking-widest">Visibility</label>
+                <select id="yt-pub-privacy" class="bg-black border border-white/20 text-white text-xs p-1.5">
+                  <option value="public" selected>Public</option>
+                  <option value="unlisted">Unlisted</option>
+                  <option value="private">Private</option>
+                </select>
+              </div>
+              <button id="yt-pub-upload" class="w-full py-2 bg-red-600 hover:bg-red-500 text-white text-xs transition-colors">Upload to YouTube</button>
+              <div id="yt-pub-progress" class="hidden mt-3">
+                <div style="height:4px;background:rgba(255,255,255,0.1);overflow:hidden;">
+                  <div id="yt-pub-progress-bar" style="height:100%;width:0%;background:#e53935;transition:width 0.2s;"></div>
+                </div>
+                <p id="yt-pub-status" class="text-white/40 text-[10px] mt-1"></p>
+              </div>
+            </div>
+
+            <!-- AI generating loader -->
+            <div id="yt-pub-loading" class="hidden text-white/40 text-sm py-4 text-center">Generating AI copy...</div>
+
+            <!-- AI suggestion preview -->
+            <div id="yt-pub-suggestion" class="hidden">
+              <p class="text-white/60 text-[11px] tracking-wider mb-3">░ AI Suggestion ░</p>
+              <p id="yt-pub-suggestion-meta" class="text-white/30 text-[10px] mb-3"></p>
+              <p id="yt-pub-suggestion-fallback" class="hidden text-yellow-400/80 text-[10px] mb-3"></p>
+
+              <div id="yt-pub-suggestion-title-group" class="hidden mb-3">
+                <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Title</label>
+                <p id="yt-pub-suggestion-title" class="text-white/90 text-xs bg-black/50 border border-white/10 p-2"></p>
+              </div>
+
+              <div id="yt-pub-suggestion-desc-group" class="hidden mb-3">
+                <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Description</label>
+                <p id="yt-pub-suggestion-desc" class="text-white/90 text-xs bg-black/50 border border-white/10 p-2 whitespace-pre-wrap max-h-40 overflow-y-auto"></p>
+              </div>
+
+              <div id="yt-pub-suggestion-tags-group" class="hidden mb-4">
+                <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tags</label>
+                <p id="yt-pub-suggestion-tags" class="text-white/90 text-xs bg-black/50 border border-white/10 p-2"></p>
+              </div>
+
+              <div class="flex gap-2 flex-wrap">
+                <button id="yt-pub-suggestion-use" class="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white text-xs transition-colors">Use this</button>
+                <button id="yt-pub-suggestion-retry" class="px-3 py-2 border border-white/30 text-white/70 hover:text-white hover:border-white/60 text-xs transition-colors">Try again</button>
+                <button id="yt-pub-suggestion-cancel" class="px-3 py-2 border border-white/20 text-white/50 hover:text-white text-xs transition-colors">Cancel</button>
+              </div>
+            </div>
+
+            <!-- Upload error -->
+            <div id="yt-pub-error" class="hidden py-3">
+              <p id="yt-pub-error-msg" class="text-red-400 text-sm mb-3"></p>
+              <div class="flex gap-2">
+                <button id="yt-pub-retry" class="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white text-xs transition-colors">Retry</button>
+                <button id="yt-pub-error-close" class="px-3 py-2 border border-white/20 text-white/50 hover:text-white text-xs transition-colors">Close</button>
+              </div>
+            </div>
+
+            <!-- Done -->
+            <div id="yt-pub-done" class="hidden text-center py-3">
+              <p class="text-white text-sm mb-2">Uploaded!</p>
+              <a id="yt-pub-link" href="" target="_blank" class="text-red-400 hover:text-red-300 text-xs">View on YouTube →</a>
+              <p id="yt-pub-thumb-warn" class="hidden text-yellow-400/70 text-[10px] mt-3"></p>
+            </div>
           </fieldset>
         </div>
 
@@ -508,240 +647,6 @@ import Base from '../layouts/Base.astro';
     </div>
   </div>
 
-  <!-- (Standalone YouTube publish modal removed — its UI now lives in the
-       player modal sidebar so a clip's review + edit + publish flow is
-       one workspace.) -->
-
-  <!-- Clip player modal: full-screen overlay, 2-col on lg+ (video left,
-       editable sidebar with metadata / thumbnail picker / publish flow on
-       right), stacked below lg. The publish UI used to live in its own
-       standalone modal — it's now integrated here so a clip's open / edit /
-       publish flow happens in one workspace. -->
-  <div id="clip-player-modal" class="hidden fixed inset-0 z-40 bg-black/95 flex flex-col">
-    <div class="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
-      <div class="min-w-0">
-        <p id="player-modal-title" class="text-white text-sm truncate"></p>
-        <p id="player-modal-filename" class="text-white/30 text-[10px] mt-0.5 truncate"></p>
-      </div>
-      <button id="player-modal-close" class="shrink-0 text-white/50 hover:text-white/80 text-xs px-3 py-1">Close</button>
-    </div>
-
-    <div class="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_440px] gap-4 min-h-0 p-4">
-      <!-- Left column: video + speed controls + meta -->
-      <div class="flex flex-col min-h-0">
-        <div class="flex-1 flex items-center justify-center min-h-0">
-          <video id="player-modal-video" class="max-w-full max-h-full object-contain bg-black" playsinline controls></video>
-        </div>
-        <div class="flex items-center justify-center gap-4 mt-3">
-          <button id="player-modal-play" class="text-white/70 hover:text-white text-xs px-3 py-1 border border-white/20">Play</button>
-          <button id="player-modal-1x" class="text-white/70 hover:text-white text-xs px-3 py-1 border border-white/30 bg-white/10">1x</button>
-          <button id="player-modal-2x" class="text-white/40 hover:text-white text-xs px-3 py-1 border border-white/20">2x</button>
-          <button id="player-modal-4x" class="text-white/40 hover:text-white text-xs px-3 py-1 border border-white/20">4x</button>
-        </div>
-        <p id="player-modal-meta" class="text-white/30 text-[10px] text-center mt-2"></p>
-      </div>
-
-      <!-- Right column: editable metadata + thumbnail picker + publish flow -->
-      <aside class="overflow-y-auto pr-1 space-y-4 min-h-0">
-
-        <!-- Editable metadata, live auto-save to catalog + sidecars -->
-        <fieldset class="border border-white/15 p-3">
-          <legend class="text-white/60 text-[11px] tracking-wider px-2">░ Clip Info ░</legend>
-
-          <div class="mb-3">
-            <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Title</label>
-            <div class="relative">
-              <input id="yt-pub-title" type="text" class="w-full pl-2 pr-8 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40" />
-              <button id="yt-pub-ai-title" type="button"
-                      class="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-red-400 transition-colors leading-none"
-                      title="AI rewrite title">
-                <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 100 100" aria-hidden="true">
-                  <path d="m71.293 57.371c-20.738-4.6836-23.953-7.8945-28.637-28.637-0.21484-0.94922-1.0586-1.6211-2.0352-1.6211-0.97656 0-1.8203 0.67578-2.0352 1.6211-4.6836 20.738-7.8945 23.953-28.637 28.637-0.94922 0.21484-1.625 1.0586-1.625 2.0352s0.67578 1.8164 1.625 2.0352c20.738 4.6836 23.949 7.8984 28.637 28.637 0.21484 0.94922 1.0586 1.6211 2.0352 1.6211 0.97656 0 1.8203-0.67578 2.0352-1.6211 4.6836-20.738 7.8945-23.949 28.637-28.637 0.94922-0.21484 1.6211-1.0586 1.6211-2.0352s-0.67578-1.8164-1.6211-2.0352z"/>
-                  <path d="m90.043 25.082c-11.023-2.4883-12.574-4.0391-15.062-15.059-0.21484-0.94922-1.0586-1.6211-2.0352-1.6211-0.97656 0-1.8164 0.67188-2.0352 1.6211-2.4883 11.023-4.0391 12.57-15.059 15.059-0.94922 0.21484-1.6211 1.0586-1.6211 2.0352 0 0.97656 0.67188 1.8164 1.6211 2.0352 11.023 2.4883 12.57 4.0391 15.059 15.062 0.21484 0.94922 1.0586 1.6211 2.0352 1.6211 0.97656 0 1.8164-0.67578 2.0352-1.6211 2.4883-11.023 4.0391-12.574 15.062-15.062 0.94922-0.21484 1.6211-1.0586 1.6211-2.0352 0-0.97656-0.67578-1.8164-1.6211-2.0352z"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <div class="mb-3">
-            <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Description</label>
-            <div class="relative">
-              <textarea id="yt-pub-desc" rows="4" class="w-full pl-2 pr-8 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40 resize-none"></textarea>
-              <button id="yt-pub-ai-desc" type="button"
-                      class="absolute right-2 top-2 text-white/30 hover:text-red-400 transition-colors leading-none"
-                      title="AI rewrite description">
-                <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 100 100" aria-hidden="true">
-                  <path d="m71.293 57.371c-20.738-4.6836-23.953-7.8945-28.637-28.637-0.21484-0.94922-1.0586-1.6211-2.0352-1.6211-0.97656 0-1.8203 0.67578-2.0352 1.6211-4.6836 20.738-7.8945 23.953-28.637 28.637-0.94922 0.21484-1.625 1.0586-1.625 2.0352s0.67578 1.8164 1.625 2.0352c20.738 4.6836 23.949 7.8984 28.637 28.637 0.21484 0.94922 1.0586 1.6211 2.0352 1.6211 0.97656 0 1.8203-0.67578 2.0352-1.6211 4.6836-20.738 7.8945-23.949 28.637-28.637 0.94922-0.21484 1.6211-1.0586 1.6211-2.0352s-0.67578-1.8164-1.6211-2.0352z"/>
-                  <path d="m90.043 25.082c-11.023-2.4883-12.574-4.0391-15.062-15.059-0.21484-0.94922-1.0586-1.6211-2.0352-1.6211-0.97656 0-1.8164 0.67188-2.0352 1.6211-2.4883 11.023-4.0391 12.57-15.059 15.059-0.94922 0.21484-1.6211 1.0586-1.6211 2.0352 0 0.97656 0.67188 1.8164 1.6211 2.0352 11.023 2.4883 12.57 4.0391 15.059 15.062 0.21484 0.94922 1.0586 1.6211 2.0352 1.6211 0.97656 0 1.8164-0.67578 2.0352-1.6211 2.4883-11.023 4.0391-12.574 15.062-15.062 0.94922-0.21484 1.6211-1.0586 1.6211-2.0352 0-0.97656-0.67578-1.8164-1.6211-2.0352z"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <div class="mb-3">
-            <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tags</label>
-            <input id="yt-pub-tags" type="text" placeholder="comma-separated" class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40" />
-          </div>
-
-          <div class="grid grid-cols-3 gap-2 mb-3">
-            <div>
-              <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Year</label>
-              <input id="sb-year" type="text" class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40" />
-            </div>
-            <div>
-              <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tape</label>
-              <input id="sb-tape" type="text" class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40" />
-            </div>
-            <div>
-              <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Distributor</label>
-              <input id="sb-distributor" type="text" class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40" />
-            </div>
-          </div>
-
-          <div class="grid grid-cols-3 gap-2 mb-3">
-            <div>
-              <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Length</label>
-              <input id="sb-tape-length" type="text" placeholder="T-120" class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40" />
-            </div>
-            <div>
-              <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Speed</label>
-              <input id="sb-speed" type="text" placeholder="SP" class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40" />
-            </div>
-            <div>
-              <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Cond.</label>
-              <input id="sb-condition" type="text" class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40" />
-            </div>
-          </div>
-
-          <div>
-            <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Cassette Notes</label>
-            <textarea id="sb-notes" rows="2" class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs focus:outline-none focus:border-white/40 resize-none"></textarea>
-          </div>
-        </fieldset>
-
-        <!-- Thumbnail picker — generates 6 frames on demand, refresh for 6 more.
-             Selection persists per-clip and is used both for the YouTube cover
-             (via thumbnails.set) and the library tile. -->
-        <fieldset class="border border-white/15 p-3">
-          <legend class="text-white/60 text-[11px] tracking-wider px-2">░ Thumbnail ░</legend>
-          <div id="player-thumb-empty">
-            <div class="flex items-center gap-3">
-              <button id="player-thumb-pick" class="text-xs px-3 py-1.5 border border-white/30 text-white/70 hover:text-white hover:border-white transition-colors">Pick thumbnail</button>
-              <p class="text-white/30 text-[10px]">Choose which frame appears on YouTube and in your library.</p>
-            </div>
-          </div>
-          <div id="player-thumb-loading" class="hidden text-white/40 text-xs py-4 text-center">Generating thumbnails…</div>
-          <div id="player-thumb-grid-wrap" class="hidden">
-            <div id="player-thumb-grid" class="grid grid-cols-3 gap-2"></div>
-            <div class="flex items-center justify-end mt-2">
-              <button id="player-thumb-refresh" class="text-white/40 hover:text-white/70 text-xs flex items-center gap-1 transition-colors" title="Get 6 different frames">↻ Refresh</button>
-            </div>
-          </div>
-        </fieldset>
-
-        <!-- Publish flow. State swaps inside the fieldset: signin / form (default
-             when signed in) / loading / suggestion / done / error. -->
-        <fieldset class="border border-white/15 p-3">
-          <legend class="text-white/60 text-[11px] tracking-wider px-2">░ Publish to YouTube ░</legend>
-
-          <!-- Signed-in account banner (visible when signed in) -->
-          <div id="yt-pub-account" class="hidden flex items-center gap-2 mb-3 text-[11px] text-white/50">
-            <img id="yt-pub-account-avatar" src="" alt="" class="w-5 h-5 rounded-full object-cover bg-white/10" />
-            <span>Logged in as <span id="yt-pub-account-name" class="text-white/80"></span></span>
-            <span class="flex-1"></span>
-            <button id="yt-pub-signout" class="text-white/40 hover:text-white/70 underline-offset-2 hover:underline transition-colors">Sign out</button>
-          </div>
-
-          <!-- Sign-in panel (visible when not signed in) -->
-          <div id="yt-pub-signin" class="hidden text-center py-4">
-            <p class="text-white/70 text-sm mb-1">Sign in to publish</p>
-            <p class="text-white/40 text-xs mb-4">Uploads go to your own YouTube channel.</p>
-            <button id="yt-pub-signin-btn" class="inline-flex items-center gap-2 px-4 py-2 bg-white text-black text-xs font-medium hover:bg-white/90 transition-colors">
-              <svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.46 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38z"/><path fill="#4285F4" d="M23 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.18c-.27 1.4-1.07 2.59-2.28 3.39l3.54 2.74C21.61 18.58 23 15.68 23 12.27z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.37-.35-2.09s.13-1.43.35-2.09L2.18 7.07C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.54-2.74c-.98.66-2.23 1.05-3.74 1.05-2.86 0-5.29-1.93-6.16-4.53l-3.66 2.84C3.99 20.53 7.7 23 12 23z"/></svg>
-              Sign in with Google
-            </button>
-          </div>
-
-          <!-- Default state: AI button + visibility + Upload + progress -->
-          <div id="yt-pub-form" class="hidden">
-            <div class="flex items-center gap-2 mb-3 flex-wrap">
-              <button id="yt-pub-ai-all" type="button"
-                      class="pixel-btn inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-red-600 hover:bg-red-500 transition-colors"
-                      title="Rewrite title, description, and tags">
-                <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 100 100" aria-hidden="true">
-                  <path d="m71.293 57.371c-20.738-4.6836-23.953-7.8945-28.637-28.637-0.21484-0.94922-1.0586-1.6211-2.0352-1.6211-0.97656 0-1.8203 0.67578-2.0352 1.6211-4.6836 20.738-7.8945 23.953-28.637 28.637-0.94922 0.21484-1.625 1.0586-1.625 2.0352s0.67578 1.8164 1.625 2.0352c20.738 4.6836 23.949 7.8984 28.637 28.637 0.21484 0.94922 1.0586 1.6211 2.0352 1.6211 0.97656 0 1.8203-0.67578 2.0352-1.6211 4.6836-20.738 7.8945-23.949 28.637-28.637 0.94922-0.21484 1.6211-1.0586 1.6211-2.0352s-0.67578-1.8164-1.6211-2.0352z"/>
-                  <path d="m90.043 25.082c-11.023-2.4883-12.574-4.0391-15.062-15.059-0.21484-0.94922-1.0586-1.6211-2.0352-1.6211-0.97656 0-1.8164 0.67188-2.0352 1.6211-2.4883 11.023-4.0391 12.57-15.059 15.059-0.94922 0.21484-1.6211 1.0586-1.6211 2.0352 0 0.97656 0.67188 1.8164 1.6211 2.0352 11.023 2.4883 12.57 4.0391 15.059 15.062 0.21484 0.94922 1.0586 1.6211 2.0352 1.6211 0.97656 0 1.8164-0.67578 2.0352-1.6211 2.4883-11.023 4.0391-12.574 15.062-15.062 0.94922-0.21484 1.6211-1.0586 1.6211-2.0352 0-0.97656-0.67578-1.8164-1.6211-2.0352z"/>
-                </svg>
-                AI
-              </button>
-              <span class="flex-1"></span>
-              <label class="text-white/40 text-[10px] uppercase tracking-widest">Visibility</label>
-              <select id="yt-pub-privacy" class="bg-black border border-white/20 text-white text-xs p-1.5">
-                <option value="public" selected>Public</option>
-                <option value="unlisted">Unlisted</option>
-                <option value="private">Private</option>
-              </select>
-            </div>
-            <button id="yt-pub-upload" class="w-full py-2 bg-red-600 hover:bg-red-500 text-white text-xs transition-colors">Upload to YouTube</button>
-            <div id="yt-pub-progress" class="hidden mt-3">
-              <div style="height:4px;background:rgba(255,255,255,0.1);overflow:hidden;">
-                <div id="yt-pub-progress-bar" style="height:100%;width:0%;background:#e53935;transition:width 0.2s;"></div>
-              </div>
-              <p id="yt-pub-status" class="text-white/40 text-[10px] mt-1"></p>
-            </div>
-          </div>
-
-          <!-- AI generating loader -->
-          <div id="yt-pub-loading" class="hidden text-white/40 text-sm py-4 text-center">Generating AI copy...</div>
-
-          <!-- AI suggestion preview -->
-          <div id="yt-pub-suggestion" class="hidden">
-            <p class="text-white/60 text-[11px] tracking-wider mb-3">░ AI Suggestion ░</p>
-            <p id="yt-pub-suggestion-meta" class="text-white/30 text-[10px] mb-3"></p>
-            <p id="yt-pub-suggestion-fallback" class="hidden text-yellow-400/80 text-[10px] mb-3"></p>
-
-            <div id="yt-pub-suggestion-title-group" class="hidden mb-3">
-              <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Title</label>
-              <p id="yt-pub-suggestion-title" class="text-white/90 text-xs bg-black/50 border border-white/10 p-2"></p>
-            </div>
-
-            <div id="yt-pub-suggestion-desc-group" class="hidden mb-3">
-              <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Description</label>
-              <p id="yt-pub-suggestion-desc" class="text-white/90 text-xs bg-black/50 border border-white/10 p-2 whitespace-pre-wrap max-h-40 overflow-y-auto"></p>
-            </div>
-
-            <div id="yt-pub-suggestion-tags-group" class="hidden mb-4">
-              <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tags</label>
-              <p id="yt-pub-suggestion-tags" class="text-white/90 text-xs bg-black/50 border border-white/10 p-2"></p>
-            </div>
-
-            <div class="flex gap-2 flex-wrap">
-              <button id="yt-pub-suggestion-use" class="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white text-xs transition-colors">Use this</button>
-              <button id="yt-pub-suggestion-retry" class="px-3 py-2 border border-white/30 text-white/70 hover:text-white hover:border-white/60 text-xs transition-colors">Try again</button>
-              <button id="yt-pub-suggestion-cancel" class="px-3 py-2 border border-white/20 text-white/50 hover:text-white text-xs transition-colors">Cancel</button>
-            </div>
-          </div>
-
-          <!-- Upload error -->
-          <div id="yt-pub-error" class="hidden py-3">
-            <p id="yt-pub-error-msg" class="text-red-400 text-sm mb-3"></p>
-            <div class="flex gap-2">
-              <button id="yt-pub-retry" class="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white text-xs transition-colors">Retry</button>
-              <button id="yt-pub-error-close" class="px-3 py-2 border border-white/20 text-white/50 hover:text-white text-xs transition-colors">Close</button>
-            </div>
-          </div>
-
-          <!-- Done -->
-          <div id="yt-pub-done" class="hidden text-center py-3">
-            <p class="text-white text-sm mb-2">Uploaded!</p>
-            <a id="yt-pub-link" href="" target="_blank" class="text-red-400 hover:text-red-300 text-xs">View on YouTube →</a>
-            <p id="yt-pub-thumb-warn" class="hidden text-yellow-400/70 text-[10px] mt-3"></p>
-          </div>
-        </fieldset>
-
-      </aside>
-    </div>
-  </div>
 
   <!-- Settings popover (hidden, triggered by gear icon) -->
   <div id="settings-popover" class="hidden fixed bottom-10 right-4 z-30 bg-black/95 border border-white/20 p-3 w-56 text-xs">
