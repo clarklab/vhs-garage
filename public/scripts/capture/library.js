@@ -104,32 +104,28 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
   }
 
   emptyMsg.classList.add('hidden');
-  // Compact row layout: small thumbnail | title + date/duration/size | status +
-  // small action buttons. Whole row is the click target. select-none on the
-  // row prevents a stray double-click from highlighting text and triggering
-  // Mac's "Look Up" dictionary popup.
+  // File-icon layout: each clip renders as a small tile with the thumbnail
+  // on top, title + duration below — like file icons on a desktop. Whole
+  // tile is the click target. select-none on the tile prevents a stray
+  // double-click from triggering Mac's "Look Up" dictionary popup. The ×
+  // delete button and ▶ Uploaded badge are corner overlays on the thumb so
+  // they don't crowd the label area.
   container.innerHTML = clips.map(clip => {
-    const hasFile = !!clip.filename;
-    const canUpload = onUpload && hasFile && !clip.youtubeUrl;
-    const uploadedMarker = clip.youtubeUrl
-      ? `<a href="${clip.youtubeUrl}" target="_blank" class="text-red-400/70 hover:text-red-400 transition-colors text-[10px]" title="View on YouTube">▶ Uploaded</a>`
+    const isUploaded = !!clip.youtubeUrl;
+    const uploadedBadge = isUploaded
+      ? `<a href="${clip.youtubeUrl}" target="_blank" class="absolute bottom-1 right-1 text-red-400 hover:text-red-300 bg-black/70 px-1 py-0.5 text-[9px] leading-none transition-colors" title="View on YouTube">▶</a>`
       : '';
-    const rowClass = `library-card flex items-center gap-3 p-2 border border-white/10 ${onOpen ? 'cursor-pointer hover:border-white/30 hover:bg-white/5' : ''} transition-colors select-none text-xs`;
+    const tileClass = `library-card relative flex flex-col border border-white/15 ${onOpen ? 'cursor-pointer hover:border-white/40 hover:bg-white/5' : ''} transition-colors select-none`;
     return `
-    <div class="${rowClass}" data-id="${clip.id}" data-filename="${clip.filename || ''}" ${onOpen ? `title="Click to open in editor"` : ''}>
-      <div class="w-16 h-12 bg-[#141214] flex-shrink-0 overflow-hidden flex items-center justify-center">
-        ${clip.thumbnail ? `<img src="${clip.thumbnail}" class="w-full h-full object-cover pointer-events-none" alt="">` : '<span class="text-white/10 text-[9px] pointer-events-none">--</span>'}
+    <div class="${tileClass}" data-id="${clip.id}" data-filename="${clip.filename || ''}" ${onOpen ? `title="Click to open"` : ''}>
+      <div class="relative aspect-[4/3] bg-[#141214] overflow-hidden flex items-center justify-center">
+        ${clip.thumbnail ? `<img src="${clip.thumbnail}" class="w-full h-full object-cover pointer-events-none" alt="">` : '<span class="text-white/10 text-[10px] pointer-events-none">--</span>'}
+        ${uploadedBadge}
+        <button class="delete-clip absolute top-1 right-1 w-5 h-5 flex items-center justify-center bg-black/70 text-red-400/70 hover:text-red-400 hover:bg-black/90 text-sm leading-none transition-colors" data-id="${clip.id}" title="Delete">×</button>
       </div>
-      <div class="flex-1 min-w-0">
-        <p class="text-white truncate">${clip.title || 'Untitled'}</p>
-        <p class="text-gray-500 text-[10px] truncate">${new Date(clip.date).toLocaleDateString()} · ${formatDuration(clip.duration)} · ${formatLibSize(clip.fileSize)}</p>
-      </div>
-      <div class="flex items-center gap-2 flex-shrink-0">
-        ${uploadedMarker}
-        ${canUpload ? `<button class="upload-clip text-red-400/60 hover:text-red-400 transition-colors text-[10px]" data-id="${clip.id}" title="Upload to YouTube">▶ Upload</button>` : ''}
-        <button class="copy-yt text-white/30 hover:text-white/70 transition-colors text-[10px]" data-id="${clip.id}" title="Copy YouTube text">YT</button>
-        <button class="copy-json text-white/30 hover:text-white/70 transition-colors text-[10px]" data-id="${clip.id}" title="Copy JSON">JSON</button>
-        <button class="delete-clip text-red-400/50 hover:text-red-400 transition-colors text-base leading-none" data-id="${clip.id}" title="Delete">×</button>
+      <div class="px-1.5 py-1.5 min-w-0">
+        <p class="text-white text-[11px] truncate leading-tight">${clip.title || 'Untitled'}</p>
+        <p class="text-gray-500 text-[10px] truncate leading-tight">${formatDuration(clip.duration)}</p>
       </div>
     </div>
   `;

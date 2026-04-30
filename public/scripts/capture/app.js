@@ -922,17 +922,24 @@ function wireRecordButton() {
 
 function wireViewToggle() {
   const libraryView = document.getElementById('view-library');
+  const backdrop = document.getElementById('library-backdrop');
   const toLibrary = document.getElementById('to-library-btn');
   const toCapture = document.getElementById('to-capture-btn');
 
-  toLibrary.addEventListener('click', () => {
+  function openLibrary() {
     libraryView.classList.remove('hidden');
+    if (backdrop) backdrop.classList.remove('hidden');
     refreshLibrary();
-  });
-
-  toCapture.addEventListener('click', () => {
+  }
+  function closeLibrary() {
     libraryView.classList.add('hidden');
-  });
+    if (backdrop) backdrop.classList.add('hidden');
+  }
+
+  toLibrary.addEventListener('click', openLibrary);
+  toCapture.addEventListener('click', closeLibrary);
+  // Backdrop click dismisses (standard modal pattern).
+  if (backdrop) backdrop.addEventListener('click', closeLibrary);
 }
 
 // --- Device popover (triggered by clicking status bar) ---
@@ -1275,6 +1282,8 @@ async function loadClipIntoEditor(clipId) {
   // 6. Close the library overlay so the user is back on the main capture screen.
   const libraryView = document.getElementById('view-library');
   if (libraryView) libraryView.classList.add('hidden');
+  const libraryBackdrop = document.getElementById('library-backdrop');
+  if (libraryBackdrop) libraryBackdrop.classList.add('hidden');
 
   // 7. Reveal the Thumbnail + Publish fieldsets and re-init the publish UI
   //    state machine for the loaded clip (signin / form / done).

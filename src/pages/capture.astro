@@ -623,13 +623,18 @@ import Base from '../layouts/Base.astro';
 
   </div>
 
+  <!-- Red 20% backdrop behind the library window. Shown/hidden together with
+       #view-library; clicking it closes the library (standard modal pattern). -->
+  <div id="library-backdrop" class="hidden fixed inset-0 z-20" style="background: rgba(229, 57, 53, 0.2);"></div>
+
   <!-- Library: a draggable "computer window" overlay rather than a full-page
        view. Click and drag the title bar; red [×] in the title bar closes it.
-       When no save folder has been picked, the body shows ONLY the folder
-       picker — no file list — so it's obvious we don't know where the user's
-       clips live until they tell us. -->
-  <div id="view-library" class="hidden fixed z-30" style="top:50%; left:50%; transform:translate(-50%, -50%); width:680px; max-width:calc(100vw - 32px); max-height:calc(100vh - 80px);">
-    <div class="bg-black border-2 border-white/30 flex flex-col" style="box-shadow: 4px 4px 0 0 rgba(0,0,0,0.7), inset 1px 1px 0 0 rgba(255,255,255,0.06); max-height:inherit;">
+       Window size is fixed regardless of clip count — body scrolls when
+       there are too many to fit. When no save folder has been picked, the
+       body shows ONLY the folder picker so it's obvious we don't know where
+       the user's clips live until they tell us. -->
+  <div id="view-library" class="hidden fixed z-30" style="top:50%; left:50%; transform:translate(-50%, -50%); width:680px; max-width:calc(100vw - 32px); height:520px; max-height:calc(100vh - 80px);">
+    <div class="bg-black border-2 border-white/30 flex flex-col h-full" style="box-shadow: 4px 4px 0 0 rgba(0,0,0,0.7), inset 1px 1px 0 0 rgba(255,255,255,0.06);">
       <!-- Title bar — drag handle. Window chrome borrows old-software cues:
            inset highlight, monospace, tracking, single accent dot. -->
       <div id="library-titlebar" class="flex items-center gap-2 px-2 py-1.5 bg-white/10 border-b border-white/25 select-none" style="cursor: grab; font-family: monospace; box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.08);">
@@ -648,7 +653,7 @@ import Base from '../layouts/Base.astro';
           <button id="library-pick-dir" class="px-4 py-2 border border-white/30 text-white/80 hover:text-white hover:border-white text-xs transition-colors">Choose folder…</button>
         </div>
 
-        <div id="library-grid" class="space-y-1 p-2"></div>
+        <div id="library-grid" class="grid grid-cols-3 sm:grid-cols-4 gap-2 p-3"></div>
         <p id="library-empty" class="text-gray-400 text-xs text-center py-12">No clips captured yet.</p>
       </div>
 
