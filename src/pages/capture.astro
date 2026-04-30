@@ -185,6 +185,54 @@ import Base from '../layouts/Base.astro';
       scrollbar-width: thin;
       scrollbar-color: #dc2626 #141214;
     }
+
+    /* Elements that get a custom JS scrollbar attached: hide the native one
+       entirely so the custom track + thumb is the only visible scroll
+       affordance. */
+    .js-custom-scrollbar {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .js-custom-scrollbar::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+
+    /* Custom always-visible JS scrollbar — red pill thumb on a dark track,
+       inserted as a sibling of the scroll element by attachCustomScrollbar
+       in app.js. Track is hidden when the content doesn't actually overflow. */
+    .vhs-scrollbar-track {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 12px;
+      background: #141214;
+      border-left: 1px solid rgba(255, 255, 255, 0.04);
+      z-index: 5;
+      user-select: none;
+    }
+    .vhs-scrollbar-track.is-hidden {
+      display: none;
+    }
+    .vhs-scrollbar-thumb {
+      position: absolute;
+      left: 2px;
+      right: 2px;
+      background: #dc2626;
+      border-radius: 2px;
+      cursor: grab;
+      transition: background-color 0.15s;
+      min-height: 24px;
+    }
+    .vhs-scrollbar-thumb:hover,
+    .vhs-scrollbar-thumb.is-dragging {
+      background: #ef4444;
+    }
+    .vhs-scrollbar-thumb.is-dragging {
+      cursor: grabbing;
+    }
   </style>
 
   <!-- Browser check -->
@@ -427,10 +475,11 @@ import Base from '../layouts/Base.astro';
 
         <!-- Column 3: Clip Info (top) + Publish to YouTube (below, when a
              clip is loaded). border-l makes the column edge the only vertical
-             between col 2 and col 3 — no outer fieldset chrome. Wrapper
-             scrolls; scroll bar will be replaced by a custom always-visible
-             one in the next commit. -->
-        <div id="col3-content" class="flex flex-col min-h-0 p-4 space-y-3 overflow-y-auto vhs-scroll border-l border-white/20">
+             between col 2 and col 3 — no outer fieldset chrome. Outer wrapper
+             holds the divider + relative position; inner scrolls. The custom
+             always-visible JS scrollbar attaches to #col3-content. -->
+        <div class="relative flex flex-col min-h-0 border-l border-white/20">
+        <div id="col3-content" class="flex-1 flex flex-col min-h-0 p-4 space-y-3 overflow-y-auto vhs-scroll js-custom-scrollbar">
           <div class="shrink-0">
             <p class="text-white/70 text-[11px] tracking-wider mb-3">░ Clip Info ░</p>
             <div id="clip-info-fields" class="space-y-2 text-xs">
@@ -619,6 +668,7 @@ import Base from '../layouts/Base.astro';
             </div>
           </div>
         </div>
+        </div><!-- /col 3 outer wrapper -->
 
       </div>
     </div>

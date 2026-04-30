@@ -114,6 +114,7 @@ async function startApp() {
   wireMainEditorAutosave();
   wireThumbnailPicker();
   wireLibraryDrag();
+  wireCustomScrollbars();
   wireKeyboardShortcuts();
   wireBeforeUnload();
   // No clip loaded at first paint — keep the clip-dependent fieldsets hidden.
@@ -1193,6 +1194,112 @@ function wireLibraryDrag() {
     dragging = false;
     handle.style.cursor = 'grab';
   });
+}
+
+// Custom always-visible scrollbar — red pill thumb on a dark track. Native
+// macOS scrollbars hide on idle, which leaves users (especially less-technical
+// ones, per Matt's testers) unaware that a column scrolls at all. This builds
+// a real DOM thumb that's always present when overflow exists, draggable to
+// scroll, and self-hides when the content fits.
+//
+// Apply by adding `vhs-scroll` and `js-custom-scrollbar` classes to the
+// scrollable element AND wrapping it in a `position: relative` parent. The
+// JS finds every `.vhs-scroll.js-custom-scrollbar` at startup and attaches.
+function wireCustomScrollbars() {
+  document.querySelectorAll('.vhs-scroll.js-custom-scrollbar').forEach(attachCustomScrollbar);
+}
+
+function attachCustomScrollbar(scrollEl) {
+  const parent = scrollEl.parentElement;
+  if (!parent || parent.querySelector(':scope > .vhs-scrollbar-track')) return;
+  // Make sure the parent can host the absolute-positioned track.
+  if (getComputedStyle(parent).position === 'static') {
+    parent.style.position = 'relative';
+  }
+
+  const track = document.createElement('div');
+  track.className = 'vhs-scrollbar-track is-hidden';
+  const thumb = document.createElement('div');
+  thumb.className = 'vhs-scrollbar-thumb';
+  track.appendChild(thumb);
+  parent.appendChild(track);
+
+  // Reserve right padding inside the scroller so content doesn't slide
+  // under the track. Read existing padding-right and add 12px to it once.
+  const styles = getComputedStyle(scrollEl);
+  const existingPad = parseFloat(styles.paddingRight) || 0;
+  scrollEl.style.paddingRight = (existingPad + 12) + 'px';
+
+  function update() {
+    const overflow = scrollEl.scrollHeight > scrollEl.clientHeight + 1;
+    track.classList.toggle('is-hidden', !overflow);
+    if (!overflow) return;
+    const trackHeight = track.clientHeight;
+    if (trackHeight === 0) return;
+    const ratio = scrollEl.clientHeight / scrollEl.scrollHeight;
+    const thumbHeight = Math.max(24, trackHeight * ratio);
+    const maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight;
+    const scrollRatio = maxScroll > 0 ? scrollEl.scrollTop / maxScroll : 0;
+    const thumbTop = (trackHeight - thumbHeight) * scrollRatio;
+    thumb.style.height = thumbHeight + 'px';
+    thumb.style.top = thumbTop + 'px';
+  }
+
+  scrollEl.addEventListener('scroll', update, { passive: true });
+  // Watch resize on the scroller (column resize, viewport resize) and
+  // mutations inside (content added/removed) so the thumb is always sized
+  // correctly without needing manual triggers.
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(update).observe(scrollEl);
+  }
+  if (typeof MutationObserver !== 'undefined') {
+    new MutationObserver(update).observe(scrollEl, {
+      childList: true, subtree: true, characterData: true, attributes: true,
+    });
+  }
+  window.addEventListener('resize', update);
+
+  // Drag to scroll
+  let dragging = false;
+  let dragStartY = 0;
+  let dragStartScroll = 0;
+  thumb.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    dragging = true;
+    dragStartY = e.clientY;
+    dragStartScroll = scrollEl.scrollTop;
+    thumb.classList.add('is-dragging');
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const trackHeight = track.clientHeight;
+    const thumbHeight = thumb.clientHeight;
+    const travel = trackHeight - thumbHeight;
+    if (travel <= 0) return;
+    const maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight;
+    scrollEl.scrollTop = dragStartScroll + ((e.clientY - dragStartY) / travel) * maxScroll;
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    thumb.classList.remove('is-dragging');
+  });
+
+  // Click on track above/below the thumb to page-jump (native scrollbar feel).
+  track.addEventListener('mousedown', (e) => {
+    if (e.target === thumb) return;
+    const rect = track.getBoundingClientRect();
+    const thumbRect = thumb.getBoundingClientRect();
+    const page = scrollEl.clientHeight * 0.9;
+    if (e.clientY < thumbRect.top) {
+      scrollEl.scrollTo({ top: scrollEl.scrollTop - page, behavior: 'smooth' });
+    } else if (e.clientY > thumbRect.bottom) {
+      scrollEl.scrollTo({ top: scrollEl.scrollTop + page, behavior: 'smooth' });
+    }
+  });
+
+  update();
 }
 
 function refreshLibrary() {
