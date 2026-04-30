@@ -491,6 +491,18 @@ import Base from '../layouts/Base.astro';
         <button id="to-capture-btn" class="text-xs text-white/60 hover:text-white/80">← Back to Capture</button>
         <button id="export-catalog-btn" class="text-xs text-white/60 hover:text-white/80">Export catalog.json</button>
       </div>
+      <!-- Shown only when no save folder is selected this session. Without a
+           folder handle we can't read clip files, so the catalog cards still
+           render but their open/upload affordances stay disabled until a
+           folder is picked. -->
+      <div id="library-folder-banner" class="hidden mb-4 border border-yellow-400/30 bg-yellow-400/5 p-4 flex items-center gap-3 text-sm">
+        <span class="text-yellow-400/80 text-lg leading-none">▒</span>
+        <div class="flex-1">
+          <p class="text-white/80 mb-0.5">Pick your local drive folder to view your clips</p>
+          <p class="text-white/40 text-xs">VHS Garage needs read access to the folder where your recordings are saved.</p>
+        </div>
+        <button id="library-pick-dir" class="shrink-0 px-3 py-2 border border-white/30 text-white/80 hover:text-white hover:border-white text-xs transition-colors">Choose folder…</button>
+      </div>
       <div id="library-grid" class="grid grid-cols-2 md:grid-cols-3 gap-4"></div>
       <p id="library-empty" class="text-gray-400 text-sm text-center py-12">No clips captured yet.</p>
     </div>
@@ -641,7 +653,7 @@ import Base from '../layouts/Base.astro';
       <button id="player-modal-close" class="text-white/50 hover:text-white/80 text-xs px-3 py-1">Close</button>
     </div>
     <div class="flex-1 flex items-center justify-center px-4 pb-2">
-      <video id="player-modal-video" class="max-w-full max-h-full object-contain bg-black" playsinline></video>
+      <video id="player-modal-video" class="max-w-full max-h-full object-contain bg-black" playsinline controls></video>
     </div>
     <div class="flex items-center justify-center gap-4 pb-2">
       <button id="player-modal-play" class="text-white/70 hover:text-white text-xs px-3 py-1 border border-white/20">Play</button>

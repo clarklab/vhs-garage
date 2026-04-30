@@ -815,7 +815,6 @@ function wireRecordButton() {
         sizeEl.textContent = formatSize(fileSize);
 
         const thumbnail = captureThumbnail(document.getElementById('preview'));
-        const basename = currentFilename.replace(/\.(webm|mp4)$/, '');
 
         // Read metadata fields
         const year = document.getElementById('clip-year')?.value || '';
@@ -830,6 +829,23 @@ function wireRecordButton() {
 
         // Read title fresh (user may have edited during recording)
         const currentTitle = titleInput.value || title || 'Untitled';
+
+        // If the user typed (or changed) the title during the recording, the
+        // saved filename is still the title-less / pre-edit version. Rename
+        // the file on disk now so the catalog filename matches what the user
+        // sees as the title — fixes the long-running "Untitled" footgun.
+        const settingsNow = loadSettings();
+        const desiredFilename = regenerateFilenameWithTitle(
+          currentFilename,
+          currentTitle,
+          settingsNow.nameFormat || 'title'
+        );
+        if (desiredFilename && desiredFilename !== currentFilename) {
+          const renamed = await renameFileOnDisk(currentFilename, desiredFilename);
+          if (renamed) currentFilename = renamed;
+        }
+
+        const basename = currentFilename.replace(/\.(webm|mp4)$/, '');
         const entry = createClipEntry(currentTitle, currentFilename, duration, fileSize, bitrate);
         entry.thumbnail = thumbnail;
         entry.year = year;
@@ -855,9 +871,13 @@ function wireRecordButton() {
         // Save sidecar JSON + YouTube plaintext to disk
         saveSidecarFiles(directoryHandle, basename, entry).catch(() => {});
 
-        // Create blob URL from the recorded file for playback
+        // Create blob URL from the recorded file for playback. Pull the file
+        // by name from the directory handle in case the file was just renamed
+        // — the recorder's cached handle still points at the old name.
         try {
-          const fh = getLastFileHandle();
+          const fh = currentFilename && directoryHandle
+            ? await directoryHandle.getFileHandle(currentFilename).catch(() => getLastFileHandle())
+            : getLastFileHandle();
           if (fh) {
             const file = await fh.getFile();
             if (playbackBlobUrl) URL.revokeObjectURL(playbackBlobUrl);
@@ -1046,9 +1066,36 @@ function wireLibrary() {
     await exportCatalog(directoryHandle);
     alert('catalog.json exported.');
   });
+
+  // Banner CTA: pick the local save folder from inside the Library so users
+  // who land here without a folder selected can fix it without bouncing
+  // through Device Settings.
+  const pickDirBtn = document.getElementById('library-pick-dir');
+  if (pickDirBtn) {
+    pickDirBtn.addEventListener('click', async () => {
+      try {
+        directoryHandle = await window.showDirectoryPicker();
+        const name = directoryHandle.name;
+        const settingDir = document.getElementById('setting-dir-name');
+        if (settingDir) settingDir.textContent = name;
+        const statusDir = document.getElementById('status-dir-label');
+        if (statusDir) statusDir.textContent = name;
+        const dpDir = document.getElementById('dp-dir-name');
+        if (dpDir) dpDir.textContent = name;
+        refreshLibrary();
+      } catch {}
+    });
+  }
+}
+
+function updateLibraryFolderBanner() {
+  const banner = document.getElementById('library-folder-banner');
+  if (!banner) return;
+  banner.classList.toggle('hidden', !!directoryHandle);
 }
 
 function refreshLibrary() {
+  updateLibraryFolderBanner();
   const clips = getClips();
   const grid = document.getElementById('library-grid');
   const empty = document.getElementById('library-empty');
@@ -1177,6 +1224,76 @@ function wireMuteToggle() {
 
 // --- Save data button ---
 
+// --- Filename / disk-rename helpers ---
+//
+// Rename the saved video on disk so the filename tracks the user's title.
+// This addresses a long-standing footgun where a clip stayed labelled with
+// its original (often title-less) timestamp filename even after the user
+// added a real title in the editor or sidebar.
+
+// Build a new filename that swaps the title portion but keeps the original
+// date/time suffix from the source filename, so a recording stays anchored
+// to when it was made even after a title edit. Returns null if the source
+// filename doesn't match our naming convention.
+function regenerateFilenameWithTitle(oldFilename, newTitle, nameFormat) {
+  if (!oldFilename) return null;
+  const m = oldFilename.match(/^(.+?)_(\d{4}-\d{2}-\d{2})_(\d{4})\.(webm|mp4)$/);
+  if (!m) return null;
+  const [, , date, time, ext] = m;
+  const trimmed = (newTitle || '').trim();
+  if (nameFormat === 'timestamp' || !trimmed) {
+    return `VHS_Capture_${date}_${time}.${ext}`;
+  }
+  const sanitized = trimmed.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '_');
+  return `${sanitized}_${date}_${time}.${ext}`;
+}
+
+// Rename a file in the user's save folder. Prefers the modern
+// FileSystemFileHandle.move() and falls back to copy-then-delete. Returns
+// the new filename on success, null on failure.
+async function renameFileOnDisk(oldName, newName) {
+  if (!directoryHandle || !oldName || !newName || oldName === newName) return null;
+  try {
+    const oldHandle = await directoryHandle.getFileHandle(oldName);
+    if (typeof oldHandle.move === 'function') {
+      await oldHandle.move(newName);
+      return newName;
+    }
+    // Fallback: copy bytes to a new handle, then remove the original.
+    const file = await oldHandle.getFile();
+    const newHandle = await directoryHandle.getFileHandle(newName, { create: true });
+    const writable = await newHandle.createWritable();
+    await writable.write(file);
+    await writable.close();
+    await directoryHandle.removeEntry(oldName);
+    return newName;
+  } catch (e) {
+    console.warn('[rename] failed:', e.message);
+    return null;
+  }
+}
+
+// Rename any matching sleeve / sidecar files alongside the video. Best-effort
+// — silently no-ops when a sibling doesn't exist.
+async function renameSiblings(oldBasename, newBasename) {
+  if (!directoryHandle || oldBasename === newBasename) return;
+  const siblings = [
+    `${oldBasename}.json`,
+    `${oldBasename}.youtube.txt`,
+    `${oldBasename}_front.jpg`,
+    `${oldBasename}_back.jpg`,
+  ];
+  const targets = [
+    `${newBasename}.json`,
+    `${newBasename}.youtube.txt`,
+    `${newBasename}_front.jpg`,
+    `${newBasename}_back.jpg`,
+  ];
+  for (let i = 0; i < siblings.length; i++) {
+    await renameFileOnDisk(siblings[i], targets[i]).catch(() => {});
+  }
+}
+
 function readFormFields() {
   const sleeveData = getSleeveData();
   return {
@@ -1205,9 +1322,30 @@ function wireSaveData() {
     const fields = readFormFields();
     updateClip(lastClipId, fields);
 
-    // Get the updated clip from catalog (has the correct filename)
-    const clips = getClips();
-    const clip = clips.find(c => c.id === lastClipId);
+    // If the title has changed since recording, rename the video on disk
+    // and any sidecar files so the on-disk name keeps tracking the title.
+    let clips = getClips();
+    let clip = clips.find(c => c.id === lastClipId);
+    if (clip && clip.filename) {
+      const settingsNow = loadSettings();
+      const desired = regenerateFilenameWithTitle(
+        clip.filename,
+        clip.title,
+        settingsNow.nameFormat || 'title'
+      );
+      if (desired && desired !== clip.filename) {
+        const oldBase = clip.filename.replace(/\.(webm|mp4)$/, '');
+        const renamed = await renameFileOnDisk(clip.filename, desired);
+        if (renamed) {
+          updateClip(lastClipId, { filename: renamed });
+          await renameSiblings(oldBase, renamed.replace(/\.(webm|mp4)$/, ''));
+          // Re-read the catalog so subsequent saves use the new filename.
+          clips = getClips();
+          clip = clips.find(c => c.id === lastClipId);
+        }
+      }
+    }
+
     if (clip && clip.filename) {
       const basename = clip.filename.replace(/\.(webm|mp4)$/, '');
 
