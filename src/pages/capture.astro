@@ -623,9 +623,10 @@ import Base from '../layouts/Base.astro';
 
   </div>
 
-  <!-- Red 40% backdrop behind the library window. Heavier red wash than v1
-       so "library mode" reads more obviously. Click to dismiss. -->
-  <div id="library-backdrop" class="hidden fixed inset-0 z-20" style="background: rgba(229, 57, 53, 0.4);"></div>
+  <!-- Translucent black backdrop behind the library window. Standard modal
+       scrim — dims the capture screen so the window pops without tinting
+       the content. Click to dismiss. -->
+  <div id="library-backdrop" class="hidden fixed inset-0 z-20" style="background: rgba(0, 0, 0, 0.5);"></div>
 
   <!-- Native-style right-click context menu for library tiles. Hidden by
        default; positioned at the click point on contextmenu and dismissed
