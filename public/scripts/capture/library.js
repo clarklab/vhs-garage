@@ -112,9 +112,13 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
       : (hasFile && !onUpload
           ? `<span class="text-white/20" title="Pick a save folder to enable upload">▶ Pick folder</span>`
           : '');
+    // Whole card is the click target when onOpen is wired, with select-none on
+    // non-button content so a stray double-click doesn't trip Mac's "Look Up"
+    // popup. The action buttons stop propagation so they don't also fire open.
+    const cardClass = `library-card border border-white/20 p-3 text-xs select-none ${onOpen ? 'cursor-pointer hover:border-white/40 transition-colors' : ''}`;
     return `
-    <div class="border border-white/20 p-3 text-xs" data-id="${clip.id}">
-      <div class="aspect-[4/3] bg-[#141214] mb-2 overflow-hidden flex items-center justify-center ${onOpen ? 'cursor-pointer open-clip hover:opacity-80' : ''} transition-opacity" data-id="${clip.id}" data-filename="${clip.filename || ''}" title="${onOpen ? 'Click to play' : clip.filename || ''}">
+    <div class="${cardClass}" data-id="${clip.id}" data-filename="${clip.filename || ''}" ${onOpen ? `title="Click to open in editor"` : ''}>
+      <div class="aspect-[4/3] bg-[#141214] mb-2 overflow-hidden flex items-center justify-center transition-opacity" data-id="${clip.id}">
         ${clip.thumbnail ? `<img src="${clip.thumbnail}" class="w-full h-full object-contain pointer-events-none" alt="">` : '<span class="text-white/10 pointer-events-none">No thumbnail</span>'}
       </div>
       <p class="text-white truncate mb-1">${clip.title}</p>
@@ -133,8 +137,10 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
   }).join('');
 
   if (onOpen) {
-    container.querySelectorAll('.open-clip').forEach(el => {
-      el.addEventListener('click', () => {
+    container.querySelectorAll('.library-card').forEach(el => {
+      el.addEventListener('click', (e) => {
+        // Inner action buttons handle their own click; don't double-fire open.
+        if (e.target.closest('button, a')) return;
         onOpen(el.dataset.id, el.dataset.filename);
       });
     });

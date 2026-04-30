@@ -1102,23 +1102,15 @@ function refreshLibrary() {
   const grid = document.getElementById('library-grid');
   const empty = document.getElementById('library-empty');
 
-  // Only provide onOpen if we have a directoryHandle this session
-  const onOpen = directoryHandle ? async (id, filename) => {
-    if (!filename) return;
-    try {
-      const fileHandle = await directoryHandle.getFileHandle(filename);
-      const file = await fileHandle.getFile();
-      const url = URL.createObjectURL(file);
-      const clip = clips.find(c => c.id === id);
-      openPlayerModal(url, clip);
-    } catch (err) {
-      console.warn('Could not open file:', err);
-      alert('Could not open file. The save folder may need to be re-selected.');
-    }
+  // Whole-card click loads the clip back into the main capture editor, just
+  // like a fresh recording — preview switches to "Last Recording", catalog
+  // metadata fills the Clip Info form, sleeves restore in column 2. The
+  // dedicated player modal is no longer the workspace.
+  const onOpen = directoryHandle ? async (id) => {
+    await loadClipIntoEditor(id);
   } : null;
 
-  // Only offer Upload when the user has a directory handle this session
-  // (so we can read the video file) AND the publish flow is wired up.
+  // Library card publish button still routes through the same publish path.
   const onUpload = directoryHandle && publishClip
     ? (id) => publishClip(id)
     : null;
@@ -1127,6 +1119,84 @@ function refreshLibrary() {
     deleteClip(id);
     refreshLibrary();
   }, onOpen, onUpload);
+}
+
+// Load a previously-captured clip back into the main capture screen so the
+// user can review / edit / publish it using the same UI as a fresh capture.
+// This is the new "primary" way to interact with library clips — it replaces
+// the player modal as the editing workspace per Matt's feedback.
+async function loadClipIntoEditor(clipId) {
+  if (!clipId || !directoryHandle) return;
+  const clips = getClips();
+  const clip = clips.find(c => c.id === clipId);
+  if (!clip) return;
+
+  // 1. Load the file from disk → blob URL for the playback preview.
+  let url = '';
+  if (clip.filename) {
+    try {
+      const fh = await directoryHandle.getFileHandle(clip.filename);
+      const file = await fh.getFile();
+      url = URL.createObjectURL(file);
+    } catch (e) {
+      console.warn('[loadClip] could not open file:', e.message);
+      alert('Could not open file. The save folder may need to be re-selected.');
+      return;
+    }
+  }
+
+  // 2. Make this the active clip so Save Data / ▶ YouTube / etc. all act on it.
+  lastClipId = clipId;
+
+  // 3. Populate the main Clip Info form from the catalog entry.
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+  setVal('clip-title', clip.title);
+  setVal('clip-description', clip.description);
+  setVal('clip-year', clip.year);
+  setVal('clip-tags', clip.tags);
+  setVal('clip-tape', clip.tape);
+  setVal('clip-distributor', clip.distributor);
+  setVal('clip-tape-length', clip.tapeLength);
+  setVal('clip-speed', clip.recordingSpeed);
+  setVal('clip-condition', clip.condition);
+  setVal('clip-notes', clip.cassetteNotes);
+
+  // 4. Restore sleeve previews from the catalog if we have them. The sleeve
+  // module's internal state is left alone — clicking Retake will re-enter the
+  // capture flow as usual.
+  if (clip.sleeveFront) {
+    const front = document.getElementById('sleeve-front-preview');
+    if (front) {
+      front.innerHTML = `<img src="${clip.sleeveFront}" class="w-full h-full object-contain" alt="Front">`;
+      front.classList.remove('hidden');
+    }
+  }
+  if (clip.sleeveBack) {
+    const back = document.getElementById('sleeve-back-preview');
+    const skeleton = document.getElementById('sleeve-back-skeleton');
+    if (back) {
+      back.innerHTML = `<img src="${clip.sleeveBack}" class="w-full h-full object-contain" alt="Back">`;
+      back.classList.remove('hidden');
+    }
+    if (skeleton) skeleton.classList.add('hidden');
+  }
+
+  // 5. Wire up the Last Recording playback with this clip's blob URL and
+  // switch to that tab so the user sees the clip immediately.
+  if (url) {
+    if (playbackBlobUrl) URL.revokeObjectURL(playbackBlobUrl);
+    playbackBlobUrl = url;
+    const playbackVideo = document.getElementById('playback');
+    if (playbackVideo) {
+      playbackVideo.src = url;
+      playbackVideo.load();
+    }
+    showPlaybackTab();
+  }
+
+  // 6. Close the library overlay so the user is back on the main capture screen.
+  const libraryView = document.getElementById('view-library');
+  if (libraryView) libraryView.classList.add('hidden');
 }
 
 // --- Clip playback modal ---
