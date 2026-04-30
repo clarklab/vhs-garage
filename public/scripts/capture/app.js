@@ -1867,6 +1867,9 @@ function readFormFields() {
 
 function wireSaveData() {
   const btn = document.getElementById('save-data-btn');
+  // Save Data button is gone — Clip Info auto-saves on every keystroke now.
+  // Bail out cleanly if the element isn't present.
+  if (!btn) return;
 
   btn.addEventListener('click', async () => {
     if (!lastClipId || !directoryHandle) return;
@@ -2434,7 +2437,11 @@ function wireYouTubePublish() {
     showForm();
   }
 
-  btn.addEventListener('click', () => startPublish());
+  // The standalone "▶ YouTube" trigger button used to live next to the
+  // controls bar but has been retired. The publish flow now lives inline
+  // in column 3, so the button isn't needed. Guard the listener so we
+  // don't blow up if the element isn't present.
+  if (btn) btn.addEventListener('click', () => startPublish());
   retryBtn.addEventListener('click', () => {
     // Retry returns to the form for the same clip — the upload XHR can be
     // restarted from there (or the user can edit + re-upload).
@@ -2745,8 +2752,11 @@ function showPlaybackTab() {
   preview.muted = true;
   playback.classList.remove('hidden');
   deleteBtn.classList.remove('hidden');
-  document.getElementById('save-data-btn').classList.remove('hidden');
-  document.getElementById('publish-yt-btn').classList.remove('hidden');
+  // Save Data + Publish buttons used to live in the controls row alongside
+  // Delete; they were retired (auto-save + inline publish in sidebar). Guard
+  // the show/hide for any older HTML still floating around.
+  document.getElementById('save-data-btn')?.classList.remove('hidden');
+  document.getElementById('publish-yt-btn')?.classList.remove('hidden');
 
   // Update mute icon to reflect muted state
   document.getElementById('mute-icon-on').classList.add('hidden');
@@ -2771,8 +2781,8 @@ function showLiveTab() {
   playback.classList.add('hidden');
   preview.classList.remove('hidden');
   deleteBtn.classList.add('hidden');
-  document.getElementById('save-data-btn').classList.add('hidden');
-  document.getElementById('publish-yt-btn').classList.add('hidden');
+  document.getElementById('save-data-btn')?.classList.add('hidden');
+  document.getElementById('publish-yt-btn')?.classList.add('hidden');
 
   syncSourceTabs();
 

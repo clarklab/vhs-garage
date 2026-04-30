@@ -187,16 +187,23 @@ import Base from '../layouts/Base.astro';
     }
 
     /* Elements that get a custom JS scrollbar attached: hide the native one
-       entirely so the custom track + thumb is the only visible scroll
-       affordance. */
+       entirely. -webkit-appearance: none + width:0 is what actually kills
+       the macOS overlay scrollbar — display:none alone is ignored on
+       Safari's overlay scrollbars. !important defeats any earlier global
+       *::-webkit-scrollbar rule. */
     .js-custom-scrollbar {
-      scrollbar-width: none;
-      -ms-overflow-style: none;
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
     }
-    .js-custom-scrollbar::-webkit-scrollbar {
-      display: none;
-      width: 0;
-      height: 0;
+    .js-custom-scrollbar::-webkit-scrollbar,
+    .js-custom-scrollbar::-webkit-scrollbar-track,
+    .js-custom-scrollbar::-webkit-scrollbar-thumb {
+      -webkit-appearance: none !important;
+      appearance: none !important;
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+      background: transparent !important;
     }
 
     /* Custom always-visible JS scrollbar — red pill thumb on a dark track,
@@ -346,9 +353,18 @@ import Base from '../layouts/Base.astro';
             <span id="rec-timer" class="text-lg tabular-nums">00:00:00</span>
             <span id="rec-size" class="text-xs text-white/40">0.0 MB</span>
             <div class="flex-1"></div>
-            <button id="save-data-btn" class="hidden text-xs py-1.5 px-3 border-2 border-red-500 text-red-500 hover:bg-red-500 hover:text-black transition-colors">Save Data</button>
-            <button id="publish-yt-btn" class="hidden text-xs py-1.5 px-3 border border-white/30 text-white/50 hover:text-white hover:border-white/60 transition-colors">▶ YouTube</button>
-            <button id="delete-recording-btn" class="hidden text-red-500 hover:text-red-400 transition-colors text-xs">Delete</button>
+            <!-- Save Data + Publish to YouTube were here; both retired since
+                 sidebar auto-saves Clip Info on every keystroke and the
+                 Publish flow lives inline in column 3 now. -->
+            <button id="delete-recording-btn" class="lib-btn pixel-btn shrink-0 hidden" title="Delete this recording">
+              <!-- Trash icon from @hackernoon/pixel-icon-library
+                   (icons/SVG/regular/trash.svg) -->
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m4,6v8h1v8h1v1h12v-1h1v-8h1V6H4Zm14,7h-1v8H7v-8h-1v-5h12v5Z"/>
+                <polygon points="21 3 21 5 3 5 3 3 4 3 4 2 9 2 9 1 15 1 15 2 20 2 20 3 21 3"/>
+              </svg>
+              Delete
+            </button>
             <button id="to-library-btn" class="lib-btn pixel-btn shrink-0" title="Library">
               <!-- Folder Open icon from @hackernoon/pixel-icon-library
                    (icons/SVG/regular/folder-open.svg) -->
@@ -365,13 +381,16 @@ import Base from '../layouts/Base.astro';
       <div class="md:flex md:flex-col md:gap-3 md:min-h-0 md:overflow-y-auto lg:contents">
 
         <!-- Column 2: VHS Sleeve (top) + Thumbnail picker (below, when a clip
-             is loaded). border-l makes this the only vertical between col 1
-             and col 2 — no outer fieldset chrome. Sleeve area flexes 1;
-             Thumbnail sits at content-height beneath. -->
-        <div class="flex flex-col min-h-0 p-4 gap-3 border-l border-white/20">
-          <div class="flex-1 min-h-0 flex flex-col">
+             is loaded). border-l draws the only vertical between col 1 and
+             col 2. The whole column scrolls as one unit (no nested overflow)
+             so the Capture Front/Back button can never be hidden below an
+             inner-scroll fold — a recurring footgun for non-technical users.
+             Custom always-visible JS scrollbar attaches to #col2-content. -->
+        <div class="relative flex flex-col min-h-0 border-l border-white/20">
+        <div id="col2-content" class="flex-1 flex flex-col min-h-0 p-4 gap-3 overflow-y-auto vhs-scroll js-custom-scrollbar">
+          <div class="flex flex-col">
             <p class="shrink-0 text-white/70 text-[11px] tracking-wider mb-3">░ VHS Sleeve ░</p>
-            <div class="flex-1 min-h-0 overflow-y-auto vhs-scroll">
+            <div>
 
             <!-- Front capture/preview -->
             <div id="sleeve-front-section">
@@ -441,8 +460,8 @@ import Base from '../layouts/Base.astro';
             <div id="sleeve-review-view" class="hidden">
               <button id="sleeve-retake-btn" class="w-full py-2 border border-white/30 text-white/60 hover:text-white hover:border-white/60 transition-colors text-xs">Retake</button>
             </div>
-            </div><!-- /scroll wrapper -->
-            <button id="reset-sleeve-btn" class="shrink-0 flex items-center gap-1.5 mt-3 pt-2 border-t border-white/10 text-white/30 hover:text-white/70 text-[10px] text-left transition-colors">
+            </div><!-- /sleeve content wrapper -->
+            <button id="reset-sleeve-btn" class="self-start flex items-center gap-1.5 mt-3 pt-2 border-t border-white/10 text-white/30 hover:text-white/70 text-[10px] text-left transition-colors">
               <span class="inline-flex items-center justify-center w-3 h-3 border border-current leading-none text-[9px]">×</span>
               Reset covers
             </button>
@@ -451,7 +470,7 @@ import Base from '../layouts/Base.astro';
           <!-- Thumbnail picker — only relevant once a clip is loaded into the
                editor. Hidden until lastClipId is set. Subsection inside col 2,
                separated by a top border instead of a full fieldset frame. -->
-          <div id="cap-thumb-fieldset" class="hidden shrink-0 pt-3 border-t border-white/15">
+          <div id="cap-thumb-fieldset" class="hidden pt-3 border-t border-white/15">
             <p class="text-white/70 text-[11px] tracking-wider mb-3">░ Thumbnail ░</p>
             <!-- Placeholder grid: a 6-cell skeleton that's visible until real
                  frames arrive, so the layout doesn't pop. -->
@@ -472,6 +491,7 @@ import Base from '../layouts/Base.astro';
             </div>
           </div>
         </div>
+        </div><!-- /col 2 outer wrapper -->
 
         <!-- Column 3: Clip Info (top) + Publish to YouTube (below, when a
              clip is loaded). border-l makes the column edge the only vertical
