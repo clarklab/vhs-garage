@@ -12,9 +12,11 @@
     "astro": "astro"
   },
   "dependencies": {
+    "@hackernoon/pixel-icon-library": "^1.1.0",
     "@netlify/blobs": "^10.7.4",
     "@tailwindcss/vite": "^4.2.2",
     "astro": "^6.1.2",
+    "jscanify": "^1.4.2",
     "tailwindcss": "^4.2.2"
   }
 }

@@ -109,10 +109,16 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
   // actions live in the native-style right-click context menu (Open Clip /
   // Delete). select-none on the tile prevents a stray double-click from
   // triggering Mac's "Look Up" dictionary popup.
+  //
+  // Uploaded clips get a red pill badge in the top-right with the YouTube
+  // icon from @hackernoon/pixel-icon-library (brands/youtube.svg). Clicking
+  // the pill opens the saved clip.youtubeUrl in a new tab.
   container.innerHTML = clips.map(clip => {
     const isUploaded = !!clip.youtubeUrl;
     const uploadedBadge = isUploaded
-      ? `<a href="${clip.youtubeUrl}" target="_blank" class="absolute bottom-1 right-1 text-red-400 hover:text-red-300 bg-black/70 px-1 py-0.5 text-[9px] leading-none transition-colors" title="View on YouTube">▶</a>`
+      ? `<a href="${clip.youtubeUrl}" target="_blank" rel="noopener" class="library-yt-pill absolute top-1 right-1 inline-flex items-center justify-center w-6 h-6 bg-red-600 hover:bg-red-500 text-white rounded-full transition-colors" title="View on YouTube">
+           <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24" aria-hidden="true"><path d="m22,7v-2h-2v-1H4v1h-2v2h-1v10h1v2h2v1h16v-1h2v-2h1V7h-1Zm-10,8h-2v-6h2v1h2v1h2v2h-2v1h-2v1Z"/></svg>
+         </a>`
       : '';
     const tileClass = `library-card relative flex flex-col border border-white/15 ${onOpen ? 'cursor-pointer hover:border-white/40 hover:bg-white/5' : ''} transition-colors select-none`;
     return `
