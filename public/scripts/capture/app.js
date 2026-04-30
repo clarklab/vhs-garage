@@ -929,6 +929,17 @@ function wireViewToggle() {
   function openLibrary() {
     libraryView.classList.remove('hidden');
     if (backdrop) backdrop.classList.remove('hidden');
+
+    // Replay the "shoop" open animation on the inner chrome each time the
+    // library is shown — remove the class, force a reflow, then re-add so
+    // the keyframes restart instead of being skipped on the second open.
+    const inner = libraryView.firstElementChild;
+    if (inner) {
+      inner.classList.remove('library-shoop-in');
+      void inner.offsetWidth;
+      inner.classList.add('library-shoop-in');
+    }
+
     refreshLibrary();
   }
   function closeLibrary() {

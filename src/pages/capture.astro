@@ -134,6 +134,25 @@ import Base from '../layouts/Base.astro';
       );
       pointer-events: none;
     }
+
+    /* Library window "shoop" — opens from below + grows in scale + fades in,
+       like a real OS window animating into place. Animation is applied to
+       the inner chrome (the bordered box) rather than the outer position
+       wrapper so it doesn't fight the centering / drag transforms. */
+    @keyframes lib-shoop {
+      from {
+        opacity: 0;
+        transform: translateY(28px) scale(0.92);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+    .library-shoop-in {
+      animation: lib-shoop 240ms cubic-bezier(0.2, 0.9, 0.3, 1.1);
+      transform-origin: center bottom;
+    }
   </style>
 
   <!-- Browser check -->
@@ -623,10 +642,8 @@ import Base from '../layouts/Base.astro';
 
   </div>
 
-  <!-- Translucent black backdrop behind the library window. Standard modal
-       scrim — dims the capture screen so the window pops without tinting
-       the content. Click to dismiss. -->
-  <div id="library-backdrop" class="hidden fixed inset-0 z-20" style="background: rgba(0, 0, 0, 0.5);"></div>
+  <!-- Translucent black backdrop behind the library window. Click to dismiss. -->
+  <div id="library-backdrop" class="hidden fixed inset-0 z-20" style="background: rgba(0, 0, 0, 0.7);"></div>
 
   <!-- Native-style right-click context menu for library tiles. Hidden by
        default; positioned at the click point on contextmenu and dismissed
@@ -645,7 +662,7 @@ import Base from '../layouts/Base.astro';
        folder is picked, body shows ONLY the folder picker so it's obvious
        we don't know where the user's clips live until they tell us. -->
   <div id="view-library" class="hidden fixed z-30 overflow-hidden" style="top:50%; left:50%; transform:translate(-50%, -50%); width:680px; max-width:calc(100vw - 32px); height:520px; max-height:calc(100vh - 80px); min-width:360px; min-height:260px; resize: both;">
-    <div class="bg-black border-4 border-red-600 flex flex-col h-full" style="box-shadow: 6px 6px 0 0 rgba(0,0,0,0.75), inset 1px 1px 0 0 rgba(255,255,255,0.06);">
+    <div class="bg-black flex flex-col h-full" style="border: 3px solid #dc2626; border-radius: 3px; box-shadow: 6px 6px 0 0 rgba(0,0,0,0.75), inset 1px 1px 0 0 rgba(255,255,255,0.06);">
       <!-- Title bar — drag handle. Window chrome borrows old-software cues:
            inset highlight, monospace, tracking, single accent dot. -->
       <div id="library-titlebar" class="flex items-center gap-2 px-2 py-1.5 bg-white/10 border-b border-white/25 select-none" style="cursor: grab; font-family: monospace; box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.08);">
