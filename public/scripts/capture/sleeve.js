@@ -83,6 +83,54 @@ export function resetSleeve() {
   }
 }
 
+// Re-hydrate the sleeve panel from stored data URLs (e.g. when re-opening a
+// clip from the library). Mirrors the UI state the user would land on if they
+// had captured both/one image fresh, and updates the module-level state so
+// Retake / Capture Back behave correctly afterward.
+export function restoreSleeve(front, back) {
+  // Start from a clean slate (also resets DOM positions).
+  resetSleeve();
+  if (!front && !back) return;
+
+  frontData = front || null;
+  backData = back || null;
+
+  const captureView = document.getElementById('sleeve-capture-view');
+  const reviewView = document.getElementById('sleeve-review-view');
+  const backSection = document.getElementById('sleeve-back-section');
+  const backSkeleton = document.getElementById('sleeve-back-skeleton');
+  const frontPreview = document.getElementById('sleeve-front-preview');
+  const backPreview = document.getElementById('sleeve-back-preview');
+  const label = document.getElementById('sleeve-capture-label');
+
+  if (front && frontPreview) {
+    frontPreview.innerHTML = `<img src="${front}" class="w-full h-full object-contain" alt="Front">`;
+    frontPreview.classList.remove('hidden');
+  }
+
+  if (back) {
+    // Both captured — collapse to the "done" state: hide the live webcam,
+    // show the back preview, and reveal the Retake button.
+    sleeveState = 'done';
+    if (backPreview) {
+      backPreview.innerHTML = `<img src="${back}" class="w-full h-full object-contain" alt="Back">`;
+      backPreview.classList.remove('hidden');
+    }
+    if (backSkeleton) backSkeleton.classList.add('hidden');
+    if (captureView) captureView.classList.add('hidden');
+    if (reviewView) reviewView.classList.remove('hidden');
+  } else if (front) {
+    // Front-only — sit at the "front_captured" mid-state with the webcam
+    // moved into the back slot, ready for the user to capture the back.
+    sleeveState = 'front_captured';
+    if (label) label.textContent = 'Capture Back';
+    if (backSkeleton) backSkeleton.classList.add('hidden');
+    if (backSection && captureView) {
+      backSection.appendChild(captureView);
+    }
+  }
+}
+
 export async function initWebcam(deviceId) {
   if (webcamStream) {
     webcamStream.getTracks().forEach(t => t.stop());

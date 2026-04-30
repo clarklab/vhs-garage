@@ -10,7 +10,7 @@ import {
 } from './library.js';
 import {
   initWebcam, stopWebcam, handleSleeveCapture, handleSleeveRetake, getSleeveData, getSleeveState,
-  getVideoElement, getTargetRect, playShutter, resetSleeve, saveSleevePhotos
+  getVideoElement, getTargetRect, playShutter, resetSleeve, restoreSleeve, saveSleevePhotos
 } from './sleeve.js';
 import { startDetection, stopDetection, pauseDetection, resumeDetection } from './detector.js';
 import { initMeter, initMeterFromElement, pauseMeter, stopMeter } from './meter.js';
@@ -1246,25 +1246,12 @@ async function loadClipIntoEditor(clipId) {
   setVal('clip-condition', clip.condition);
   setVal('clip-notes', clip.cassetteNotes);
 
-  // 4. Restore sleeve previews from the catalog if we have them. The sleeve
-  // module's internal state is left alone — clicking Retake will re-enter the
-  // capture flow as usual.
-  if (clip.sleeveFront) {
-    const front = document.getElementById('sleeve-front-preview');
-    if (front) {
-      front.innerHTML = `<img src="${clip.sleeveFront}" class="w-full h-full object-contain" alt="Front">`;
-      front.classList.remove('hidden');
-    }
-  }
-  if (clip.sleeveBack) {
-    const back = document.getElementById('sleeve-back-preview');
-    const skeleton = document.getElementById('sleeve-back-skeleton');
-    if (back) {
-      back.innerHTML = `<img src="${clip.sleeveBack}" class="w-full h-full object-contain" alt="Back">`;
-      back.classList.remove('hidden');
-    }
-    if (skeleton) skeleton.classList.add('hidden');
-  }
+  // 4. Restore sleeve previews from the catalog. restoreSleeve also re-syncs
+  // the sleeve module's internal state machine so Retake / Capture Back
+  // behave naturally afterward — both captured sits at "done" with the
+  // Retake button visible; front-only sits at "front_captured" with the
+  // webcam moved into the back slot.
+  restoreSleeve(clip.sleeveFront, clip.sleeveBack);
 
   // 5. Wire up the Last Recording playback with this clip's blob URL and
   // switch to that tab so the user sees the clip immediately.
