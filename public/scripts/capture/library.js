@@ -104,12 +104,11 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
   }
 
   emptyMsg.classList.add('hidden');
-  // File-icon layout: each clip renders as a small tile with the thumbnail
-  // on top, title + duration below — like file icons on a desktop. Whole
-  // tile is the click target. select-none on the tile prevents a stray
-  // double-click from triggering Mac's "Look Up" dictionary popup. The ×
-  // delete button and ▶ Uploaded badge are corner overlays on the thumb so
-  // they don't crowd the label area.
+  // File-icon layout: thumbnail on top, two-line title + duration beneath.
+  // Whole tile is the click target. No inline delete button — destructive
+  // actions live in the native-style right-click context menu (Open Clip /
+  // Delete). select-none on the tile prevents a stray double-click from
+  // triggering Mac's "Look Up" dictionary popup.
   container.innerHTML = clips.map(clip => {
     const isUploaded = !!clip.youtubeUrl;
     const uploadedBadge = isUploaded
@@ -117,67 +116,87 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
       : '';
     const tileClass = `library-card relative flex flex-col border border-white/15 ${onOpen ? 'cursor-pointer hover:border-white/40 hover:bg-white/5' : ''} transition-colors select-none`;
     return `
-    <div class="${tileClass}" data-id="${clip.id}" data-filename="${clip.filename || ''}" ${onOpen ? `title="Click to open"` : ''}>
+    <div class="${tileClass}" data-id="${clip.id}" data-filename="${clip.filename || ''}" ${onOpen ? `title="Click to open · right-click for options"` : 'title="Right-click for options"'}>
       <div class="relative aspect-[4/3] bg-[#141214] overflow-hidden flex items-center justify-center">
         ${clip.thumbnail ? `<img src="${clip.thumbnail}" class="w-full h-full object-cover pointer-events-none" alt="">` : '<span class="text-white/10 text-[10px] pointer-events-none">--</span>'}
         ${uploadedBadge}
-        <button class="delete-clip absolute top-1 right-1 w-5 h-5 flex items-center justify-center bg-black/70 text-red-400/70 hover:text-red-400 hover:bg-black/90 text-sm leading-none transition-colors" data-id="${clip.id}" title="Delete">×</button>
       </div>
       <div class="px-1.5 py-1.5 min-w-0">
-        <p class="text-white text-[11px] truncate leading-tight">${clip.title || 'Untitled'}</p>
-        <p class="text-gray-500 text-[10px] truncate leading-tight">${formatDuration(clip.duration)}</p>
+        <p class="text-white text-[11px] leading-tight line-clamp-2" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;">${clip.title || 'Untitled'}</p>
+        <p class="text-gray-500 text-[10px] truncate leading-tight mt-0.5">${formatDuration(clip.duration)}</p>
       </div>
     </div>
   `;
   }).join('');
 
-  if (onOpen) {
-    container.querySelectorAll('.library-card').forEach(el => {
+  // Left-click opens the clip (when there's a folder picked); right-click
+  // shows the native-style context menu with Open Clip + Delete.
+  container.querySelectorAll('.library-card').forEach(el => {
+    if (onOpen) {
       el.addEventListener('click', (e) => {
-        // Inner action buttons handle their own click; don't double-fire open.
+        // Inner buttons / links (e.g. ▶ Uploaded) handle their own click.
         if (e.target.closest('button, a')) return;
         onOpen(el.dataset.id, el.dataset.filename);
       });
+    }
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showLibraryContextMenu(e.clientX, e.clientY, el.dataset.id, el.dataset.filename, onOpen, onDelete);
     });
+  });
+}
+
+// Position the shared context menu at the click point and bind one-shot
+// handlers for Open Clip + Delete. Clamps to viewport so right-clicking
+// near the edge doesn't push the menu off-screen.
+function showLibraryContextMenu(x, y, clipId, filename, onOpen, onDelete) {
+  const menu = document.getElementById('library-context-menu');
+  if (!menu) return;
+  const openBtn = document.getElementById('lib-ctx-open');
+  const deleteBtn = document.getElementById('lib-ctx-delete');
+
+  if (openBtn) {
+    openBtn.disabled = !onOpen;
+    openBtn.classList.toggle('opacity-30', !onOpen);
+    openBtn.classList.toggle('cursor-not-allowed', !onOpen);
+    openBtn.onclick = onOpen ? () => { hideLibraryContextMenu(); onOpen(clipId, filename); } : null;
+  }
+  if (deleteBtn) {
+    deleteBtn.onclick = () => {
+      hideLibraryContextMenu();
+      if (onDelete) onDelete(clipId);
+    };
   }
 
-  container.querySelectorAll('.copy-yt').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const clip = clips.find(c => c.id === btn.dataset.id);
-      if (clip) {
-        navigator.clipboard.writeText(clipToYouTubeText(clip)).then(() => {
-          btn.textContent = 'Copied!';
-          setTimeout(() => btn.textContent = 'YT ░', 1500);
-        });
-      }
-    });
-  });
+  // Clamp into viewport before showing
+  menu.classList.remove('hidden');
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  const w = menu.offsetWidth;
+  const h = menu.offsetHeight;
+  const left = Math.min(x, W - w - 4);
+  const top = Math.min(y, H - h - 4);
+  menu.style.left = Math.max(4, left) + 'px';
+  menu.style.top = Math.max(4, top) + 'px';
+}
 
-  container.querySelectorAll('.copy-json').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const clip = clips.find(c => c.id === btn.dataset.id);
-      if (clip) {
-        navigator.clipboard.writeText(clipToJSON(clip)).then(() => {
-          btn.textContent = 'Copied!';
-          setTimeout(() => btn.textContent = 'JSON ░', 1500);
-        });
-      }
-    });
-  });
+function hideLibraryContextMenu() {
+  const menu = document.getElementById('library-context-menu');
+  if (menu) menu.classList.add('hidden');
+}
 
-  container.querySelectorAll('.delete-clip').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (confirm('Delete this clip from the catalog?')) {
-        onDelete(btn.dataset.id);
-      }
-    });
+// Wire the global context-menu dismissers (outside-click, scroll, Escape)
+// once at module load so we don't stack listeners across renderLibrary calls.
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('library-context-menu');
+    if (!menu || menu.classList.contains('hidden')) return;
+    if (!menu.contains(e.target)) hideLibraryContextMenu();
   });
-
-  if (onUpload) {
-    container.querySelectorAll('.upload-clip').forEach(btn => {
-      btn.addEventListener('click', () => onUpload(btn.dataset.id));
-    });
-  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideLibraryContextMenu();
+  });
+  document.addEventListener('scroll', hideLibraryContextMenu, true);
 }
 
 function formatDuration(seconds) {
