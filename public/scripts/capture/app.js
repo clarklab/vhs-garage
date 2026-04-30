@@ -111,6 +111,8 @@ async function startApp() {
   wireSaveData();
   wireResetButtons();
   wireYouTubePublish();
+  wirePlayerSidebarAutosave();
+  wireThumbnailPicker();
   wireKeyboardShortcuts();
   wireBeforeUnload();
 }
@@ -377,7 +379,7 @@ function wireKeyboardShortcuts() {
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
   };
   const isModalOpen = () => {
-    const ids = ['yt-publish-modal', 'clip-player-modal', 'settings-popover', 'device-popover', 'welcome-modal'];
+    const ids = ['clip-player-modal', 'settings-popover', 'device-popover', 'welcome-modal'];
     return ids.some(id => {
       const el = document.getElementById(id);
       return el && !el.classList.contains('hidden');
@@ -1130,6 +1132,29 @@ function refreshLibrary() {
 // --- Clip playback modal ---
 
 let playerModalBlobUrl = null;
+let playerClipId = null;        // ID of the clip currently shown in the player modal
+let playerAutoSaveTimer = null; // debounced live-save timer
+
+// Convenience opener for places that have a clip ID but not a blob URL — e.g.
+// the "▶ YouTube" button after recording, library card publish buttons, or any
+// place we want to drop the user straight into the player workspace for a clip.
+async function openPlayerForClip(clipId) {
+  if (!clipId) return;
+  const clips = getClips();
+  const clip = clips.find(c => c.id === clipId);
+  if (!clip) return;
+  let url = '';
+  if (directoryHandle && clip.filename) {
+    try {
+      const fh = await directoryHandle.getFileHandle(clip.filename);
+      const file = await fh.getFile();
+      url = URL.createObjectURL(file);
+    } catch (e) {
+      console.warn('[player] open-by-clip: could not load file:', e.message);
+    }
+  }
+  openPlayerModal(url, clip);
+}
 
 function openPlayerModal(url, clip) {
   const modal = document.getElementById('clip-player-modal');
@@ -1144,6 +1169,7 @@ function openPlayerModal(url, clip) {
 
   if (playerModalBlobUrl) URL.revokeObjectURL(playerModalBlobUrl);
   playerModalBlobUrl = url;
+  playerClipId = clip?.id || null;
 
   title.textContent = clip?.title || 'Untitled';
   filename.textContent = clip?.filename || '';
@@ -1159,14 +1185,41 @@ function openPlayerModal(url, clip) {
   if (clip?.year) parts.push(clip.year);
   meta.textContent = parts.join(' · ');
 
-  video.src = url;
-  video.playbackRate = 1;
-  video.play();
+  // Populate the editable sidebar from the clip. yt-pub-* IDs serve double-
+  // duty as the publish form fields — the sidebar IS the publish form now.
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+  setVal('yt-pub-title', clip?.title);
+  setVal('yt-pub-desc', clip?.description);
+  setVal('yt-pub-tags', clip?.tags);
+  setVal('sb-year', clip?.year);
+  setVal('sb-tape', clip?.tape);
+  setVal('sb-distributor', clip?.distributor);
+  setVal('sb-tape-length', clip?.tapeLength);
+  setVal('sb-speed', clip?.recordingSpeed);
+  setVal('sb-condition', clip?.condition);
+  setVal('sb-notes', clip?.cassetteNotes);
+
+  if (url) {
+    video.src = url;
+    video.playbackRate = 1;
+    video.play().catch(() => {});
+  } else {
+    video.removeAttribute('src');
+    video.load();
+  }
 
   playBtn.textContent = 'Pause';
   setSpeedActive(btn1x, [btn1x, btn2x, btn4x]);
 
   modal.classList.remove('hidden');
+
+  // Reset the thumbnail picker so it doesn't show the previous clip's frames.
+  if (typeof resetThumbnailPicker === 'function') resetThumbnailPicker();
+
+  // Hand the clip context to the publish wiring so the right state shows.
+  if (typeof publishStateForClip_external === 'function') {
+    publishStateForClip_external(clip?.id, clip);
+  }
 
   // Play/Pause
   playBtn.onclick = () => {
@@ -1186,6 +1239,178 @@ function openPlayerModal(url, clip) {
   document.getElementById('player-modal-close').onclick = () => closePlayerModal();
 }
 
+// Thumbnail picker for the player modal sidebar. Generates 6 random frames
+// on demand, lets the user click to pick one, and Refresh pulls 6 more.
+// Selection persists per-clip and doubles as the library tile thumbnail.
+let resetThumbnailPicker = null;
+
+function wireThumbnailPicker() {
+  const pickBtn = document.getElementById('player-thumb-pick');
+  const refreshBtn = document.getElementById('player-thumb-refresh');
+  const emptyState = document.getElementById('player-thumb-empty');
+  const loadingState = document.getElementById('player-thumb-loading');
+  const gridWrap = document.getElementById('player-thumb-grid-wrap');
+  const grid = document.getElementById('player-thumb-grid');
+  if (!pickBtn || !grid) return;
+
+  let currentThumbnails = [];
+
+  function showState(state) {
+    emptyState.classList.toggle('hidden', state !== 'empty');
+    loadingState.classList.toggle('hidden', state !== 'loading');
+    gridWrap.classList.toggle('hidden', state !== 'grid');
+  }
+
+  function renderGrid() {
+    const clips = getClips();
+    const clip = clips.find(c => c.id === playerClipId);
+    const selected = clip && clip.ytThumbnailDataUrl;
+
+    grid.innerHTML = '';
+    currentThumbnails.forEach((dataUrl, i) => {
+      const isSelected = dataUrl === selected;
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'aspect-video bg-black border-2 transition-all overflow-hidden ' +
+        (isSelected ? 'border-red-500 ring-2 ring-red-500/40' : 'border-white/15 hover:border-white/40');
+      const img = document.createElement('img');
+      img.src = dataUrl;
+      img.className = 'w-full h-full object-cover';
+      img.alt = 'Thumbnail option ' + (i + 1);
+      cell.appendChild(img);
+      cell.addEventListener('click', () => selectThumbnail(dataUrl));
+      grid.appendChild(cell);
+    });
+  }
+
+  async function selectThumbnail(dataUrl) {
+    if (!playerClipId) return;
+    // ytThumbnailDataUrl is what gets uploaded to YouTube; thumbnail is the
+    // library tile preview. Reusing the same data URL for both keeps them
+    // visually in sync (per the user's "library tile uses the same picked
+    // thumbnail" requirement).
+    updateClip(playerClipId, { ytThumbnailDataUrl: dataUrl, thumbnail: dataUrl });
+    refreshLibrary();
+    renderGrid();
+  }
+
+  async function generate() {
+    if (!playerModalBlobUrl) {
+      // No video loaded — likely the folder isn't picked. Bail quietly.
+      console.warn('[thumb] No blob URL available; pick a save folder first.');
+      return;
+    }
+    showState('loading');
+    try {
+      currentThumbnails = await extractThumbnailsFromBlob(playerModalBlobUrl, 6);
+      renderGrid();
+      showState('grid');
+    } catch (e) {
+      console.warn('[thumb] generation failed:', e.message);
+      showState('empty');
+    }
+  }
+
+  function reset() {
+    currentThumbnails = [];
+    grid.innerHTML = '';
+    showState('empty');
+  }
+  resetThumbnailPicker = reset;
+
+  pickBtn.addEventListener('click', generate);
+  refreshBtn.addEventListener('click', generate);
+}
+
+// Wire live auto-save on the editable sidebar fields. Every keystroke schedules
+// a debounced save: catalog update, sidecar JSON refresh, and a filename rename
+// when the title change drives a new on-disk name. Editing one clip can't bleed
+// into another because we capture the playerClipId at debounce-fire time.
+function wirePlayerSidebarAutosave() {
+  const fieldMap = {
+    'yt-pub-title': 'title',
+    'yt-pub-desc': 'description',
+    'yt-pub-tags': 'tags',
+    'sb-year': 'year',
+    'sb-tape': 'tape',
+    'sb-distributor': 'distributor',
+    'sb-tape-length': 'tapeLength',
+    'sb-speed': 'recordingSpeed',
+    'sb-condition': 'condition',
+    'sb-notes': 'cassetteNotes',
+  };
+
+  function flushAutoSave() {
+    const id = playerClipId;
+    if (!id) return;
+    const updates = {};
+    for (const [domId, key] of Object.entries(fieldMap)) {
+      const el = document.getElementById(domId);
+      if (el) updates[key] = el.value;
+    }
+    updateClip(id, updates);
+
+    // If we have a save folder and the clip has a file, also rewrite the
+    // sidecar JSON / .youtube.txt and (if the title implies a new filename)
+    // rename the video on disk so it keeps tracking the catalog title.
+    (async () => {
+      if (!directoryHandle) return;
+      let clips = getClips();
+      let clip = clips.find(c => c.id === id);
+      if (!clip || !clip.filename) return;
+
+      const settings = loadSettings();
+      const desired = regenerateFilenameWithTitle(
+        clip.filename,
+        clip.title,
+        settings.nameFormat || 'title'
+      );
+      if (desired && desired !== clip.filename) {
+        const oldBase = clip.filename.replace(/\.(webm|mp4)$/, '');
+        const renamed = await renameFileOnDisk(clip.filename, desired);
+        if (renamed) {
+          updateClip(id, { filename: renamed });
+          await renameSiblings(oldBase, renamed.replace(/\.(webm|mp4)$/, ''));
+          clips = getClips();
+          clip = clips.find(c => c.id === id);
+          // Keep the player modal header in sync.
+          const filenameEl = document.getElementById('player-modal-filename');
+          if (filenameEl && id === playerClipId) filenameEl.textContent = clip.filename;
+        }
+      }
+      const basename = clip.filename.replace(/\.(webm|mp4)$/, '');
+      saveSidecarFiles(directoryHandle, basename, clip).catch(() => {});
+    })();
+
+    // Reflect title changes in the player-modal header right away (the rename
+    // path above only fires when filename changes too; this updates on every
+    // keystroke so the header doesn't lag the input).
+    const titleEl = document.getElementById('yt-pub-title');
+    const headerTitle = document.getElementById('player-modal-title');
+    if (titleEl && headerTitle && id === playerClipId) {
+      headerTitle.textContent = titleEl.value || 'Untitled';
+    }
+
+    // The library tile derived its label from the clip title — refresh it.
+    refreshLibrary();
+  }
+
+  function scheduleAutoSave() {
+    if (!playerClipId) return;
+    if (playerAutoSaveTimer) clearTimeout(playerAutoSaveTimer);
+    playerAutoSaveTimer = setTimeout(flushAutoSave, 500);
+  }
+
+  Object.keys(fieldMap).forEach(domId => {
+    const el = document.getElementById(domId);
+    if (!el) return;
+    el.addEventListener('input', scheduleAutoSave);
+    // On blur, force a save so we don't lose the last few characters when the
+    // user closes the modal mid-debounce.
+    el.addEventListener('blur', flushAutoSave);
+  });
+}
+
 function setSpeedActive(active, all) {
   all.forEach(b => {
     b.classList.remove('bg-white/10', 'border-white/30', 'text-white/70');
@@ -1199,12 +1424,15 @@ function closePlayerModal() {
   const modal = document.getElementById('clip-player-modal');
   const video = document.getElementById('player-modal-video');
   video.pause();
-  video.src = '';
+  video.removeAttribute('src');
+  video.load();
   modal.classList.add('hidden');
   if (playerModalBlobUrl) {
     URL.revokeObjectURL(playerModalBlobUrl);
     playerModalBlobUrl = null;
   }
+  playerClipId = null;
+  if (playerAutoSaveTimer) { clearTimeout(playerAutoSaveTimer); playerAutoSaveTimer = null; }
 }
 
 // --- Mute toggle ---
@@ -1223,6 +1451,101 @@ function wireMuteToggle() {
 }
 
 // --- Save data button ---
+
+// --- Thumbnail extraction + YouTube thumbnail upload ---
+
+// Pull `count` random JPEG frames from a blob URL by spinning up an offscreen
+// <video>, seeking, and drawing to a canvas. Random offsets (sorted ascending
+// so the seek goes one direction) keep "Refresh" returning a fresh sample of
+// the clip each time.
+async function extractThumbnailsFromBlob(blobUrl, count = 6) {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement('video');
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    v.src = blobUrl;
+
+    v.addEventListener('loadedmetadata', async () => {
+      const duration = v.duration;
+      if (!duration || !isFinite(duration)) {
+        reject(new Error('Could not read video duration'));
+        return;
+      }
+      const offsets = Array.from({ length: count }, () =>
+        0.05 * duration + Math.random() * 0.9 * duration
+      ).sort((a, b) => a - b);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = v.videoWidth || 1280;
+      canvas.height = v.videoHeight || 720;
+      const ctx = canvas.getContext('2d');
+
+      const out = [];
+      for (const t of offsets) {
+        try {
+          await new Promise((r, rej) => {
+            const onSeek = () => { cleanup(); r(); };
+            const onErr = () => { cleanup(); rej(new Error('seek error')); };
+            const cleanup = () => {
+              v.removeEventListener('seeked', onSeek);
+              v.removeEventListener('error', onErr);
+            };
+            v.addEventListener('seeked', onSeek);
+            v.addEventListener('error', onErr);
+            v.currentTime = t;
+          });
+          ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+          out.push(canvas.toDataURL('image/jpeg', 0.85));
+        } catch (e) {
+          console.warn('[thumb] frame at', t.toFixed(1), 's failed:', e.message);
+        }
+      }
+
+      // Tear down the offscreen video so the blob URL can be GC'd.
+      v.removeAttribute('src');
+      v.load();
+      resolve(out);
+    });
+
+    v.addEventListener('error', () => reject(new Error('Video failed to load for thumbnail extraction')));
+  });
+}
+
+// POST a chosen frame to the YouTube thumbnails.set endpoint. Requires the
+// channel to have custom-thumbnail privileges (post-verification); a 403
+// from an unverified channel surfaces as an error the caller should treat
+// as a soft failure (the video upload itself stays good).
+async function uploadYouTubeThumbnail(videoId, accessToken, dataUrl) {
+  const commaIdx = dataUrl.indexOf(',');
+  if (commaIdx < 0) throw new Error('Invalid data URL');
+  const meta = dataUrl.slice(0, commaIdx);
+  const b64 = dataUrl.slice(commaIdx + 1);
+  const mimeType = (meta.match(/data:([^;]+)/) || [, 'image/jpeg'])[1];
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+  const res = await fetch(
+    `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}&uploadType=media`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': mimeType,
+      },
+      body: bytes,
+    }
+  );
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    const err = new Error(errText || `thumbnails.set failed (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
 
 // --- Filename / disk-rename helpers ---
 //
@@ -1574,13 +1897,11 @@ function ytUpdateAccountUI() {
 
 function wireYouTubePublish() {
   const btn = document.getElementById('publish-yt-btn');
-  const modal = document.getElementById('yt-publish-modal');
   const loading = document.getElementById('yt-pub-loading');
   const errorPanel = document.getElementById('yt-pub-error');
   const errorMsg = document.getElementById('yt-pub-error-msg');
   const retryBtn = document.getElementById('yt-pub-retry');
   const errorCloseBtn = document.getElementById('yt-pub-error-close');
-  const dismissBtn = document.getElementById('yt-pub-dismiss');
   const signinPanel = document.getElementById('yt-pub-signin');
   const signinBtn = document.getElementById('yt-pub-signin-btn');
   const signoutBtn = document.getElementById('yt-pub-signout');
@@ -1591,12 +1912,11 @@ function wireYouTubePublish() {
   const tagsInput = document.getElementById('yt-pub-tags');
   const privacySelect = document.getElementById('yt-pub-privacy');
   const uploadBtn = document.getElementById('yt-pub-upload');
-  const cancelBtn = document.getElementById('yt-pub-cancel');
-  const closeBtn = document.getElementById('yt-pub-close');
   const progressDiv = document.getElementById('yt-pub-progress');
   const progressBar = document.getElementById('yt-pub-progress-bar');
   const statusEl = document.getElementById('yt-pub-status');
   const linkEl = document.getElementById('yt-pub-link');
+  const thumbWarn = document.getElementById('yt-pub-thumb-warn');
 
   // On-demand AI sparkle buttons + suggestion preview panel
   const aiAllBtn = document.getElementById('yt-pub-ai-all');
@@ -1644,6 +1964,9 @@ function wireYouTubePublish() {
     if (loadingTimer) { clearInterval(loadingTimer); loadingTimer = null; }
   }
 
+  // Reset only the upload-state bits — never the editable metadata fields,
+  // which are the user's authoritative copy of the clip and persist across
+  // open/close of the player modal.
   function resetUploadUI() {
     currentToken = null;
     uploadBtn.disabled = false;
@@ -1653,9 +1976,10 @@ function wireYouTubePublish() {
     statusEl.textContent = '';
     linkEl.href = '';
     linkEl.textContent = '';
-    titleInput.value = '';
-    descInput.value = '';
-    tagsInput.value = '';
+    if (thumbWarn) {
+      thumbWarn.classList.add('hidden');
+      thumbWarn.textContent = '';
+    }
     currentSuggestion = null;
   }
 
@@ -1674,14 +1998,6 @@ function wireYouTubePublish() {
     form.classList.remove('hidden');
   }
 
-  function closeModal() {
-    stopLoadingAnim();
-    modal.classList.add('hidden');
-    hideAllPanels();
-    loading.textContent = 'Generating AI copy...';
-    resetUploadUI();
-  }
-
   function showError(msg) {
     stopLoadingAnim();
     hideAllPanels();
@@ -1694,6 +2010,34 @@ function wireYouTubePublish() {
     hideAllPanels();
     signinPanel.classList.remove('hidden');
   }
+
+  // Called by openPlayerModal once the sidebar is showing a clip; re-syncs the
+  // publish UI state machine (signin vs form vs done) for whichever clip just
+  // loaded. The publish elements are now permanent residents of the sidebar
+  // rather than elements that get unhidden on demand.
+  function publishStateForClip(clipId, clip) {
+    publishClipId = clipId;
+    resetUploadUI();
+    ytUpdateAccountUI();
+    if (!ytGetRefreshToken()) {
+      showSignInPanel();
+      return;
+    }
+    // If the clip has already been published, jump straight to "Uploaded"
+    // with the saved YouTube link instead of dropping the user back into the
+    // pre-upload form (less confusing than offering "Upload" on a published
+    // clip with no obvious indication it's already up).
+    if (clip && clip.youtubeUrl) {
+      hideAllPanels();
+      linkEl.href = clip.youtubeUrl;
+      linkEl.textContent = clip.youtubeUrl;
+      done.classList.remove('hidden');
+    } else {
+      showForm();
+    }
+    fetchAccessTokenInBackground();
+  }
+  publishStateForClip_external = publishStateForClip;
 
   // Build the metadata payload sent to the AI rewrite endpoint. For the active
   // clip we merge in the live editor form so the AI sees the user's most
@@ -1713,15 +2057,6 @@ function wireYouTubePublish() {
       description: descInput.value || base.description,
       tags: tagsInput.value || base.tags,
     };
-  }
-
-  function populateFormFromEditor() {
-    const m = buildMetadata();
-    if (!m) return false;
-    titleInput.value = m.title || '';
-    descInput.value = m.description || '';
-    tagsInput.value = m.tags || '';
-    return true;
   }
 
   // Pre-warm the upload access token in the background so that 1) Upload
@@ -1758,26 +2093,18 @@ function wireYouTubePublish() {
     }
   }
 
+  // Triggered by the "▶ YouTube" button after recording, library card publish
+  // buttons, etc. Opens the player modal for the clip; the sidebar takes over
+  // from there.
   async function startPublish(clipId = lastClipId) {
     if (!clipId) return;
-    publishClipId = clipId;
-
-    resetUploadUI();
-    modal.classList.remove('hidden');
-    ytUpdateAccountUI();
-
-    // Not signed in yet — prompt sign-in. We'll resume this publish after return.
-    if (!ytGetRefreshToken()) {
-      showSignInPanel();
-      return;
+    if (typeof openPlayerForClip === 'function') {
+      await openPlayerForClip(clipId);
+    } else {
+      // Fallback if the player loader isn't wired yet — at least populate
+      // the publish state for the clip.
+      publishStateForClip(clipId);
     }
-
-    if (!populateFormFromEditor()) {
-      showError('Clip not found.');
-      return;
-    }
-    showForm();
-    fetchAccessTokenInBackground();
   }
 
   function showSuggestionPanel(scope, data) {
@@ -1873,12 +2200,13 @@ function wireYouTubePublish() {
   }
 
   btn.addEventListener('click', () => startPublish());
-  retryBtn.addEventListener('click', () => startPublish(publishClipId));
+  retryBtn.addEventListener('click', () => {
+    // Retry returns to the form for the same clip — the upload XHR can be
+    // restarted from there (or the user can edit + re-upload).
+    showForm();
+  });
+  errorCloseBtn.addEventListener('click', () => showForm());
   publishClip = startPublish;
-  errorCloseBtn.addEventListener('click', closeModal);
-  dismissBtn.addEventListener('click', closeModal);
-  // Modal only closes via the X button — no backdrop click or Escape, so
-  // a stray click or drag-to-select inside the form can't wipe the AI copy.
 
   // Sparkle buttons — main button rewrites everything; per-field sparkles
   // scope the suggestion panel to just that one field.
@@ -1990,13 +2318,35 @@ function wireYouTubePublish() {
         }
       });
 
-      xhr.addEventListener('load', () => {
+      xhr.addEventListener('load', async () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           const result = JSON.parse(xhr.responseText);
           const ytUrl = 'https://youtube.com/watch?v=' + result.id;
 
           // Save YouTube URL back to clip
           updateClip(publishClipId, { youtubeUrl: ytUrl, youtubeId: result.id });
+
+          // If a custom thumbnail was picked, post it to thumbnails.set. A
+          // 403 here means the channel hasn't been verified for custom
+          // thumbnails — surface a soft warning but keep the video upload's
+          // success state intact.
+          const clipsAfter = getClips();
+          const clipAfter = clipsAfter.find(c => c.id === publishClipId);
+          const thumbDataUrl = clipAfter && clipAfter.ytThumbnailDataUrl;
+          if (thumbDataUrl) {
+            try {
+              await uploadYouTubeThumbnail(result.id, currentToken, thumbDataUrl);
+            } catch (e) {
+              console.warn('[publish] thumbnail upload failed:', e.message);
+              if (thumbWarn) {
+                thumbWarn.classList.remove('hidden');
+                thumbWarn.textContent = e.status === 403
+                  ? '⚠ Custom thumbnail requires channel verification.'
+                  : '⚠ Custom thumbnail upload failed.';
+              }
+            }
+          }
+
           refreshLibrary();
 
           linkEl.href = ytUrl;
@@ -2024,23 +2374,11 @@ function wireYouTubePublish() {
       uploadBtn.textContent = 'Upload to YouTube';
     }
   });
-
-  cancelBtn.addEventListener('click', () => {
-    modal.classList.add('hidden');
-    uploadBtn.disabled = false;
-    uploadBtn.textContent = 'Upload to YouTube';
-    progressDiv.classList.add('hidden');
-    progressBar.style.width = '0%';
-  });
-
-  closeBtn.addEventListener('click', () => {
-    modal.classList.add('hidden');
-    uploadBtn.disabled = false;
-    uploadBtn.textContent = 'Upload to YouTube';
-    progressDiv.classList.add('hidden');
-    progressBar.style.width = '0%';
-  });
 }
+
+// Module-level handle so openPlayerModal can re-init the publish UI when a
+// clip is opened. Set by wireYouTubePublish.
+let publishStateForClip_external = null;
 
 // --- Before unload ---
 
