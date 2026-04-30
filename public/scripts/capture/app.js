@@ -1254,14 +1254,23 @@ async function loadClipIntoEditor(clipId) {
   restoreSleeve(clip.sleeveFront, clip.sleeveBack);
 
   // 5. Wire up the Last Recording playback with this clip's blob URL and
-  // switch to that tab so the user sees the clip immediately.
+  // switch to that tab so the user sees the clip immediately. Library-open
+  // is a user-gesture-driven action, so autoplay-with-sound is allowed —
+  // explicitly unmute and reset playbackRate in case a previous clip left
+  // them at non-defaults.
   if (url) {
     if (playbackBlobUrl) URL.revokeObjectURL(playbackBlobUrl);
     playbackBlobUrl = url;
     const playbackVideo = document.getElementById('playback');
     if (playbackVideo) {
       playbackVideo.src = url;
+      playbackVideo.muted = false;
+      playbackVideo.playbackRate = 1;
       playbackVideo.load();
+      playbackVideo.play().catch(() => {
+        // Autoplay refused (rare from a user click, but possible if the
+        // browser deems otherwise) — leave it to the user to hit play.
+      });
     }
     showPlaybackTab();
   }
