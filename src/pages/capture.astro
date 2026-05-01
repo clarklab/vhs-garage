@@ -181,26 +181,39 @@ import Base from '../layouts/Base.astro';
        directly. The `theme: 'os-theme-vhs'` option in app.js stamps the
        class on each .os-scrollbar element. */
 
-    /* Sizing: vertical bar is a 12px-wide channel with the handle inset 2px
-       so the red handle visually floats inside the dark track. */
+    /* (OverlayScrollbars theme rules moved to the <style is:global> block
+       below — they target elements created by the OverlayScrollbars JS,
+       which never carry the Astro scope class.) */
+
+    /* Make the trigger look "pressed" when its menu is open. The static
+       toolbar buttons live in markup so a scoped rule reaches them. */
+    .toolbar-trigger.is-active {
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.95);
+    }
+  </style>
+
+  <!-- Global block for CSS that targets dynamically-created elements.
+       Astro's default <style> blocks are scoped via :where(.astro-XXXX),
+       which only matches elements that have the scope class attached at
+       compile time. Anything created in JS (toolbar menu items, the
+       OverlayScrollbars-rendered scrollbar / track / handle elements) is
+       missing that class, so scoped rules silently fail to apply. Keep
+       these rules global so they reach those runtime-built nodes. -->
+  <style is:global>
+    /* OverlayScrollbars VHS theme — the scrollbar/track/handle elements
+       are created by the OverlayScrollbars JS, so these selectors must be
+       global to match. */
     .os-scrollbar.os-theme-vhs {
       padding: 0;
       box-sizing: border-box;
     }
-    .os-scrollbar.os-theme-vhs.os-scrollbar-vertical {
-      width: 12px;
-    }
-    .os-scrollbar.os-theme-vhs.os-scrollbar-horizontal {
-      height: 12px;
-    }
-    /* Track = dark channel (matches the column background). */
-    .os-scrollbar.os-theme-vhs > .os-scrollbar-track {
-      background: #141214;
-    }
+    .os-scrollbar.os-theme-vhs.os-scrollbar-vertical { width: 12px; }
+    .os-scrollbar.os-theme-vhs.os-scrollbar-horizontal { height: 12px; }
+    .os-scrollbar.os-theme-vhs > .os-scrollbar-track { background: #141214; }
     .os-scrollbar.os-theme-vhs.os-scrollbar-vertical > .os-scrollbar-track {
       border-left: 1px solid rgba(255, 255, 255, 0.04);
     }
-    /* Handle = chunky red pill, inset 2px from the channel edges. */
     .os-scrollbar.os-theme-vhs > .os-scrollbar-track > .os-scrollbar-handle {
       background: #dc2626;
       border-radius: 2px;
@@ -230,13 +243,14 @@ import Base from '../layouts/Base.astro';
     .toolbar-menu {
       position: fixed;
       z-index: 60;
-      min-width: 200px;
+      min-width: 220px;
+      max-width: 360px;
       background: #1a181a;
       color: rgba(255, 255, 255, 0.85);
       font-family: monospace;
       font-size: 11px;
-      line-height: 1;
-      padding: 3px 0;
+      line-height: 1.2;
+      padding: 4px 0;
       user-select: none;
       /* Chiseled bevel: white highlight on top+left, black shadow on bot+right.
          Box-shadow stack: inset highlights/shadows + a chunky 2px outer drop
@@ -246,12 +260,14 @@ import Base from '../layouts/Base.astro';
         inset -1px -1px 0 0 rgba(0, 0, 0, 0.85),
         2px 2px 0 0 rgba(0, 0, 0, 0.6);
       border: 1px solid #000;
+      box-sizing: border-box;
     }
     .toolbar-menu-item {
       display: flex;
       align-items: center;
       width: 100%;
-      padding: 5px 12px 5px 22px;
+      box-sizing: border-box;
+      padding: 7px 14px 7px 26px;
       background: transparent;
       border: 0;
       color: inherit;
@@ -260,6 +276,8 @@ import Base from '../layouts/Base.astro';
       cursor: pointer;
       position: relative;
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     /* Hover = inverse video, the System 7 hallmark. Red instead of the
        Mac OS blue to keep us in the VHS Garage palette. */
@@ -270,7 +288,7 @@ import Base from '../layouts/Base.astro';
     .toolbar-menu-item.is-checked::before {
       content: '✓';
       position: absolute;
-      left: 8px;
+      left: 9px;
       top: 50%;
       transform: translateY(-50%);
       color: rgba(255, 255, 255, 0.75);
@@ -286,23 +304,18 @@ import Base from '../layouts/Base.astro';
     }
     .toolbar-menu-divider {
       height: 1px;
-      margin: 3px 6px;
+      margin: 4px 6px;
       background: rgba(0, 0, 0, 0.7);
       box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.08);
     }
     /* Section header (non-clickable label, e.g. the current folder name at
        the top of the DIR menu). */
     .toolbar-menu-header {
-      padding: 5px 12px 5px 22px;
-      font-size: 10px;
-      letter-spacing: 0.06em;
-      color: rgba(255, 255, 255, 0.4);
+      padding: 5px 14px 4px 14px;
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      color: rgba(255, 255, 255, 0.35);
       text-transform: uppercase;
-    }
-    /* Make the trigger look "pressed" when its menu is open. */
-    .toolbar-trigger.is-active {
-      background: rgba(255, 255, 255, 0.06);
-      color: rgba(255, 255, 255, 0.95);
     }
   </style>
 
