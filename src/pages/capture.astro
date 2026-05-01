@@ -381,6 +381,14 @@ import Base from '../layouts/Base.astro';
       <button id="help-btn" class="flex items-center justify-center px-3 py-2 border-l border-white/15 text-white/50 hover:text-white/80 transition-colors shrink-0" title="Help &amp; shortcuts">
         <span class="inline-flex items-center justify-center w-4 h-4 border border-white/40 text-[9px] leading-none" style="border-radius:50%;">?</span>
       </button>
+
+      <!-- Legal: opens a small menu with links to the terms + privacy
+           pages on vhsgarage.com. Sits last so it reads like the "About"
+           position in classic desktop apps. -->
+      <button id="status-legal-trigger" class="toolbar-trigger flex items-center gap-1.5 px-3 py-2 border-l border-white/15 shrink-0 text-white/50 hover:text-white/80 transition-colors" title="Terms &amp; privacy">
+        <span class="uppercase tracking-wider">Legal</span>
+        <span class="text-white/30 text-[8px]" aria-hidden="true">▾</span>
+      </button>
     </div>
 
     <!-- Content area: full-width, no max-width / centering — columns own the

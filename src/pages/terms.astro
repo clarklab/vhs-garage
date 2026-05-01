@@ -1,0 +1,73 @@
+---
+import Base from '../layouts/Base.astro';
+const updated = 'May 1, 2026';
+---
+
+<Base
+  title="Terms"
+  description="The plain-English terms of using VHS Garage and the VHS Garage Recorder."
+>
+  <div class="min-h-screen px-6 py-12 max-w-2xl mx-auto">
+    <a href="/" class="text-white/30 text-xs hover:text-white/50 transition-colors">← vhsgarage.com</a>
+
+    <h1 class="text-4xl mt-8 mb-2">Terms of Use</h1>
+    <p class="text-white/40 text-xs mb-10">Last updated: {updated}</p>
+
+    <div class="space-y-8 text-gray-300 leading-relaxed">
+      <p>VHS Garage is a small project run by two people who love old tapes. These terms cover the website at vhsgarage.com and the VHS Garage Recorder capture software. Use plain language to read them, because that's how they're written.</p>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">The short version</h2>
+        <ul class="list-disc pl-5 space-y-2">
+          <li>Use the site and the recorder for tapes you own or have permission to copy.</li>
+          <li>Don't upload anything illegal, harmful, or that isn't yours to share.</li>
+          <li>The software is free and provided as-is. No warranty. Use at your own risk.</li>
+          <li>You own the videos you record. We don't take a copy of them.</li>
+          <li>If you publish to YouTube, you're using your own YouTube account and YouTube's rules apply too.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Using the recorder</h2>
+        <p>The VHS Garage Recorder runs in your browser. It uses your capture device, your webcam, and your computer's storage. Recordings save to a folder you choose on your own machine. We don't host or store your videos.</p>
+        <p class="mt-3">When you snap a photo of a tape sleeve, we send that photo to an AI service so it can suggest a title and description. You decide whether to keep the suggestion. More on that in our <a href="/privacy" class="text-white underline hover:text-gray-300">Privacy Policy</a>.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Your tapes, your responsibility</h2>
+        <p>You're responsible for what you record and what you upload. Only digitize and share content you have the right to. If you don't own the rights to something, don't put it on YouTube.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">YouTube uploads</h2>
+        <p>If you connect a YouTube account, uploads go straight from your browser to your channel. We don't get a copy and we don't post on your behalf. You can disconnect at any time from your <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener" class="text-white underline hover:text-gray-300">Google account permissions</a>.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">No warranty</h2>
+        <p>The site and software are provided "as is" without any warranty. Capture cards, browsers, and operating systems are weird. Things can break. Save your work. We're not liable for lost recordings, hardware issues, or anything else that happens while you use this.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Don't be a jerk</h2>
+        <p>Don't try to break the site, abuse our forms, or use the tools to harass other people. If you submit photos to be featured, send your own setup. No stock photos, no other people's spaces.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Changes</h2>
+        <p>We might update these terms as the project grows. If we make a meaningful change, we'll bump the "Last updated" date at the top.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Contact</h2>
+        <p>Questions? Hit up <a href="https://x.com/oracrest" target="_blank" rel="noopener" class="text-white underline hover:text-gray-300">Matt</a> or <a href="https://x.com/clarklab" target="_blank" rel="noopener" class="text-white underline hover:text-gray-300">Clark</a> on Twitter.</p>
+      </section>
+    </div>
+
+    <footer class="mt-16 pt-8 border-t border-white/10 flex flex-wrap gap-4 text-xs text-white/40">
+      <a href="/" class="hover:text-white/70">Home</a>
+      <a href="/privacy" class="hover:text-white/70">Privacy</a>
+      <a href="/capture" class="hover:text-white/70">Recorder</a>
+    </footer>
+  </div>
+</Base>
