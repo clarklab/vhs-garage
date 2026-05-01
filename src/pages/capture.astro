@@ -4,6 +4,12 @@ import Base from '../layouts/Base.astro';
 
 <Base title="Capture" description="A browser-based VHS digitization station.">
 
+  <!-- OverlayScrollbars CSS — base styles for the DOM-rendered scrollbars
+       that replace native ones inside scrollable columns. The custom theme
+       (.os-theme-vhs) is defined in the <style> block below; the JS that
+       attaches it lives in /scripts/capture/app.js. -->
+  <link slot="head" rel="stylesheet" href="/vendor/overlayscrollbars/overlayscrollbars.min.css">
+
   <style>
     .rec-btn {
       display: inline-flex;
@@ -40,6 +46,12 @@ import Base from '../layouts/Base.astro';
       border-color: rgba(255, 255, 255, 0.6);
       background: rgba(255, 255, 255, 0.05);
     }
+    /* Tailwind's .hidden utility (display: none) is loaded BEFORE this page's
+       <style> block, so .lib-btn { display: inline-flex } was winning the
+       cascade and the Delete button stayed visible even with `hidden` in its
+       class list. Add an explicit override at this layer so `.hidden` wins
+       again — fixes the delete button leaking into the live-preview state. */
+    .lib-btn.hidden { display: none; }
     .lib-btn svg {
       width: 24px;
       height: 24px;
@@ -154,91 +166,143 @@ import Base from '../layouts/Base.astro';
       transform-origin: center bottom;
     }
 
-    /* Old-school chunky scrollbar: red pill thumb on a dark track. Applied
-       page-wide so any overflow on /capture (sidebar columns, library window
-       body, modals, textareas, popovers) gets the same treatment. The thumb
-       border matches the track color so the colored area reads as an inset
-       pill floating in the channel; background-clip: padding-box keeps the
-       colored fill from leaking under the border. */
-    *::-webkit-scrollbar {
+    /* Old-school chunky scrollbar — full VHS Garage theme for
+       OverlayScrollbars. Earlier CSS-only approaches (::-webkit-scrollbar +
+       scrollbar-width) can't beat macOS's "Show scroll bars: Always"
+       system setting — the OS draws native bars on top regardless. We
+       switched to the OverlayScrollbars JS library, which removes native
+       bars from the layout and renders DOM-based bars instead.
+
+       NOTE: OverlayScrollbars v2.x ships ONLY the core CSS — the bundled
+       themes (os-theme-dark / os-theme-light) of the v1 series are gone, so
+       a custom theme has to provide real dimensions and background colors.
+       Just declaring CSS variables like --os-handle-bg does nothing in v2;
+       the core CSS doesn't reference them. We target the scrollbar elements
+       directly. The `theme: 'os-theme-vhs'` option in app.js stamps the
+       class on each .os-scrollbar element. */
+
+    /* Sizing: vertical bar is a 12px-wide channel with the handle inset 2px
+       so the red handle visually floats inside the dark track. */
+    .os-scrollbar.os-theme-vhs {
+      padding: 0;
+      box-sizing: border-box;
+    }
+    .os-scrollbar.os-theme-vhs.os-scrollbar-vertical {
       width: 12px;
+    }
+    .os-scrollbar.os-theme-vhs.os-scrollbar-horizontal {
       height: 12px;
     }
-    *::-webkit-scrollbar-track {
+    /* Track = dark channel (matches the column background). */
+    .os-scrollbar.os-theme-vhs > .os-scrollbar-track {
       background: #141214;
     }
-    *::-webkit-scrollbar-thumb {
-      background: #dc2626;
-      border: 3px solid #141214;
-      background-clip: padding-box;
-      border-radius: 2px;
-    }
-    *::-webkit-scrollbar-thumb:hover {
-      background: #ef4444;
-      background-clip: padding-box;
-    }
-    *::-webkit-scrollbar-corner {
-      background: #141214;
-    }
-    /* Firefox */
-    * {
-      scrollbar-width: thin;
-      scrollbar-color: #dc2626 #141214;
-    }
-
-    /* Elements that get a custom JS scrollbar attached: hide the native one
-       entirely. -webkit-appearance: none + width:0 is what actually kills
-       the macOS overlay scrollbar — display:none alone is ignored on
-       Safari's overlay scrollbars. !important defeats any earlier global
-       *::-webkit-scrollbar rule. */
-    .js-custom-scrollbar {
-      scrollbar-width: none !important;
-      -ms-overflow-style: none !important;
-    }
-    .js-custom-scrollbar::-webkit-scrollbar,
-    .js-custom-scrollbar::-webkit-scrollbar-track,
-    .js-custom-scrollbar::-webkit-scrollbar-thumb {
-      -webkit-appearance: none !important;
-      appearance: none !important;
-      display: none !important;
-      width: 0 !important;
-      height: 0 !important;
-      background: transparent !important;
-    }
-
-    /* Custom always-visible JS scrollbar — red pill thumb on a dark track,
-       inserted as a sibling of the scroll element by attachCustomScrollbar
-       in app.js. Track is hidden when the content doesn't actually overflow. */
-    .vhs-scrollbar-track {
-      position: absolute;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      width: 12px;
-      background: #141214;
+    .os-scrollbar.os-theme-vhs.os-scrollbar-vertical > .os-scrollbar-track {
       border-left: 1px solid rgba(255, 255, 255, 0.04);
-      z-index: 5;
-      user-select: none;
     }
-    .vhs-scrollbar-track.is-hidden {
-      display: none;
-    }
-    .vhs-scrollbar-thumb {
-      position: absolute;
-      left: 2px;
-      right: 2px;
+    /* Handle = chunky red pill, inset 2px from the channel edges. */
+    .os-scrollbar.os-theme-vhs > .os-scrollbar-track > .os-scrollbar-handle {
       background: #dc2626;
       border-radius: 2px;
-      cursor: grab;
-      transition: background-color 0.15s;
       min-height: 24px;
+      min-width: 24px;
     }
-    .vhs-scrollbar-thumb:hover,
-    .vhs-scrollbar-thumb.is-dragging {
+    .os-scrollbar.os-theme-vhs.os-scrollbar-vertical > .os-scrollbar-track > .os-scrollbar-handle {
+      width: calc(100% - 4px);
+      margin-left: 2px;
+    }
+    .os-scrollbar.os-theme-vhs.os-scrollbar-horizontal > .os-scrollbar-track > .os-scrollbar-handle {
+      height: calc(100% - 4px);
+      margin-top: 2px;
+    }
+    .os-scrollbar.os-theme-vhs > .os-scrollbar-track > .os-scrollbar-handle:hover,
+    .os-scrollbar.os-theme-vhs.os-scrollbar-active > .os-scrollbar-track > .os-scrollbar-handle {
       background: #ef4444;
     }
-    .vhs-scrollbar-thumb.is-dragging {
-      cursor: grabbing;
+
+    /* Classic 80s/90s desktop drop-down menu (System 7 / Win 3.1 vibe) for
+       the top toolbar segments. Single shared host element (#toolbar-menu)
+       gets populated on each open by openToolbarMenu in app.js — opening a
+       different segment swaps the items in place. The chiseled bevel is
+       1px white-alpha highlight on top+left and 1px black on bottom+right,
+       which reads as a "raised" panel; the chunky drop shadow under it is
+       the same trick we use on the library context menu. */
+    .toolbar-menu {
+      position: fixed;
+      z-index: 60;
+      min-width: 200px;
+      background: #1a181a;
+      color: rgba(255, 255, 255, 0.85);
+      font-family: monospace;
+      font-size: 11px;
+      line-height: 1;
+      padding: 3px 0;
+      user-select: none;
+      /* Chiseled bevel: white highlight on top+left, black shadow on bot+right.
+         Box-shadow stack: inset highlights/shadows + a chunky 2px outer drop
+         shadow to mimic the dropped-paper feel of vintage menus. */
+      box-shadow:
+        inset 1px 1px 0 0 rgba(255, 255, 255, 0.18),
+        inset -1px -1px 0 0 rgba(0, 0, 0, 0.85),
+        2px 2px 0 0 rgba(0, 0, 0, 0.6);
+      border: 1px solid #000;
+    }
+    .toolbar-menu-item {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      padding: 5px 12px 5px 22px;
+      background: transparent;
+      border: 0;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      position: relative;
+      white-space: nowrap;
+    }
+    /* Hover = inverse video, the System 7 hallmark. Red instead of the
+       Mac OS blue to keep us in the VHS Garage palette. */
+    .toolbar-menu-item:hover {
+      background: #dc2626;
+      color: #fff;
+    }
+    .toolbar-menu-item.is-checked::before {
+      content: '✓';
+      position: absolute;
+      left: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: rgba(255, 255, 255, 0.75);
+      font-size: 10px;
+    }
+    .toolbar-menu-item.is-checked:hover::before {
+      color: #fff;
+    }
+    .toolbar-menu-item.is-disabled {
+      color: rgba(255, 255, 255, 0.3);
+      cursor: default;
+      pointer-events: none;
+    }
+    .toolbar-menu-divider {
+      height: 1px;
+      margin: 3px 6px;
+      background: rgba(0, 0, 0, 0.7);
+      box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.08);
+    }
+    /* Section header (non-clickable label, e.g. the current folder name at
+       the top of the DIR menu). */
+    .toolbar-menu-header {
+      padding: 5px 12px 5px 22px;
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      color: rgba(255, 255, 255, 0.4);
+      text-transform: uppercase;
+    }
+    /* Make the trigger look "pressed" when its menu is open. */
+    .toolbar-trigger.is-active {
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.95);
     }
   </style>
 
@@ -266,28 +330,34 @@ import Base from '../layouts/Base.astro';
         <span class="text-white/80 font-bold tracking-[0.15em] uppercase">VHS Garage Recorder</span>
       </div>
 
-      <!-- Status segments (click anywhere to open Device Settings) -->
-      <button id="status-segments" class="flex-1 flex items-stretch text-left hover:text-white/80 transition-colors min-w-0" title="Device settings">
-        <span class="flex items-center gap-1.5 px-3 py-2 border-r border-white/10 min-w-0">
-          <span class="text-white/40 uppercase tracking-wider shrink-0">VID</span>
-          <span id="status-video-label" class="truncate text-white/70" style="max-width:140px;">—</span>
-          <span id="status-video-dot" class="shrink-0" style="color:#f44336;">░</span>
-        </span>
-        <span class="flex items-center gap-1.5 px-3 py-2 border-r border-white/10 min-w-0">
-          <span class="text-white/40 uppercase tracking-wider shrink-0">AUD</span>
-          <span id="status-audio-label" class="truncate text-white/70" style="max-width:120px;">—</span>
-          <span id="status-audio-dot" class="shrink-0" style="color:#f44336;">░</span>
-        </span>
-        <span class="flex items-center gap-1.5 px-3 py-2 border-r border-white/10 min-w-0">
-          <span class="text-white/40 uppercase tracking-wider shrink-0">CAM</span>
-          <span id="status-webcam-label" class="truncate text-white/70" style="max-width:100px;">—</span>
-          <span id="status-webcam-dot" class="shrink-0" style="color:#f44336;">░</span>
-        </span>
-        <span class="flex-1 flex items-center gap-1.5 px-3 py-2 min-w-0">
-          <span class="text-white/40 uppercase tracking-wider shrink-0">DIR</span>
-          <span id="status-dir-label" class="truncate text-white/70">No save folder</span>
-        </span>
-        <span class="flex items-center justify-center px-3 py-2 text-white/40 shrink-0" aria-hidden="true">⚙</span>
+      <!-- Status segments — each is its own click target that opens an
+           anchored drop-down menu in the classic Mac System 7 / Win 3.1
+           style (via openToolbarMenu in app.js). The dropdowns let you
+           pick a device or folder right from the bar without diving into
+           the full Device Settings modal — that modal is still available
+           as the last item in each menu for the bigger view. -->
+      <button id="status-vid-trigger" class="toolbar-trigger flex items-center gap-1.5 px-3 py-2 border-r border-white/10 min-w-0 hover:text-white/80 transition-colors text-left" title="Capture video source">
+        <span class="text-white/40 uppercase tracking-wider shrink-0">VID</span>
+        <span id="status-video-label" class="truncate text-white/70" style="max-width:140px;">—</span>
+        <span id="status-video-dot" class="shrink-0" style="color:#f44336;">░</span>
+        <span class="text-white/30 text-[8px] shrink-0" aria-hidden="true">▾</span>
+      </button>
+      <button id="status-aud-trigger" class="toolbar-trigger flex items-center gap-1.5 px-3 py-2 border-r border-white/10 min-w-0 hover:text-white/80 transition-colors text-left" title="Capture audio source">
+        <span class="text-white/40 uppercase tracking-wider shrink-0">AUD</span>
+        <span id="status-audio-label" class="truncate text-white/70" style="max-width:120px;">—</span>
+        <span id="status-audio-dot" class="shrink-0" style="color:#f44336;">░</span>
+        <span class="text-white/30 text-[8px] shrink-0" aria-hidden="true">▾</span>
+      </button>
+      <button id="status-cam-trigger" class="toolbar-trigger flex items-center gap-1.5 px-3 py-2 border-r border-white/10 min-w-0 hover:text-white/80 transition-colors text-left" title="Webcam (sleeve photos)">
+        <span class="text-white/40 uppercase tracking-wider shrink-0">CAM</span>
+        <span id="status-webcam-label" class="truncate text-white/70" style="max-width:100px;">—</span>
+        <span id="status-webcam-dot" class="shrink-0" style="color:#f44336;">░</span>
+        <span class="text-white/30 text-[8px] shrink-0" aria-hidden="true">▾</span>
+      </button>
+      <button id="status-dir-trigger" class="toolbar-trigger flex-1 flex items-center gap-1.5 px-3 py-2 min-w-0 hover:text-white/80 transition-colors text-left" title="Save folder">
+        <span class="text-white/40 uppercase tracking-wider shrink-0">DIR</span>
+        <span id="status-dir-label" class="truncate text-white/70">No save folder</span>
+        <span class="text-white/30 text-[8px] shrink-0 ml-auto pl-2" aria-hidden="true">▾</span>
       </button>
 
       <!-- Help -->
@@ -387,7 +457,7 @@ import Base from '../layouts/Base.astro';
              inner-scroll fold — a recurring footgun for non-technical users.
              Custom always-visible JS scrollbar attaches to #col2-content. -->
         <div class="relative flex flex-col min-h-0 border-l border-white/20">
-        <div id="col2-content" class="flex-1 flex flex-col min-h-0 p-4 gap-3 overflow-y-auto vhs-scroll js-custom-scrollbar">
+        <div id="col2-content" class="flex-1 flex flex-col min-h-0 p-4 gap-3 overflow-y-auto vhs-scroll">
           <div class="flex flex-col">
             <p class="shrink-0 text-white/70 text-[11px] tracking-wider mb-3">░ VHS Sleeve ░</p>
             <div>
@@ -499,7 +569,7 @@ import Base from '../layouts/Base.astro';
              holds the divider + relative position; inner scrolls. The custom
              always-visible JS scrollbar attaches to #col3-content. -->
         <div class="relative flex flex-col min-h-0 border-l border-white/20">
-        <div id="col3-content" class="flex-1 flex flex-col min-h-0 p-4 space-y-3 overflow-y-auto vhs-scroll js-custom-scrollbar">
+        <div id="col3-content" class="flex-1 flex flex-col min-h-0 p-4 space-y-3 overflow-y-auto vhs-scroll">
           <div class="shrink-0">
             <p class="text-white/70 text-[11px] tracking-wider mb-3">░ Clip Info ░</p>
             <div id="clip-info-fields" class="space-y-2 text-xs">
@@ -673,19 +743,25 @@ import Base from '../layouts/Base.astro';
 
             <!-- Upload error -->
             <div id="yt-pub-error" class="hidden py-3">
-              <p id="yt-pub-error-msg" class="text-red-400 text-sm mb-3"></p>
+              <p id="yt-pub-error-msg" class="text-red-400 text-sm mb-3 whitespace-pre-line"></p>
               <div class="flex gap-2">
                 <button id="yt-pub-retry" class="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white text-xs transition-colors">Retry</button>
                 <button id="yt-pub-error-close" class="px-3 py-2 border border-white/20 text-white/50 hover:text-white text-xs transition-colors">Close</button>
               </div>
             </div>
 
-            <!-- Done -->
-            <div id="yt-pub-done" class="hidden text-center py-3">
-              <p class="text-white text-sm mb-2">Uploaded!</p>
-              <a id="yt-pub-link" href="" target="_blank" class="text-red-400 hover:text-red-300 text-xs">View on YouTube →</a>
-              <p id="yt-pub-thumb-warn" class="hidden text-yellow-400/70 text-[10px] mt-3"></p>
+            <!-- Done — slim single-row success state. Vertical space in this
+                 column is at a premium, so no big "Uploaded!" headline; just
+                 a green check + label + link on one line. Thumbnail warning
+                 only appears underneath if thumbnails.set fails. -->
+            <div id="yt-pub-done" class="hidden flex items-center justify-between gap-2 py-1.5 px-2 bg-green-900/30 border border-green-500/40">
+              <span class="inline-flex items-center gap-1.5 text-green-300 text-xs font-medium">
+                <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24" aria-hidden="true"><path d="m22,9v-2h-1v-2h-1v-1h-1v-1h-2v-1h-2v-1h-6v1h-2v1h-2v1h-1v1h-1v2h-1v2h-1v6h1v2h1v2h1v1h1v1h2v1h2v1h6v-1h2v-1h2v-1h1v-1h1v-2h1v-2h1v-6h-1Zm-4,3h-1v1h-1v1h-1v1h-1v1h-1v1h-1v1h-2v-1h-1v-1h-1v-1h-1v-1h-1v-2h1v-1h2v1h1v1h2v-1h1v-1h1v-1h1v-1h1v-1h2v1h1v2h-1v1Z"/></svg>
+                Uploaded
+              </span>
+              <a id="yt-pub-link" href="" target="_blank" class="text-red-400 hover:text-red-300 text-[11px] truncate">View →</a>
             </div>
+            <p id="yt-pub-thumb-warn" class="hidden text-yellow-400/70 text-[10px] mt-1"></p>
           </div>
         </div>
         </div><!-- /col 3 outer wrapper -->
@@ -744,6 +820,13 @@ import Base from '../layouts/Base.astro';
     <div class="border-t border-white/10 my-1"></div>
     <button id="lib-ctx-delete" class="block w-full text-left px-3 py-1.5 text-red-400/80 hover:bg-white/5 hover:text-red-400 transition-colors">Delete</button>
   </div>
+
+  <!-- Toolbar drop-down menu — single shared host populated on each open by
+       openToolbarMenu(triggerEl, items) in app.js. Anchored absolutely to
+       the click point in viewport coords (clamped to the viewport edges).
+       Style is the chiseled-bevel "raised" look from System 7 / Win 3.1
+       (defined as .toolbar-menu in the <style> block above). -->
+  <div id="toolbar-menu" class="toolbar-menu hidden"></div>
 
   <!-- Library: draggable + resizable "computer window" overlay. Click and
        drag the title bar to move; drag the bottom-right corner to resize

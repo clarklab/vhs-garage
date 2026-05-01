@@ -105,6 +105,7 @@ async function startApp() {
   wireSleeveCapture();
   wireViewToggle();
   wireDevicePopover();
+  wireToolbarMenus();
   wireLibrary();
   wirePlaybackTabs();
   wireMuteToggle();
@@ -960,42 +961,17 @@ function wireViewToggle() {
 // --- Device popover (triggered by clicking status bar) ---
 
 function wireDevicePopover() {
-  const trigger = document.getElementById('status-segments');
+  // The old #status-segments single-trigger button was replaced with
+  // per-segment dropdowns (see wireToolbarMenus). The modal it used to
+  // open is still here and still useful — the dropdowns' last item,
+  // "Open Device Settings…", routes to it via openDeviceSettingsModal().
+  // So this function now only wires the modal's own controls (close,
+  // apply, pickDir, backdrop) and the unrelated quality-settings popover.
   const popover = document.getElementById('device-popover');
   const closeBtn = document.getElementById('device-popover-close');
   const applyBtn = document.getElementById('dp-apply');
   const pickDir = document.getElementById('dp-pick-dir');
   const settingsPopover = document.getElementById('settings-popover');
-  const welcomeModal = document.getElementById('welcome-modal');
-
-  trigger.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    // Close other popovers if open
-    if (settingsPopover) settingsPopover.classList.add('hidden');
-    if (welcomeModal) welcomeModal.classList.add('hidden');
-
-    if (!popover.classList.contains('hidden')) {
-      popover.classList.add('hidden');
-      return;
-    }
-
-    // Populate device dropdowns
-    try {
-      const { video, audio } = await enumerateDevices();
-      const settings = loadSettings();
-
-      populateSelect('dp-video', video);
-      populateSelect('dp-audio', audio);
-      populateSelect('dp-webcam', video);
-
-      if (settings.videoDeviceId) document.getElementById('dp-video').value = settings.videoDeviceId;
-      if (settings.audioDeviceId) document.getElementById('dp-audio').value = settings.audioDeviceId;
-      if (settings.webcamDeviceId) document.getElementById('dp-webcam').value = settings.webcamDeviceId;
-      if (directoryHandle) document.getElementById('dp-dir-name').textContent = directoryHandle.name;
-    } catch {}
-
-    popover.classList.remove('hidden');
-  });
 
   closeBtn.addEventListener('click', () => {
     popover.classList.add('hidden');
@@ -1081,6 +1057,312 @@ function applyQualitySettings() {
   settings.videoFormat = document.getElementById('setting-format').value;
   settings.nameFormat = document.getElementById('setting-name-format').value;
   saveSettings(settings);
+}
+
+// --- Toolbar drop-down menus (System 7 / Win 3.1 style) ---
+//
+// Each top-bar segment (VID / AUD / CAM / DIR) is its own clickable trigger
+// that opens a small drop-down anchored under the click point. Replaces the
+// older "click anything in the bar to open a full modal" pattern — picking
+// a device shouldn't take a modal. The full Device Settings modal is still
+// available as the last item in each menu for the bigger view.
+//
+// The shared host element is #toolbar-menu (in capture.astro). One menu open
+// at a time; clicks-outside / Escape / scroll dismiss. Item shape:
+//   { label, checked?, disabled?, separator?, header?, onClick? }
+
+let toolbarMenuOpenForTrigger = null;
+
+function openToolbarMenu(triggerEl, items) {
+  const menu = document.getElementById('toolbar-menu');
+  if (!menu || !triggerEl) return;
+
+  // Toggle: if this same trigger is already open, close it.
+  if (toolbarMenuOpenForTrigger === triggerEl) {
+    closeToolbarMenu();
+    return;
+  }
+  closeToolbarMenu();
+
+  // Build items.
+  menu.innerHTML = '';
+  items.forEach((it) => {
+    if (it.separator) {
+      const sep = document.createElement('div');
+      sep.className = 'toolbar-menu-divider';
+      menu.appendChild(sep);
+      return;
+    }
+    if (it.header) {
+      const h = document.createElement('div');
+      h.className = 'toolbar-menu-header';
+      h.textContent = it.label;
+      menu.appendChild(h);
+      return;
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toolbar-menu-item';
+    if (it.checked) btn.classList.add('is-checked');
+    if (it.disabled) btn.classList.add('is-disabled');
+    btn.textContent = it.label;
+    if (!it.disabled && typeof it.onClick === 'function') {
+      btn.addEventListener('click', () => {
+        closeToolbarMenu();
+        // Defer one frame so the menu is visually gone before any modal /
+        // file picker spawned by the handler shows up — feels less abrupt.
+        requestAnimationFrame(() => it.onClick());
+      });
+    }
+    menu.appendChild(btn);
+  });
+
+  // Anchor under the trigger's bottom-left in viewport coords; clamp to the
+  // viewport so triggers near the right edge don't push the menu off-screen.
+  menu.classList.remove('hidden');
+  const tRect = triggerEl.getBoundingClientRect();
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  const w = menu.offsetWidth;
+  const h = menu.offsetHeight;
+  const left = Math.min(tRect.left, W - w - 4);
+  const top = Math.min(tRect.bottom, H - h - 4);
+  menu.style.left = Math.max(4, left) + 'px';
+  menu.style.top = Math.max(4, top) + 'px';
+
+  triggerEl.classList.add('is-active');
+  toolbarMenuOpenForTrigger = triggerEl;
+}
+
+function closeToolbarMenu() {
+  const menu = document.getElementById('toolbar-menu');
+  if (menu) menu.classList.add('hidden');
+  if (toolbarMenuOpenForTrigger) {
+    toolbarMenuOpenForTrigger.classList.remove('is-active');
+    toolbarMenuOpenForTrigger = null;
+  }
+}
+
+// Global dismissers wired once. Outside-click / Escape / scroll all close.
+// We do NOT close on a click that originated inside a trigger button — the
+// trigger's own click handler decides whether to toggle vs. swap.
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('toolbar-menu');
+    if (!menu || menu.classList.contains('hidden')) return;
+    if (menu.contains(e.target)) return;
+    if (e.target.closest('.toolbar-trigger')) return;
+    closeToolbarMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeToolbarMenu();
+  });
+  // Scroll-to-dismiss feels right on the main viewport but NOT inside the
+  // open menu itself — capture-phase listener with a contains() check.
+  document.addEventListener('scroll', (e) => {
+    const menu = document.getElementById('toolbar-menu');
+    if (!menu || menu.classList.contains('hidden')) return;
+    if (menu.contains(e.target)) return;
+    closeToolbarMenu();
+  }, true);
+}
+
+// Connect handlers for the menu items — these mirror the modal's "apply"
+// path so picking a device from the menu has the same effect as picking it
+// from Device Settings + clicking Apply.
+
+async function selectVideoDevice(videoId, videoLabel) {
+  const settings = loadSettings();
+  saveSettings({ ...settings, videoDeviceId: videoId, videoDeviceLabel: videoLabel });
+  // Need an audio device too in order to open a stream — fall back to the
+  // saved one (or default) if it's not set.
+  const audioId = settings.audioDeviceId || '';
+  try {
+    if (captureStream) captureStream.getTracks().forEach(t => t.stop());
+    captureStream = await openStream(videoId, audioId);
+    document.getElementById('preview').srcObject = captureStream;
+    document.getElementById('no-signal').classList.add('hidden');
+    stopMeter();
+    initMeter(captureStream);
+    updateStatus('video', { label: videoLabel });
+    if (settings.audioDeviceLabel) updateStatus('audio', { label: settings.audioDeviceLabel });
+  } catch (err) {
+    console.warn('Could not open video stream:', err);
+  }
+}
+
+async function selectAudioDevice(audioId, audioLabel) {
+  const settings = loadSettings();
+  saveSettings({ ...settings, audioDeviceId: audioId, audioDeviceLabel: audioLabel });
+  const videoId = settings.videoDeviceId || '';
+  if (!videoId) {
+    // Audio-only doesn't make sense for capture; just save the choice and
+    // surface the new label in the status bar.
+    updateStatus('audio', { label: audioLabel });
+    return;
+  }
+  try {
+    if (captureStream) captureStream.getTracks().forEach(t => t.stop());
+    captureStream = await openStream(videoId, audioId);
+    document.getElementById('preview').srcObject = captureStream;
+    document.getElementById('no-signal').classList.add('hidden');
+    stopMeter();
+    initMeter(captureStream);
+    updateStatus('audio', { label: audioLabel });
+    if (settings.videoDeviceLabel) updateStatus('video', { label: settings.videoDeviceLabel });
+  } catch (err) {
+    console.warn('Could not open audio stream:', err);
+  }
+}
+
+async function selectWebcamDevice(webcamId, webcamLabel) {
+  const settings = loadSettings();
+  saveSettings({ ...settings, webcamDeviceId: webcamId, webcamDeviceLabel: webcamLabel });
+  try {
+    await initWebcam(webcamId);
+    updateStatusWebcam({ label: webcamLabel });
+  } catch (err) {
+    console.warn('Could not open webcam:', err);
+  }
+}
+
+async function pickSaveFolder() {
+  try {
+    directoryHandle = await window.showDirectoryPicker();
+    const name = directoryHandle.name;
+    const dpDirName = document.getElementById('dp-dir-name');
+    if (dpDirName) dpDirName.textContent = name;
+    document.getElementById('status-dir-label').textContent = name;
+  } catch {
+    // User cancelled — no-op.
+  }
+}
+
+function openDeviceSettingsModal() {
+  // Re-uses the existing modal trigger by simulating the segments click,
+  // but we have to do the work the trigger handler used to do (populate
+  // selects from current devices) ourselves since the trigger no longer
+  // exists. Easiest: surface the modal and let its existing handlers run.
+  const popover = document.getElementById('device-popover');
+  if (!popover) return;
+  popover.classList.remove('hidden');
+  // Populate fresh — same as the old wireDevicePopover trigger.
+  enumerateDevices().then(({ video, audio }) => {
+    const settings = loadSettings();
+    const populate = (id, list) => {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      sel.innerHTML = '';
+      list.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `Device ${d.deviceId.slice(0, 8)}`;
+        sel.appendChild(opt);
+      });
+    };
+    populate('dp-video', video);
+    populate('dp-audio', audio);
+    populate('dp-webcam', video);
+    if (settings.videoDeviceId) document.getElementById('dp-video').value = settings.videoDeviceId;
+    if (settings.audioDeviceId) document.getElementById('dp-audio').value = settings.audioDeviceId;
+    if (settings.webcamDeviceId) document.getElementById('dp-webcam').value = settings.webcamDeviceId;
+    if (directoryHandle) {
+      const el = document.getElementById('dp-dir-name');
+      if (el) el.textContent = directoryHandle.name;
+    }
+  }).catch(() => {});
+}
+
+function wireToolbarMenus() {
+  const vidTrigger = document.getElementById('status-vid-trigger');
+  const audTrigger = document.getElementById('status-aud-trigger');
+  const camTrigger = document.getElementById('status-cam-trigger');
+  const dirTrigger = document.getElementById('status-dir-trigger');
+
+  // Helper: build a per-device menu. `kind` selects which saved-setting key
+  // the checkmark / connect handler keys off of.
+  const buildDeviceItems = async (kind) => {
+    let video = [], audio = [];
+    try {
+      const out = await enumerateDevices();
+      video = out.video || [];
+      audio = out.audio || [];
+    } catch {}
+    const settings = loadSettings();
+    const list = (kind === 'audio') ? audio : video;
+    const currentId = (
+      kind === 'video' ? settings.videoDeviceId :
+      kind === 'audio' ? settings.audioDeviceId :
+      settings.webcamDeviceId
+    ) || '';
+
+    const items = [];
+    if (!list.length) {
+      items.push({ label: 'No devices found', disabled: true });
+    } else {
+      list.forEach(d => {
+        const label = d.label || `Device ${d.deviceId.slice(0, 8)}`;
+        items.push({
+          label,
+          checked: d.deviceId === currentId,
+          onClick: () => {
+            if (kind === 'video') selectVideoDevice(d.deviceId, label);
+            else if (kind === 'audio') selectAudioDevice(d.deviceId, label);
+            else selectWebcamDevice(d.deviceId, label);
+          },
+        });
+      });
+    }
+    items.push({ separator: true });
+    items.push({
+      label: 'Open Device Settings…',
+      onClick: () => openDeviceSettingsModal(),
+    });
+    return items;
+  };
+
+  if (vidTrigger) {
+    vidTrigger.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      // Build items first; only swap to the new menu after they're ready so
+      // we don't show an empty bevel for a frame.
+      const items = await buildDeviceItems('video');
+      openToolbarMenu(vidTrigger, items);
+    });
+  }
+  if (audTrigger) {
+    audTrigger.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const items = await buildDeviceItems('audio');
+      openToolbarMenu(audTrigger, items);
+    });
+  }
+  if (camTrigger) {
+    camTrigger.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const items = await buildDeviceItems('webcam');
+      openToolbarMenu(camTrigger, items);
+    });
+  }
+  if (dirTrigger) {
+    dirTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const items = [];
+      if (directoryHandle) {
+        items.push({ header: true, label: 'Current Folder' });
+        items.push({ label: directoryHandle.name, disabled: true });
+        items.push({ separator: true });
+        items.push({ label: 'Choose Different Folder…', onClick: () => pickSaveFolder() });
+      } else {
+        items.push({ label: 'No folder selected', disabled: true });
+        items.push({ separator: true });
+        items.push({ label: 'Choose Save Folder…', onClick: () => pickSaveFolder() });
+      }
+      items.push({ separator: true });
+      items.push({ label: 'Open Device Settings…', onClick: () => openDeviceSettingsModal() });
+      openToolbarMenu(dirTrigger, items);
+    });
+  }
 }
 
 // --- Library ---
@@ -1197,109 +1479,40 @@ function wireLibraryDrag() {
 }
 
 // Custom always-visible scrollbar — red pill thumb on a dark track. Native
-// macOS scrollbars hide on idle, which leaves users (especially less-technical
-// ones, per Matt's testers) unaware that a column scrolls at all. This builds
-// a real DOM thumb that's always present when overflow exists, draggable to
-// scroll, and self-hides when the content fits.
+// Always-visible scrollbars via OverlayScrollbars (no dependency on the OS's
+// native scrollbar settings). The earlier hand-rolled CSS+JS approach didn't
+// reliably defeat macOS's "Show scroll bars: Always" system setting — Matt's
+// testers (running with that setting) saw the OS draw native bars on top of
+// our content. OverlayScrollbars removes the native scrollbars from the
+// layout entirely and renders DOM-based bars, which look identical on every
+// OS / system-pref combo.
 //
-// Apply by adding `vhs-scroll` and `js-custom-scrollbar` classes to the
-// scrollable element AND wrapping it in a `position: relative` parent. The
-// JS finds every `.vhs-scroll.js-custom-scrollbar` at startup and attaches.
-function wireCustomScrollbars() {
-  document.querySelectorAll('.vhs-scroll.js-custom-scrollbar').forEach(attachCustomScrollbar);
-}
-
-function attachCustomScrollbar(scrollEl) {
-  const parent = scrollEl.parentElement;
-  if (!parent || parent.querySelector(':scope > .vhs-scrollbar-track')) return;
-  // Make sure the parent can host the absolute-positioned track.
-  if (getComputedStyle(parent).position === 'static') {
-    parent.style.position = 'relative';
+// Apply by adding the `vhs-scroll` class to any scrollable element. We also
+// stamp the data-overlayscrollbars-initialize attribute so the layout shifts
+// for the bar BEFORE first paint (avoids a flash of native scrollbars).
+async function wireCustomScrollbars() {
+  let mod;
+  try {
+    mod = await import('/vendor/overlayscrollbars/overlayscrollbars.esm.js');
+  } catch (e) {
+    console.warn('[scrollbars] failed to load OverlayScrollbars:', e);
+    return;
   }
-
-  const track = document.createElement('div');
-  track.className = 'vhs-scrollbar-track is-hidden';
-  const thumb = document.createElement('div');
-  thumb.className = 'vhs-scrollbar-thumb';
-  track.appendChild(thumb);
-  parent.appendChild(track);
-
-  // Reserve right padding inside the scroller so content doesn't slide
-  // under the track. Read existing padding-right and add 12px to it once.
-  const styles = getComputedStyle(scrollEl);
-  const existingPad = parseFloat(styles.paddingRight) || 0;
-  scrollEl.style.paddingRight = (existingPad + 12) + 'px';
-
-  function update() {
-    const overflow = scrollEl.scrollHeight > scrollEl.clientHeight + 1;
-    track.classList.toggle('is-hidden', !overflow);
-    if (!overflow) return;
-    const trackHeight = track.clientHeight;
-    if (trackHeight === 0) return;
-    const ratio = scrollEl.clientHeight / scrollEl.scrollHeight;
-    const thumbHeight = Math.max(24, trackHeight * ratio);
-    const maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight;
-    const scrollRatio = maxScroll > 0 ? scrollEl.scrollTop / maxScroll : 0;
-    const thumbTop = (trackHeight - thumbHeight) * scrollRatio;
-    thumb.style.height = thumbHeight + 'px';
-    thumb.style.top = thumbTop + 'px';
-  }
-
-  scrollEl.addEventListener('scroll', update, { passive: true });
-  // Watch resize on the scroller (column resize, viewport resize) and
-  // mutations inside (content added/removed) so the thumb is always sized
-  // correctly without needing manual triggers.
-  if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(update).observe(scrollEl);
-  }
-  if (typeof MutationObserver !== 'undefined') {
-    new MutationObserver(update).observe(scrollEl, {
-      childList: true, subtree: true, characterData: true, attributes: true,
+  const { OverlayScrollbars } = mod;
+  document.querySelectorAll('.vhs-scroll').forEach((el) => {
+    if (el.dataset.osInited === '1') return;
+    el.dataset.osInited = '1';
+    OverlayScrollbars(el, {
+      scrollbars: {
+        theme: 'os-theme-vhs',
+        // Always visible — the whole point is non-technical users seeing
+        // that there's more content. No fade-out on idle.
+        autoHide: 'never',
+        clickScroll: true,
+      },
+      overflow: { x: 'hidden', y: 'scroll' },
     });
-  }
-  window.addEventListener('resize', update);
-
-  // Drag to scroll
-  let dragging = false;
-  let dragStartY = 0;
-  let dragStartScroll = 0;
-  thumb.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    dragging = true;
-    dragStartY = e.clientY;
-    dragStartScroll = scrollEl.scrollTop;
-    thumb.classList.add('is-dragging');
-    e.preventDefault();
   });
-  document.addEventListener('mousemove', (e) => {
-    if (!dragging) return;
-    const trackHeight = track.clientHeight;
-    const thumbHeight = thumb.clientHeight;
-    const travel = trackHeight - thumbHeight;
-    if (travel <= 0) return;
-    const maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight;
-    scrollEl.scrollTop = dragStartScroll + ((e.clientY - dragStartY) / travel) * maxScroll;
-  });
-  document.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
-    thumb.classList.remove('is-dragging');
-  });
-
-  // Click on track above/below the thumb to page-jump (native scrollbar feel).
-  track.addEventListener('mousedown', (e) => {
-    if (e.target === thumb) return;
-    const rect = track.getBoundingClientRect();
-    const thumbRect = thumb.getBoundingClientRect();
-    const page = scrollEl.clientHeight * 0.9;
-    if (e.clientY < thumbRect.top) {
-      scrollEl.scrollTo({ top: scrollEl.scrollTop - page, behavior: 'smooth' });
-    } else if (e.clientY > thumbRect.bottom) {
-      scrollEl.scrollTo({ top: scrollEl.scrollTop + page, behavior: 'smooth' });
-    }
-  });
-
-  update();
 }
 
 function refreshLibrary() {
@@ -2128,6 +2341,96 @@ function ytUpdateAccountUI() {
 
 // --- YouTube publish ---
 
+// Map YouTube API error reasons → user-readable messages. The Data API
+// returns errors as { error: { code, message, errors: [{ reason, ... }] } }.
+// The first reason is usually the most specific. We surface the headline
+// case (uploadLimitExceeded — Matt hit this and missed the message because
+// it was buried in the small grey progress text) plus the other commonly
+// hit reasons. Anything unmapped falls through to error.message verbatim.
+//
+// NOTE on "can we check the limit before uploading?" — no, YouTube does NOT
+// expose a per-channel daily upload count anywhere in the Data API. The
+// only way to learn you've hit the limit is to attempt an upload and read
+// the 403/uploadLimitExceeded response. The Reporting API has channel-level
+// metrics but they're delayed by ~24h and not designed for live limit
+// checks. The Cloud Console quota dashboard tracks API units (default 10k/
+// day), which is unrelated to the per-user video upload cap. So the right
+// move is the one we're making here: parse the error well and surface it.
+const YT_ERROR_MESSAGES = {
+  uploadLimitExceeded:
+    "YouTube's daily upload limit hit. The cap is per-channel and resets at midnight Pacific. Try again tomorrow, or in the meantime save the file and upload manually.",
+  quotaExceeded:
+    "YouTube API quota exceeded for the day. The quota resets at midnight Pacific.",
+  dailyLimitExceeded:
+    "Daily API limit reached. The quota resets at midnight Pacific.",
+  rateLimitExceeded:
+    "YouTube rate limit hit — too many requests in a short window. Wait a minute and click Retry.",
+  userRateLimitExceeded:
+    "Too many uploads in a short window. Wait a minute and click Retry.",
+  youtubeSignupRequired:
+    "The signed-in Google account doesn't have a YouTube channel. Create one at youtube.com/create_channel and try again.",
+  forbidden:
+    "Upload forbidden. The channel may be suspended or the OAuth scope may be missing — re-sign-in and try again.",
+  authError:
+    "YouTube authorization failed. Sign out and back in, then retry.",
+  invalid_grant:
+    "Sign-in expired. Sign out and sign back in to refresh your YouTube credentials.",
+  invalidVideoMetadata:
+    "YouTube rejected the video metadata. Check the title (max 100 chars), description (5,000 chars), and tags (max 500 chars total).",
+  invalidTitle:
+    "Title is invalid — YouTube allows up to 100 characters and no <, > characters.",
+  invalidDescription:
+    "Description is invalid — YouTube allows up to 5,000 characters.",
+  invalidTags:
+    "Tags are invalid — combined length can't exceed 500 characters.",
+  invalidCategoryId:
+    "Invalid YouTube category. This is a bug — please report.",
+  mediaBodyRequired:
+    "Upload was missing the video file body. This is a bug — please report.",
+  videoChunkTooSmall:
+    "Resumable upload chunk was too small. Try Retry; if it persists this is a bug.",
+};
+
+// Returns a friendly { headline, reason, raw } from a YouTube API error
+// response body (string OR already-parsed object). `httpStatus` is used as
+// a last-resort fallback if the body has no parseable structure.
+function parseYouTubeError(body, httpStatus) {
+  let parsed = null;
+  if (body && typeof body === 'object') {
+    parsed = body;
+  } else if (typeof body === 'string' && body.trim()) {
+    try { parsed = JSON.parse(body); } catch { /* not JSON */ }
+  }
+  const errObj = parsed && parsed.error ? parsed.error : null;
+  const reason = errObj && Array.isArray(errObj.errors) && errObj.errors[0]
+    ? errObj.errors[0].reason
+    : null;
+  const apiMessage = (errObj && errObj.message) || (errObj && errObj.errors && errObj.errors[0] && errObj.errors[0].message) || '';
+
+  let headline;
+  if (reason && YT_ERROR_MESSAGES[reason]) {
+    headline = YT_ERROR_MESSAGES[reason];
+  } else if (apiMessage) {
+    headline = apiMessage;
+  } else if (httpStatus === 401) {
+    headline = 'Sign-in expired. Sign out and back in, then retry.';
+  } else if (httpStatus === 403) {
+    headline = 'YouTube refused the upload (403). This is usually a quota or permissions issue.';
+  } else if (httpStatus) {
+    headline = `Upload failed (HTTP ${httpStatus}).`;
+  } else {
+    headline = 'Upload failed.';
+  }
+
+  // Append the raw API message if it adds info beyond the friendly headline.
+  // Skip it when we used apiMessage as the headline (no point repeating).
+  let display = headline;
+  if (reason && apiMessage && headline !== apiMessage) {
+    display = headline + '\n\nYouTube said: "' + apiMessage + '"';
+  }
+  return { headline, reason, apiMessage, display, raw: parsed };
+}
+
 function wireYouTubePublish() {
   const btn = document.getElementById('publish-yt-btn');
   const loading = document.getElementById('yt-pub-loading');
@@ -2211,11 +2514,10 @@ function wireYouTubePublish() {
     progressBar.style.width = '0%';
     statusEl.textContent = '';
     linkEl.href = '';
-    linkEl.textContent = '';
-    if (thumbWarn) {
-      thumbWarn.classList.add('hidden');
-      thumbWarn.textContent = '';
-    }
+    // The slim done panel hard-codes "View →" as the visible label, so don't
+    // wipe linkEl.textContent here — it would leave an empty <a> when we
+    // re-show the done state for an already-uploaded clip.
+    linkEl.title = '';
     currentSuggestion = null;
   }
 
@@ -2226,6 +2528,13 @@ function wireYouTubePublish() {
     done.classList.add('hidden');
     signinPanel.classList.add('hidden');
     suggestionPanel.classList.add('hidden');
+    // thumbWarn is now a sibling of `done` (not a child), so hiding `done`
+    // doesn't auto-hide it. Reset alongside the panels so a stale warning
+    // from a prior upload doesn't leak across clip switches / sign-outs.
+    if (thumbWarn) {
+      thumbWarn.classList.add('hidden');
+      thumbWarn.textContent = '';
+    }
   }
 
   function showForm() {
@@ -2265,7 +2574,10 @@ function wireYouTubePublish() {
     if (clip && clip.youtubeUrl) {
       hideAllPanels();
       linkEl.href = clip.youtubeUrl;
-      linkEl.textContent = clip.youtubeUrl;
+      // Don't overwrite the visible text — the slim done panel hard-codes
+      // "View →" to keep the row tight. The full URL is still available
+      // via the href and the link's title attribute (set below) for hover.
+      linkEl.title = clip.youtubeUrl;
       done.classList.remove('hidden');
     } else {
       showForm();
@@ -2538,10 +2850,18 @@ function wireYouTubePublish() {
       );
 
       if (!initRes.ok) {
-        const err = await initRes.text();
-        statusEl.textContent = 'Error: ' + err;
+        // The init step is where uploadLimitExceeded comes back from YouTube
+        // (the API checks the channel's daily upload count BEFORE issuing a
+        // resumable URL). Parse the error JSON properly and route through
+        // showError so the user sees the prominent red panel with the
+        // specific reason — not just buried text in the progress label.
+        const errBody = await initRes.text();
+        const parsed = parseYouTubeError(errBody, initRes.status);
+        console.warn('[publish] init failed:', parsed.reason || initRes.status, parsed.apiMessage);
         uploadBtn.disabled = false;
         uploadBtn.textContent = 'Upload to YouTube';
+        progressDiv.classList.add('hidden');
+        showError(parsed.display);
         return;
       }
 
@@ -2560,7 +2880,7 @@ function wireYouTubePublish() {
         }
       });
 
-      xhr.addEventListener('load', async () => {
+      xhr.addEventListener('load', () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           const result = JSON.parse(xhr.responseText);
           const ytUrl = 'https://youtube.com/watch?v=' + result.id;
@@ -2568,17 +2888,31 @@ function wireYouTubePublish() {
           // Save YouTube URL back to clip
           updateClip(publishClipId, { youtubeUrl: ytUrl, youtubeId: result.id });
 
-          // If a custom thumbnail was picked, post it to thumbnails.set. A
-          // 403 here means the channel hasn't been verified for custom
-          // thumbnails — surface a soft warning but keep the video upload's
-          // success state intact.
+          // Flip to the success state IMMEDIATELY. Matt reported the UI
+          // sometimes "doesn't switch" after upload — the cause was the old
+          // handler awaiting uploadYouTubeThumbnail() before unhiding the
+          // done panel. If thumbnails.set was slow (or hung on a non-verified
+          // channel), the user just sat staring at the upload form. The
+          // video upload is the source of truth for "uploaded" — show
+          // success now, run the thumbnail upload in the background, and
+          // surface a soft warning underneath only if it fails.
+          linkEl.href = ytUrl;
+          form.classList.add('hidden');
+          done.classList.remove('hidden');
+          if (thumbWarn) {
+            thumbWarn.classList.add('hidden');
+            thumbWarn.textContent = '';
+          }
+          refreshLibrary();
+
+          // Fire-and-forget thumbnail upload. A 403 here means the channel
+          // isn't verified for custom thumbnails — surface a soft warning
+          // but never roll back the success state.
           const clipsAfter = getClips();
           const clipAfter = clipsAfter.find(c => c.id === publishClipId);
           const thumbDataUrl = clipAfter && clipAfter.ytThumbnailDataUrl;
           if (thumbDataUrl) {
-            try {
-              await uploadYouTubeThumbnail(result.id, currentToken, thumbDataUrl);
-            } catch (e) {
+            uploadYouTubeThumbnail(result.id, currentToken, thumbDataUrl).catch((e) => {
               console.warn('[publish] thumbnail upload failed:', e.message);
               if (thumbWarn) {
                 thumbWarn.classList.remove('hidden');
@@ -2586,34 +2920,38 @@ function wireYouTubePublish() {
                   ? '⚠ Custom thumbnail requires channel verification.'
                   : '⚠ Custom thumbnail upload failed.';
               }
-            }
+            });
           }
-
-          refreshLibrary();
-
-          linkEl.href = ytUrl;
-          linkEl.textContent = ytUrl;
-          form.classList.add('hidden');
-          done.classList.remove('hidden');
         } else {
-          statusEl.textContent = 'Upload failed: ' + xhr.status;
+          // Upload PUT failed — parse the YouTube error body and show the
+          // prominent error panel. Same reasoning as the init failure path:
+          // dropping a generic message into the small statusEl makes it
+          // easy to miss the actual reason (Matt missed his quota error
+          // exactly because of this).
+          const parsed = parseYouTubeError(xhr.responseText, xhr.status);
+          console.warn('[publish] upload failed:', parsed.reason || xhr.status, parsed.apiMessage);
           uploadBtn.disabled = false;
           uploadBtn.textContent = 'Upload to YouTube';
+          progressDiv.classList.add('hidden');
+          showError(parsed.display);
         }
       });
 
       xhr.addEventListener('error', () => {
-        statusEl.textContent = 'Network error';
         uploadBtn.disabled = false;
         uploadBtn.textContent = 'Upload to YouTube';
+        progressDiv.classList.add('hidden');
+        showError('Network error during upload. Check your internet connection and click Retry.');
       });
 
       statusEl.textContent = 'Uploading...';
       xhr.send(file);
     } catch (e) {
-      statusEl.textContent = 'Error: ' + e.message;
+      console.warn('[publish] upload threw:', e);
       uploadBtn.disabled = false;
       uploadBtn.textContent = 'Upload to YouTube';
+      progressDiv.classList.add('hidden');
+      showError('Upload failed: ' + (e.message || 'unknown error'));
     }
   });
 }
