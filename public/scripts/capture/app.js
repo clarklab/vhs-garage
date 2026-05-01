@@ -1234,6 +1234,59 @@ async function selectWebcamDevice(webcamId, webcamLabel) {
   }
 }
 
+// "Unset" handlers — clear the saved device, stop the active stream, and
+// reset the matching status segment to the empty state. Lets the user
+// undo a device pick from the toolbar without going into Device Settings.
+
+function unsetVideoDevice() {
+  const settings = loadSettings();
+  saveSettings({ ...settings, videoDeviceId: '', videoDeviceLabel: '' });
+  // Capture stream carries video+audio together — stopping it kills both
+  // tracks. We keep the audio device PICK intact (so the next video
+  // selection re-uses it), but the live preview goes empty.
+  try { if (captureStream) captureStream.getTracks().forEach(t => t.stop()); } catch {}
+  captureStream = null;
+  const preview = document.getElementById('preview');
+  if (preview) {
+    try { preview.pause(); } catch {}
+    preview.srcObject = null;
+  }
+  document.getElementById('no-signal')?.classList.remove('hidden');
+  stopMeter();
+  updateStatus('video', null);
+}
+
+function unsetAudioDevice() {
+  const settings = loadSettings();
+  saveSettings({ ...settings, audioDeviceId: '', audioDeviceLabel: '' });
+  // Same reasoning as above — stopping the capture stream is the clean
+  // way to release the audio track. Preview goes blank since you can't
+  // capture without audio either.
+  try { if (captureStream) captureStream.getTracks().forEach(t => t.stop()); } catch {}
+  captureStream = null;
+  const preview = document.getElementById('preview');
+  if (preview) {
+    try { preview.pause(); } catch {}
+    preview.srcObject = null;
+  }
+  document.getElementById('no-signal')?.classList.remove('hidden');
+  stopMeter();
+  updateStatus('audio', null);
+}
+
+function unsetWebcamDevice() {
+  const settings = loadSettings();
+  saveSettings({ ...settings, webcamDeviceId: '', webcamDeviceLabel: '' });
+  try { stopWebcam(); } catch {}
+  const sleeveWebcam = document.getElementById('sleeve-webcam');
+  if (sleeveWebcam) {
+    try { sleeveWebcam.pause(); } catch {}
+    sleeveWebcam.srcObject = null;
+  }
+  document.getElementById('no-webcam')?.classList.remove('hidden');
+  updateStatusWebcam(null);
+}
+
 async function pickSaveFolder() {
   try {
     directoryHandle = await window.showDirectoryPicker();
@@ -1323,6 +1376,19 @@ function wireToolbarMenus() {
         });
       });
     }
+    // Unset — only useful when a device is currently picked. Disabled
+    // (greyed) when nothing's selected so the row's still visible (consistent
+    // menu shape across states) but not a confusing no-op.
+    items.push({ separator: true });
+    items.push({
+      label: 'Unset',
+      disabled: !currentId,
+      onClick: () => {
+        if (kind === 'video') unsetVideoDevice();
+        else if (kind === 'audio') unsetAudioDevice();
+        else unsetWebcamDevice();
+      },
+    });
     items.push({ separator: true });
     items.push({
       label: 'Open Device Settings…',
