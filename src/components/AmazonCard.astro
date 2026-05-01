@@ -1,0 +1,88 @@
+---
+interface Props {
+  url?: string;
+  asin?: string;
+  title?: string;
+  eyebrow?: string;
+  description?: string;
+  cta?: string;
+}
+
+const {
+  url,
+  asin,
+  title = 'Amazon product',
+  eyebrow = 'Recommended gear',
+  description,
+  cta = 'View on Amazon',
+} = Astro.props;
+
+function extractAsin(rawUrl?: string, rawAsin?: string) {
+  if (rawAsin) return rawAsin.trim().toUpperCase();
+  if (!rawUrl) return '';
+  const match = rawUrl.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?#]|$)/i);
+  return match?.[1]?.toUpperCase() || '';
+}
+
+function normalizeAmazonUrl(rawUrl: string) {
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function titleFromUrl(rawUrl?: string) {
+  if (!rawUrl) return '';
+  try {
+    const parsed = new URL(rawUrl);
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    const dpIndex = parts.findIndex((part) => part === 'dp' || part === 'product');
+    const slug = dpIndex > 0 ? parts[dpIndex - 1] : '';
+    if (!slug || /^[A-Z0-9]{10}$/i.test(slug)) return '';
+    return slug
+      .split('-')
+      .filter(Boolean)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  } catch {
+    return '';
+  }
+}
+
+const cleanAsin = extractAsin(url, asin);
+const baseHref = url || (cleanAsin ? `https://www.amazon.com/dp/${encodeURIComponent(cleanAsin)}` : 'https://www.amazon.com');
+const href = normalizeAmazonUrl(baseHref);
+const displayTitle = title === 'Amazon product'
+  ? titleFromUrl(url) || (cleanAsin ? `Amazon product ${cleanAsin}` : title)
+  : title;
+const cardId = `amazon-card-${cleanAsin || Math.random().toString(36).slice(2)}`;
+---
+
+<aside
+  id={cardId}
+  class="amazon-card my-8 border border-white/15 bg-black p-4 sm:p-5"
+  data-asin={cleanAsin}
+  data-url={href}
+>
+  <div class="flex gap-4">
+    <div aria-hidden="true" class="flex size-16 shrink-0 items-center justify-center border border-white/10 bg-white/5 text-white/35 text-xl">
+      ▣
+    </div>
+
+    <div class="min-w-0">
+      <p class="text-white/40 text-xs uppercase tracking-widest mb-2">{eyebrow}</p>
+      <h3 class="text-white text-xl leading-7 mb-2">{displayTitle}</h3>
+      {description && <p class="text-gray-400 text-base sm:text-sm leading-7 mb-4">{description}</p>}
+
+      <div class="flex flex-wrap items-center gap-3">
+        <a href={href} target="_blank" rel="nofollow sponsored noopener" class="inline-flex h-11 items-center justify-center bg-white px-4 text-black text-sm font-medium hover:bg-gray-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">
+          {cta}
+        </a>
+        <span class="text-white/30 text-xs">Amazon link</span>
+      </div>
+      <p class="mt-3 text-white/30 text-xs">Product details may change on Amazon.</p>
+    </div>
+  </div>
+</aside>

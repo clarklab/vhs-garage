@@ -2,7 +2,14 @@
 import Base from '../layouts/Base.astro';
 import Flicker from '../components/Flicker.astro';
 import { GARAGES } from '../data/garages.js';
+import { getCollection } from 'astro:content';
 const g = GARAGES[0];
+
+const latestPosts = (await getCollection('blog'))
+  .filter((post) => !post.data.draft)
+  .sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf())
+  .slice(0, 3);
+const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
 ---
 
 <Base
@@ -120,6 +127,27 @@ const g = GARAGES[0];
       </div>
 
       <p class="text-gray-400">Follow <a href="https://x.com/oracrest" target="_blank" class="text-white underline hover:text-gray-300">Matt on Twitter</a> for more event announcements, or send us an invite to your event. We'll probably show up!</p>
+    </div>
+
+    <!-- Blog -->
+    <div id="blog" class="mb-12">
+      <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-6">
+        <div>
+          <h3 class="text-2xl mb-2">#Garage Dispatches</h3>
+          <p class="text-gray-400 text-sm">Capture guides, gear notes, event updates, and other VHS Garage signals.</p>
+        </div>
+        <a href="/blog" class="text-[#39ff14] text-xs hover:underline shrink-0">Read the blog →</a>
+      </div>
+
+      <div class="grid gap-4">
+        {latestPosts.map((post) => (
+          <a href={`/blog/${postSlug(post.id)}`} class="border border-white/15 p-5 hover:border-white/35 transition-colors">
+            <p class="text-white/35 text-[10px] uppercase tracking-widest mb-2">Blog</p>
+            <p class="text-white text-lg mb-2">{post.data.title}</p>
+            <p class="text-gray-500 text-sm leading-6">{post.data.description}</p>
+          </a>
+        ))}
+      </div>
     </div>
 
     <!-- Signup -->

@@ -1,5 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
+import SignupForm from '../components/SignupForm.astro';
 ---
 
 <Base title="Join" description="Sign up for VHS Garage. Free mystery VHS at our next event.">
@@ -7,38 +8,16 @@ import Base from '../layouts/Base.astro';
   <div id="join-layout" class="min-h-screen flex flex-col items-center justify-center px-6 py-12">
     <img src="/unfurl.png" alt="VHS Garage" class="w-64 mb-10" />
 
-    <p id="join-count" class="text-white/40 text-xs uppercase tracking-widest mb-6"></p>
-
     <h1 class="text-3xl mb-3 text-center">Join us in the Garage</h1>
     <p class="text-gray-400 text-center max-w-md mb-8">Drop your email or phone and we'll give you a <strong class="text-white">free mystery VHS</strong>. No spam. Just tapes.</p>
 
-    <p class="text-white/40 text-xs text-center max-w-md mb-3">Either one works — we only need one. Drop both if you're feeling extra.</p>
-
-    <form id="join-form" name="garage-signup" method="POST" data-netlify="true" class="flex flex-col gap-3 w-full max-w-md">
-      <input type="hidden" name="form-name" value="garage-signup" />
-      <input
-        id="join-email"
-        type="email"
-        name="email"
-        placeholder="your@email.com"
-        autocomplete="email"
-        inputmode="email"
-        class="w-full h-14 px-4 bg-black border border-white/30 text-white text-base placeholder-gray-500 focus:outline-none focus:border-white"
-      />
-      <input
-        id="join-phone"
-        type="tel"
-        name="phone"
-        placeholder="(555) 123-4567"
-        autocomplete="tel"
-        inputmode="tel"
-        class="w-full h-14 px-4 bg-black border border-white/30 text-white text-base placeholder-gray-500 focus:outline-none focus:border-white"
-      />
-      <button id="join-submit-btn" type="submit" class="w-full h-14 bg-white text-black text-base font-medium hover:bg-gray-200 transition-colors">
-        Sign Up
-      </button>
-    </form>
-    <p id="join-error" class="hidden text-lg mt-4 text-red-400"></p>
+    <SignupForm
+      id="join-form"
+      showCount={true}
+      countId="join-count"
+      layoutId="join-layout"
+      successTargetId="join-confirm"
+    />
 
     <a href="/" class="text-white/30 text-xs mt-12 hover:text-white/50 transition-colors">← vhsgarage.com</a>
   </div>
@@ -94,90 +73,5 @@ import Base from '../layouts/Base.astro';
       75% { transform: translateX(1px); }
     }
   </style>
-
-  <script is:inline>
-    (() => {
-      const form = document.getElementById('join-form');
-      const btn = document.getElementById('join-submit-btn');
-      const layout = document.getElementById('join-layout');
-      const confirm = document.getElementById('join-confirm');
-      const errorEl = document.getElementById('join-error');
-      const frames = ['░░░', '▒░░', '▓▒░', '▓▓▒', '▓▓▓', '▓▓▒', '▓▒░', '▒░░'];
-      let tick;
-
-      function startLoader() {
-        let i = 0;
-        btn.disabled = true;
-        btn.textContent = frames[0];
-        tick = setInterval(() => {
-          i = (i + 1) % frames.length;
-          btn.textContent = frames[i];
-        }, 120);
-      }
-
-      function stopLoader() {
-        clearInterval(tick);
-        btn.disabled = false;
-        btn.textContent = 'Sign Up';
-      }
-
-      const emailInput = document.getElementById('join-email');
-      const phoneInput = document.getElementById('join-phone');
-
-      function showError(msg) {
-        errorEl.textContent = msg;
-        errorEl.classList.remove('hidden');
-      }
-
-      function clearError() {
-        errorEl.classList.add('hidden');
-        errorEl.textContent = '';
-      }
-
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-
-        const email = emailInput.value.trim();
-        const phone = phoneInput.value.trim();
-
-        if (!email && !phone) {
-          showError('░ Enter an email or phone number.');
-          return;
-        }
-
-        clearError();
-        startLoader();
-        try {
-          const res = await fetch('/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams(new FormData(form)).toString()
-          });
-          stopLoader();
-          if (res.ok) {
-            layout.classList.add('hidden');
-            confirm.classList.remove('hidden');
-            window.scrollTo(0, 0);
-          } else {
-            showError('░ Something went wrong. Try again.');
-          }
-        } catch {
-          stopLoader();
-          showError('░ Network error. Try again.');
-        }
-      });
-    })();
-  </script>
-
-  <script is:inline>
-    fetch('/.netlify/functions/signup-count')
-      .then(r => r.json())
-      .then(d => {
-        if (d.count > 0) {
-          document.getElementById('join-count').textContent = 'Join ' + d.count + ' other VHS fans';
-        }
-      })
-      .catch(() => {});
-  </script>
 
 </Base>

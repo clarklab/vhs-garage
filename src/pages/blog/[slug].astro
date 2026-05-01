@@ -1,0 +1,45 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+
+export async function getStaticPaths() {
+  const posts = (await getCollection('blog')).filter((post) => !post.data.draft);
+  return posts.map((post) => ({
+    params: { slug: post.id.replace(/\.(md|mdx)$/, '') },
+    props: { post },
+  }));
+}
+
+const { post } = Astro.props;
+const { Content } = await render(post);
+
+const formatter = new Intl.DateTimeFormat('en', {
+  month: 'long',
+  day: 'numeric',
+  year: 'numeric',
+});
+---
+
+<Base title={post.data.title} description={post.data.description}>
+  <main class="min-h-svh bg-black text-white antialiased isolate">
+    <article class="max-w-5xl mx-auto px-6 py-12 sm:py-20">
+      <nav class="flex flex-wrap gap-4 text-xs mb-10">
+        <a href="/blog" class="text-[#39ff14] hover:underline">← Blog index</a>
+        <a href="/" class="text-white/35 hover:text-white/60 transition-colors">VHS Garage</a>
+      </nav>
+
+      <header class:list={[
+        'max-w-3xl pb-10 border-b border-white/10',
+        post.data.template === 'guide' ? 'border-[#39ff14]/30' : '',
+      ]}>
+        <p class="text-white/40 text-xs uppercase tracking-widest mb-4">{formatter.format(post.data.pubDate)}</p>
+        <h1 class="text-4xl sm:text-6xl text-pretty mb-5">{post.data.title}</h1>
+        <p class="text-gray-300 text-base sm:text-lg leading-8">{post.data.description}</p>
+      </header>
+
+      <div class="prose vhs-prose max-w-[72ch] mt-10">
+        <Content />
+      </div>
+    </article>
+  </main>
+</Base>

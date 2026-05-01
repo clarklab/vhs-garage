@@ -1,0 +1,181 @@
+---
+interface Props {
+  id?: string;
+  showCount?: boolean;
+  countId?: string;
+  layoutId?: string;
+  successTargetId?: string;
+  compact?: boolean;
+  title?: string;
+  description?: string;
+}
+
+const {
+  id = `garage-signup-${Math.random().toString(36).slice(2)}`,
+  showCount = false,
+  countId = `${id}-count`,
+  layoutId,
+  successTargetId,
+  compact = false,
+  title = 'Join us in the Garage',
+  description = "Drop your email or phone and we'll give you a free mystery VHS. No spam. Just tapes.",
+} = Astro.props;
+
+const emailId = `${id}-email`;
+const phoneId = `${id}-phone`;
+const buttonId = `${id}-submit`;
+const messageId = `${id}-message`;
+---
+
+<div class:list={[
+  'signup-module',
+  compact ? 'border border-white/15 p-5' : 'w-full',
+]}>
+  {showCount && <p id={countId} class="text-white/40 text-xs uppercase tracking-widest mb-6"></p>}
+  {compact ? (
+    <div class="mb-4">
+      <p class="text-white text-xl mb-2">{title}</p>
+      <p class="text-gray-400 text-base sm:text-sm">{description}</p>
+    </div>
+  ) : null}
+
+  <p class:list={[
+    'text-white/40 text-xs',
+    compact ? 'mb-3' : 'text-center max-w-md mb-3',
+  ]}>Either one works - we only need one. Drop both if you're feeling extra.</p>
+
+  <form id={id} name="garage-signup" method="POST" data-netlify="true" class:list={[
+    'flex flex-col gap-3 w-full',
+    compact ? '' : 'max-w-md',
+  ]}>
+    <input type="hidden" name="form-name" value="garage-signup" />
+    <input
+      id={emailId}
+      type="email"
+      name="email"
+      placeholder="your@email.com"
+      autocomplete="email"
+      inputmode="email"
+      aria-label="Email address"
+      class:list={[
+        'w-full h-14 px-4 bg-black border border-white/30 text-white text-base placeholder-gray-500 focus:outline-none focus:border-white',
+        compact ? 'sm:h-12' : '',
+      ]}
+    />
+    <input
+      id={phoneId}
+      type="tel"
+      name="phone"
+      placeholder="(555) 123-4567"
+      autocomplete="tel"
+      inputmode="tel"
+      aria-label="Phone number"
+      class:list={[
+        'w-full h-14 px-4 bg-black border border-white/30 text-white text-base placeholder-gray-500 focus:outline-none focus:border-white',
+        compact ? 'sm:h-12' : '',
+      ]}
+    />
+    <button id={buttonId} type="submit" class:list={[
+      'w-full h-14 bg-white text-black text-base font-medium hover:bg-gray-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white',
+      compact ? 'sm:h-12' : '',
+    ]}>
+      Sign Up
+    </button>
+  </form>
+  <p id={messageId} class="hidden text-lg mt-4 text-red-400"></p>
+</div>
+
+<script is:inline define:vars={{ id, emailId, phoneId, buttonId, messageId, countId, showCount, layoutId, successTargetId }}>
+  (() => {
+    const form = document.getElementById(id);
+    const btn = document.getElementById(buttonId);
+    const messageEl = document.getElementById(messageId);
+    const emailInput = document.getElementById(emailId);
+    const phoneInput = document.getElementById(phoneId);
+    const layout = layoutId ? document.getElementById(layoutId) : null;
+    const successTarget = successTargetId ? document.getElementById(successTargetId) : null;
+    if (!form || !btn || !messageEl || !emailInput || !phoneInput) return;
+
+    const frames = ['░░░', '▒░░', '▓▒░', '▓▓▒', '▓▓▓', '▓▓▒', '▓▒░', '▒░░'];
+    let tick;
+
+    function startLoader() {
+      let i = 0;
+      btn.disabled = true;
+      btn.textContent = frames[0];
+      tick = setInterval(() => {
+        i = (i + 1) % frames.length;
+        btn.textContent = frames[i];
+      }, 120);
+    }
+
+    function stopLoader() {
+      clearInterval(tick);
+      btn.disabled = false;
+      btn.textContent = 'Sign Up';
+    }
+
+    function showMessage(msg, isError = true) {
+      messageEl.textContent = msg;
+      messageEl.classList.remove('hidden', 'text-white');
+      messageEl.classList.toggle('text-red-400', isError);
+      messageEl.classList.toggle('text-white', !isError);
+    }
+
+    function clearMessage() {
+      messageEl.classList.add('hidden');
+      messageEl.textContent = '';
+      messageEl.classList.remove('text-red-400', 'text-white');
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const email = emailInput.value.trim();
+      const phone = phoneInput.value.trim();
+
+      if (!email && !phone) {
+        showMessage('░ Enter an email or phone number.');
+        return;
+      }
+
+      clearMessage();
+      startLoader();
+      try {
+        const res = await fetch('/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams(new FormData(form)).toString()
+        });
+        stopLoader();
+        if (res.ok) {
+          if (layout && successTarget) {
+            layout.classList.add('hidden');
+            successTarget.classList.remove('hidden');
+            window.scrollTo(0, 0);
+          } else {
+            form.classList.add('hidden');
+            showMessage("▓ You're in. See you at the next event.", false);
+          }
+        } else {
+          showMessage('░ Something went wrong. Try again.');
+        }
+      } catch {
+        stopLoader();
+        showMessage('░ Network error. Try again.');
+      }
+    });
+
+    if (showCount) {
+      fetch('/.netlify/functions/signup-count')
+        .then(r => r.json())
+        .then(d => {
+          const countEl = document.getElementById(countId);
+          if (countEl && d.count > 0) {
+            countEl.textContent = 'Join ' + d.count + ' other VHS fans';
+          }
+        })
+        .catch(() => {});
+    }
+  })();
+</script>
