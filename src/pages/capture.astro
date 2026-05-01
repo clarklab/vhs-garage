@@ -228,14 +228,27 @@ import Base from '../layouts/Base.astro';
       --os-handle-bg-hover: #ef4444;
       --os-handle-bg-active: #ef4444;
       --os-handle-border-radius: 0;
-      /* Handle is 40px in the scroll-axis dimension (height for vertical,
-         width for horizontal) so it stays visible/draggable even when
-         content barely overflows. */
+      /* Floor for the handle's scroll-axis size so it never collapses
+         to nothing on very short tracks. */
       --os-handle-min-size: 40px;
       /* Handle fills the full 6px perpendicular to the scroll axis. */
       --os-handle-perpendicular-size: 100%;
       --os-handle-perpendicular-size-hover: 100%;
       --os-handle-perpendicular-size-active: 100%;
+    }
+    /* Override the library's dynamic handle sizing. By default
+       OverlayScrollbars sets the handle's scroll-axis dimension to
+       `calc(var(--os-viewport-percent) * 100%)` — a viewport/content
+       ratio it updates live (it's declared @property). When content
+       barely overflows that ratio approaches 1.0 and the handle inflates
+       to fill the entire track. We don't want a "you've scrolled X%"
+       indicator, just a chunky pill — pin it to a fixed 10% of the
+       track. The min-size variable above still applies as a floor. */
+    .os-scrollbar.os-theme-vhs.os-scrollbar-vertical .os-scrollbar-handle {
+      height: 10%;
+    }
+    .os-scrollbar.os-theme-vhs.os-scrollbar-horizontal .os-scrollbar-handle {
+      width: 10%;
     }
 
     /* Classic 80s/90s desktop drop-down menu (System 7 / Win 3.1 vibe) for
