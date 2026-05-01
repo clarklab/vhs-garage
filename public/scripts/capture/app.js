@@ -1735,6 +1735,34 @@ async function demoFlash(el) {
   el.style.position = prevPos;
 }
 
+// Stream text into a non-input element (e.g. a <p>). `mode` controls cadence:
+//   'char' — one character every `delay` ms (good for short titles)
+//   'word' — one word every `delay` ms (good for descriptions; faster apparent)
+// Used to fake an LLM streaming the suggestion in rather than dumping all
+// the text at once.
+async function demoStreamText(el, text, mode = 'word', delay = 60) {
+  if (!el) return;
+  el.textContent = '';
+  if (mode === 'char') {
+    for (let i = 0; i < text.length; i++) {
+      if (!demoActive) return;
+      el.textContent += text[i];
+      await demoSleep(delay);
+    }
+    return;
+  }
+  // Word mode — preserve newlines as paragraph breaks. Split on spaces but
+  // keep newlines as their own tokens so the text reflows correctly.
+  const tokens = text.split(/(\s+)/);
+  for (let i = 0; i < tokens.length; i++) {
+    if (!demoActive) return;
+    el.textContent += tokens[i];
+    // Don't sleep on whitespace tokens — only on content tokens, otherwise
+    // the cadence drags.
+    if (tokens[i].trim()) await demoSleep(delay);
+  }
+}
+
 // Quick VHS-style static blast over a container — drawn as canvas noise so
 // it actually looks like analog interference rather than a tinted overlay.
 // Fire-and-forget by default (no await) so it doesn't delay the timeline
@@ -1769,24 +1797,52 @@ function demoStaticBlast(container, ms = 300) {
 }
 
 async function runDemo() {
-  // Note: every await goes through demoSleep, which throws if demoActive
-  // flips to false (ESC). The outer .catch in startDemoCountdown swallows
-  // the cancel error.
+  // ~12s end-to-end, packed with overlapping action. Every await goes
+  // through demoSleep so ESC cancels cleanly between beats. Goal isn't
+  // realism — it's "lots happening at once" for social capture.
+  //
+  // Timeline (approximate, all clocks measured from REC start):
+  //   0.0  REC starts; preview plays + recording-active border + REC blinks
+  //   0.4  Front sleeve flash → photo
+  //   1.1  Back sleeve flash → photo
+  //   1.7  Thumbnail + Publish + signed-in panels reveal
+  //   2.0  Type "3 Ninjas" into title (~0.25s)
+  //   2.4  Click AI → loading panel with .ai-loader scanning bars
+  //   3.0  Static blast + 6s playhead jump
+  //   3.2  Suggestion panel; stream title char-by-char (~1s)
+  //   4.2  Stream description word-by-word (~1.5s)
+  //   5.7  Tags appear; "Use this" populates all clip fields
+  //   5.9  Thumbnails populate progressively (one cell every ~250ms)
+  //   6.0  Static blast + jump
+  //   7.5  Pick the 4th thumbnail (red outline + check)
+  //   8.0  REC stops → switch to playback tab
+  //   8.4  Click Upload → progress 0→100% over ~1.5s
+  //   9.9  Success row appears
+  //  ~12   Demo Complete modal
 
-  // STAGE — make the columns/panels look like a real session is happening.
+  // STAGE
   document.getElementById('status-dir-label').textContent = 'Sample Tapes';
   document.getElementById('no-signal')?.classList.add('hidden');
 
-  // 1) "Recording" — play vhs-sample.mp4 in the live preview pane, set the
-  // recording-active visual state, and tick the timers. Muted so autoplay
-  // never blocks (the demo is initiated by a user click, but even so the
-  // sample is muted for cleaner social-capture audio).
   const preview = document.getElementById('preview');
+  const playback = document.getElementById('playback');
   const previewContainer = document.getElementById('preview-container');
   const recOverlay = document.getElementById('rec-overlay-timer');
   const recBtn = document.getElementById('rec-btn');
   const recTimer = document.getElementById('rec-timer');
   const recSize = document.getElementById('rec-size');
+
+  // Preload the playback element early so thumbnail seeks later are instant
+  // — by the time we need to grab frames (~6s in) it's been buffered for
+  // plenty of time. Hidden, muted, looping in the background.
+  if (playback) {
+    playback.src = '/puppet/vhs-sample.mp4';
+    playback.muted = true;
+    playback.loop = true;
+    playback.play().catch(() => {});
+  }
+
+  // Live preview shows the sample mid-recording.
   if (preview) {
     preview.srcObject = null;
     preview.src = '/puppet/vhs-sample.mp4';
@@ -1798,22 +1854,7 @@ async function runDemo() {
   recOverlay?.classList.remove('hidden');
   recBtn?.classList.add('recording');
 
-  // RECORDING PHASE — 20s long. Two concurrent timelines:
-  //
-  //   recordingTask : tick the 00:00:NN timer + size meter every second.
-  //                   Every 3 seconds (3, 6, 9, 12, 15, 18) fire a 0.3s
-  //                   VHS-style static blast over the preview AND jump the
-  //                   playhead forward 6 seconds, so the clip looks like
-  //                   it's being scrubbed/jumped through the tape.
-  //
-  //   actionsTask   : the metadata flow runs in parallel — sleeve flashes,
-  //                   panel reveals, title typing, AI loading, suggestion,
-  //                   "Use this." All scheduled at offsets within the 20s
-  //                   window so the viewer sees lots of motion at once.
-  //
-  // Both kick off, both run, await Promise.all to converge before we move
-  // to the post-recording sequence (thumbnails, upload, success).
-  const REC_SECONDS = 20;
+  const REC_SECONDS = 8;
   const sleeveCaptureView = document.getElementById('sleeve-capture-view');
   const webcamContainer = document.getElementById('webcam-container');
   const sleeveFront = document.getElementById('sleeve-front-preview');
@@ -1822,26 +1863,32 @@ async function runDemo() {
   const sugTitle = document.getElementById('yt-pub-suggestion-title');
   const sugDesc = document.getElementById('yt-pub-suggestion-desc');
   const sugTags = document.getElementById('yt-pub-suggestion-tags');
+  const loadingEl = document.getElementById('yt-pub-loading');
+  const thumbEmpty = document.getElementById('player-thumb-empty');
+  const thumbWrap = document.getElementById('player-thumb-grid-wrap');
+  const thumbGrid = document.getElementById('player-thumb-grid');
 
+  const TITLE = '3 Ninjas (1992) — Original VHS Capture';
+  const DESC =
+    "Original 1992 VHS release of 3 Ninjas, the family martial-arts comedy starring Victor Wong as Grandpa Mori and Michael Treanor, Max Elliott Slade, and Chad Power as Rocky, Colt, and Tum-Tum.\n\nCaptured from a well-loved tape — minor tracking artifacts and the warm color cast that only a 30+ year old VHS gives you.\n\nCaptured with VHS Garage\nhttps://vhsgarage.com";
+  const TAGS = '3 ninjas, 1992, family movie, martial arts, vhs, kids movie, 90s, victor wong';
+
+  // RECORDING TASK — timer ticks 00:00:00 → 00:00:08; static blasts at
+  // t=3 and t=6 (every 3s of the 8s window). Static is fire-and-forget so
+  // the 1s timer cadence isn't shifted.
   const recordingTask = (async () => {
     for (let s = 0; s <= REC_SECONDS; s++) {
       if (!demoActive) return;
-      const hh = String(Math.floor(s / 3600)).padStart(2, '0');
-      const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
       const ss = String(s % 60).padStart(2, '0');
+      const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+      const hh = String(Math.floor(s / 3600)).padStart(2, '0');
       const t = `${hh}:${mm}:${ss}`;
       if (recTimer) recTimer.textContent = t;
       if (recOverlay) recOverlay.textContent = t;
       if (recSize) recSize.textContent = (s * 4.4).toFixed(1) + ' MB';
-      // Every 3s (skip t=0 and the final tick at t=20): static blast +
-      // playhead jump. Static is fire-and-forget so it doesn't shift the
-      // timer cadence.
       if (s > 0 && s < REC_SECONDS && s % 3 === 0) {
         demoStaticBlast(previewContainer, 300);
         if (preview && preview.duration && isFinite(preview.duration)) {
-          // Wrap with modulo so we don't seek past the end of a short
-          // sample (vhs-sample.mp4 might only be a few seconds long; with
-          // loop=true the wrap reads as a continuous fast-forward).
           preview.currentTime = (preview.currentTime + 6) % preview.duration;
         }
       }
@@ -1849,20 +1896,22 @@ async function runDemo() {
     }
   })();
 
+  // ACTIONS TASK — every UI beat in the right column packed into the same
+  // ~8s window. Heavy use of fire-and-forget (demoFlash, demoStaticBlast)
+  // so beats overlap rather than gating each other.
   const actionsTask = (async () => {
-    // t=2s — front sleeve flash + capture
-    await demoSleep(2000);
+    // t=0.4s — front sleeve
+    await demoSleep(400);
     if (!demoActive) return;
-    demoFlash(webcamContainer); // fire-and-forget so it overlaps the next beat
+    demoFlash(webcamContainer);
     await demoSleep(150);
     if (sleeveFront) {
       sleeveFront.innerHTML = '<img src="/puppet/box-front.jpg" class="w-full h-full object-cover" alt="">';
       sleeveFront.classList.remove('hidden');
     }
 
-    // t=5s — back sleeve flash + capture (flash the back skeleton this
-    // time; in real product the webcam container relocates here).
-    await demoSleep(2850);
+    // t=1.1s — back sleeve
+    await demoSleep(550);
     if (!demoActive) return;
     demoFlash(sleeveBackSkeleton || webcamContainer);
     await demoSleep(150);
@@ -1873,9 +1922,8 @@ async function runDemo() {
     }
     if (sleeveCaptureView) sleeveCaptureView.classList.add('hidden');
 
-    // t=6.5s — reveal Thumbnail + Publish panels and the signed-in banner
-    // so the right column has somewhere for the title/description to land.
-    await demoSleep(1500);
+    // t=1.7s — reveal panels + signed-in banner
+    await demoSleep(450);
     if (!demoActive) return;
     document.getElementById('cap-thumb-fieldset')?.classList.remove('hidden');
     document.getElementById('cap-pub-fieldset')?.classList.remove('hidden');
@@ -1888,35 +1936,47 @@ async function runDemo() {
       acct.classList.remove('hidden');
     }
 
-    // t=7s — start typing the title (~2s)
-    await demoSleep(500);
+    // t=2.0s — type title
+    await demoSleep(300);
     if (!demoActive) return;
     await demoType(document.getElementById('clip-title'), '3 Ninjas');
 
-    // t≈10s — click AI; loading panel for ~2.5s, then suggestion panel
-    await demoSleep(700);
+    // t=2.4s — click AI; loading panel with the scanning ai-loader bars.
+    // Adding the .ai-loader class wires up the existing CSS that animates
+    // a ░░▒▓█ scanline as a ::after pseudo-element on the loader text.
+    await demoSleep(150);
     if (!demoActive) return;
     document.getElementById('yt-pub-form')?.classList.add('hidden');
-    document.getElementById('yt-pub-loading')?.classList.remove('hidden');
-    await demoSleep(2400);
+    if (loadingEl) {
+      loadingEl.textContent = 'Generating AI copy ';
+      loadingEl.classList.add('ai-loader');
+      loadingEl.classList.remove('hidden');
+    }
+
+    // t=3.2s — hide loading; show suggestion panel; STREAM title and desc
+    // in like an LLM response. Title is char-by-char (short, snappy);
+    // description is word-by-word (longer text reads better that way).
+    await demoSleep(800);
     if (!demoActive) return;
-    document.getElementById('yt-pub-loading')?.classList.add('hidden');
-    if (sugTitle) sugTitle.textContent = '3 Ninjas (1992) — Original VHS Capture';
-    if (sugDesc) sugDesc.textContent =
-      "Original 1992 VHS release of 3 Ninjas, the family martial-arts comedy starring Victor Wong as Grandpa Mori and Michael Treanor, Max Elliott Slade, and Chad Power as Rocky, Colt, and Tum-Tum.\n\nCaptured from a well-loved tape — minor tracking artifacts and the warm color cast that only a 30+ year old VHS gives you.\n\nCaptured with VHS Garage\nhttps://vhsgarage.com";
-    if (sugTags) sugTags.textContent = '3 ninjas, 1992, family movie, martial arts, vhs, kids movie, 90s, victor wong';
+    if (loadingEl) {
+      loadingEl.classList.add('hidden');
+      loadingEl.classList.remove('ai-loader');
+    }
     document.getElementById('yt-pub-suggestion-title-group')?.classList.remove('hidden');
     document.getElementById('yt-pub-suggestion-desc-group')?.classList.remove('hidden');
     document.getElementById('yt-pub-suggestion-tags-group')?.classList.remove('hidden');
     document.getElementById('yt-pub-suggestion')?.classList.remove('hidden');
     document.getElementById('yt-pub-suggestion-meta').textContent = 'Generated from your sleeve photos and clip metadata.';
+    if (sugTitle) await demoStreamText(sugTitle, TITLE, 'char', 22);
+    if (sugDesc) await demoStreamText(sugDesc, DESC, 'word', 32);
+    if (sugTags) sugTags.textContent = TAGS;
 
-    // t≈15s — "Use this" — fields populate, suggestion panel hides
-    await demoSleep(2200);
+    // t≈5.7s — "Use this" populates fields (instant), suggestion hides
+    await demoSleep(300);
     if (!demoActive) return;
-    document.getElementById('clip-title').value = '3 Ninjas (1992) — Original VHS Capture';
-    document.getElementById('clip-description').value = sugDesc?.textContent || '';
-    document.getElementById('clip-tags').value = sugTags?.textContent || '';
+    document.getElementById('clip-title').value = TITLE;
+    document.getElementById('clip-description').value = DESC;
+    document.getElementById('clip-tags').value = TAGS;
     document.getElementById('clip-year').value = '1992';
     document.getElementById('clip-tape').value = '3 Ninjas';
     document.getElementById('clip-distributor').value = 'Touchstone Pictures';
@@ -1925,31 +1985,71 @@ async function runDemo() {
     document.getElementById('clip-condition').value = 'Good';
     document.getElementById('yt-pub-suggestion')?.classList.add('hidden');
     document.getElementById('yt-pub-form')?.classList.remove('hidden');
-    // Recording continues for ~5 more seconds with all panels populated —
-    // gives the viewer a beat to take in the finished state before we stop.
+
+    // t≈5.9s — thumbnails populate ONE AT A TIME (~250ms apart) so the
+    // viewer sees them appear progressively rather than dumping all six
+    // at once. We grab from the preloaded playback element so seeks are
+    // fast (it's been buffering since demo start).
+    if (thumbGrid && playback) {
+      thumbGrid.innerHTML = '';
+      thumbEmpty?.classList.add('hidden');
+      thumbWrap?.classList.remove('hidden');
+      const dur = playback.duration && isFinite(playback.duration) ? playback.duration : 0;
+      for (let i = 0; i < 6; i++) {
+        if (!demoActive) return;
+        const cell = document.createElement('div');
+        cell.className = 'aspect-video bg-black border border-white/10 cursor-pointer overflow-hidden relative';
+        try {
+          if (dur > 0) {
+            const t = (dur / 7) * (i + 1);
+            const c = document.createElement('canvas');
+            c.width = playback.videoWidth || 320;
+            c.height = playback.videoHeight || 180;
+            const cx = c.getContext('2d');
+            playback.pause();
+            playback.currentTime = t;
+            await new Promise(r => playback.addEventListener('seeked', r, { once: true }));
+            cx.drawImage(playback, 0, 0, c.width, c.height);
+            const img = document.createElement('img');
+            img.src = c.toDataURL('image/jpeg', 0.7);
+            img.className = 'w-full h-full object-cover';
+            cell.appendChild(img);
+          }
+        } catch {}
+        thumbGrid.appendChild(cell);
+        // Small explicit beat between cells so the appearance reads as
+        // "popping in one by one" even if the seek itself was instant.
+        await demoSleep(180);
+      }
+      try { await playback.play(); } catch {}
+    }
+
+    // Pick #4 — red outline + check overlay (mirrors the real picker UI).
+    if (!demoActive) return;
+    if (thumbGrid && thumbGrid.children[3]) {
+      const pick = thumbGrid.children[3];
+      pick.style.outline = '2px solid #dc2626';
+      pick.style.outlineOffset = '-2px';
+      const check = document.createElement('div');
+      check.style.cssText = 'position:absolute;top:4px;right:4px;width:14px;height:14px;background:#dc2626;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;font-weight:bold;';
+      check.textContent = '✓';
+      pick.appendChild(check);
+    }
   })();
 
   await Promise.all([recordingTask, actionsTask]);
   if (!demoActive) return;
 
-  // 2) "Stop" — clear recording UI, switch to playback tab with the same
-  // sample clip as the playback source.
+  // Stop recording — switch to the playback tab. Playback was already
+  // loaded + playing in the background since demo start, so swapping
+  // visibility is the only thing left to do here.
   previewContainer?.classList.remove('recording-active');
   recOverlay?.classList.add('hidden');
   recBtn?.classList.remove('recording');
   if (preview) { try { preview.pause(); } catch {} }
-
-  const playback = document.getElementById('playback');
-  if (playback) {
-    playback.src = '/puppet/vhs-sample.mp4';
-    playback.muted = true;
-    playback.loop = true;
-    try { await playback.play(); } catch {}
-  }
   preview?.classList.add('hidden');
   playback?.classList.remove('hidden');
-  // Surface the playback tab so it reads "Last Recording" beside "Live
-  // Feed". Real tab-switching also tweaks the meter; we skip that here.
+  try { await playback?.play(); } catch {}
   const tabPlayback = document.getElementById('tab-playback');
   const tabLive = document.getElementById('tab-live');
   tabPlayback?.classList.remove('hidden');
@@ -1957,67 +2057,12 @@ async function runDemo() {
   tabPlayback?.classList.add('text-white/70');
   tabLive?.classList.remove('text-white/70');
   tabLive?.classList.add('text-white/30');
-  // Show the Delete button (matches what showPlaybackTab does).
   document.getElementById('delete-recording-btn')?.classList.remove('hidden');
 
-  await demoSleep(800);
+  // Brief beat then upload — fast (~1.5s) so we don't drag the demo out.
+  await demoSleep(400);
+  if (!demoActive) return;
 
-  // 9) Thumbnails — generate a 6-cell grid of frame stills from the sample
-  // video. Faster than wiring through the real generateThumbnails path.
-  const thumbEmpty = document.getElementById('player-thumb-empty');
-  const thumbWrap = document.getElementById('player-thumb-grid-wrap');
-  const thumbGrid = document.getElementById('player-thumb-grid');
-  if (thumbGrid && playback && playback.duration) {
-    thumbGrid.innerHTML = '';
-    for (let i = 0; i < 6; i++) {
-      const cell = document.createElement('div');
-      cell.className = 'aspect-video bg-black border border-white/10 cursor-pointer overflow-hidden relative';
-      // Capture a still at i/6 of the duration via a hidden canvas.
-      try {
-        const t = (playback.duration / 7) * (i + 1);
-        const c = document.createElement('canvas');
-        c.width = playback.videoWidth || 320;
-        c.height = playback.videoHeight || 180;
-        const cx = c.getContext('2d');
-        // Pause briefly at each timestamp so we can grab the frame.
-        playback.pause();
-        playback.currentTime = t;
-        await new Promise(r => playback.addEventListener('seeked', r, { once: true }));
-        cx.drawImage(playback, 0, 0, c.width, c.height);
-        const img = document.createElement('img');
-        img.src = c.toDataURL('image/jpeg', 0.7);
-        img.className = 'w-full h-full object-cover';
-        cell.appendChild(img);
-      } catch {
-        // If frame capture fails, leave the cell as a black square — the
-        // demo continues either way.
-      }
-      thumbGrid.appendChild(cell);
-    }
-    try { await playback.play(); } catch {}
-  }
-  thumbEmpty?.classList.add('hidden');
-  thumbWrap?.classList.remove('hidden');
-
-  await demoSleep(800);
-
-  // 10) Pick the 4th thumbnail — visually mark it selected with a red ring
-  // and a check overlay (mirrors what the real picker does on click).
-  if (thumbGrid && thumbGrid.children[3]) {
-    const pick = thumbGrid.children[3];
-    pick.style.outline = '2px solid #dc2626';
-    pick.style.outlineOffset = '-2px';
-    const check = document.createElement('div');
-    check.style.cssText = 'position:absolute;top:4px;right:4px;width:14px;height:14px;background:#dc2626;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;font-weight:bold;';
-    check.textContent = '✓';
-    pick.appendChild(check);
-  }
-
-  await demoSleep(900);
-
-  // 11) "Click" Upload — fake a progress bar from 0→100% over ~4s, then
-  // jump to the slim success state with a link to the @vhsgaragevideo
-  // channel. No network calls.
   document.getElementById('yt-pub-progress')?.classList.remove('hidden');
   const bar = document.getElementById('yt-pub-progress-bar');
   const status = document.getElementById('yt-pub-status');
@@ -2026,11 +2071,11 @@ async function runDemo() {
     upBtn.disabled = true;
     upBtn.textContent = 'Uploading...';
   }
-  for (let p = 0; p <= 100; p += 5) {
+  for (let p = 0; p <= 100; p += 10) {
     if (!demoActive) return;
     if (bar) bar.style.width = p + '%';
     if (status) status.textContent = p + '% uploaded';
-    await demoSleep(180);
+    await demoSleep(140);
   }
   document.getElementById('yt-pub-progress')?.classList.add('hidden');
   document.getElementById('yt-pub-form')?.classList.add('hidden');
@@ -2041,10 +2086,9 @@ async function runDemo() {
   }
   document.getElementById('yt-pub-done')?.classList.remove('hidden');
 
-  // 12) Hold on the success state for 6s so the camera (or viewer) can land
-  // on it, then surface the Demo Complete modal.
-  await demoSleep(6000);
-
+  // Brief hold on the success row (~2s) so the viewer registers the
+  // "uploaded" state, then surface the Demo Complete modal.
+  await demoSleep(2000);
   finishDemo();
 }
 
