@@ -36,7 +36,7 @@ import Base from '../layouts/Base.astro';
       cursor: pointer;
       transition: background 0.2s, border-color 0.2s, color 0.2s;
       color: rgba(255, 255, 255, 0.6);
-      font-family: monospace;
+      font-family: 'VCR', monospace;
       font-size: 14px;
       font-weight: bold;
       letter-spacing: 0.08em;
@@ -86,7 +86,7 @@ import Base from '../layouts/Base.astro';
       background: #e53935;
     }
     .rec-btn .rec-label {
-      font-family: monospace;
+      font-family: 'VCR', monospace;
       font-size: 14px;
       font-weight: bold;
       color: #e53935;
@@ -265,7 +265,7 @@ import Base from '../layouts/Base.astro';
       max-width: 360px;
       background: #1a181a;
       color: rgba(255, 255, 255, 0.85);
-      font-family: monospace;
+      font-family: 'VCR', monospace;
       font-size: 11px;
       line-height: 1.2;
       padding: 4px 0;
@@ -879,7 +879,7 @@ import Base from '../layouts/Base.astro';
        default; positioned at the click point on contextmenu and dismissed
        on outside-click or Escape. Single shared element, repositioned per
        right-click so we're not generating one menu per tile. -->
-  <div id="library-context-menu" class="hidden fixed z-40 bg-black border border-white/30 text-xs select-none py-1" style="min-width:140px; box-shadow: 2px 2px 0 0 rgba(0,0,0,0.7), inset 1px 1px 0 0 rgba(255,255,255,0.06); font-family: monospace;">
+  <div id="library-context-menu" class="hidden fixed z-40 bg-black border border-white/30 text-xs select-none py-1" style="min-width:140px; box-shadow: 2px 2px 0 0 rgba(0,0,0,0.7), inset 1px 1px 0 0 rgba(255,255,255,0.06); font-family: 'VCR', monospace;">
     <button id="lib-ctx-open" class="block w-full text-left px-3 py-1.5 text-white/80 hover:bg-white/10 transition-colors">Open Clip</button>
     <div class="border-t border-white/10 my-1"></div>
     <button id="lib-ctx-delete" class="block w-full text-left px-3 py-1.5 text-red-400/80 hover:bg-white/5 hover:text-red-400 transition-colors">Delete</button>
@@ -894,8 +894,9 @@ import Base from '../layouts/Base.astro';
 
   <!-- Demo countdown modal — shown for ~3s before the puppet sequence
        starts. Same chiseled-bevel look as the toolbar dropdowns + library
-       context menu so it reads as part of the same UI family. -->
-  <div id="demo-countdown" class="hidden fixed inset-0 z-[70] bg-black/70 flex items-center justify-center" style="font-family: monospace;">
+       context menu so it reads as part of the same UI family. Font is
+       inherited from body (VCR + monospace fallback, see global.css). -->
+  <div id="demo-countdown" class="hidden fixed inset-0 z-[70] bg-black/70 flex items-center justify-center">
     <div class="bg-[#1a181a] text-white border border-black p-8 text-center" style="
          min-width: 320px;
          box-shadow:
@@ -913,7 +914,7 @@ import Base from '../layouts/Base.astro';
        is pressed mid-flow). Two actions: re-run the demo or exit back to
        a fresh capture screen. Both use a session-storage flag + reload to
        guarantee a clean reset. -->
-  <div id="demo-complete" class="hidden fixed inset-0 z-[70] bg-black/70 flex items-center justify-center" style="font-family: monospace;">
+  <div id="demo-complete" class="hidden fixed inset-0 z-[70] bg-black/70 flex items-center justify-center">
     <div class="bg-[#1a181a] text-white border border-black p-8 text-center" style="
          min-width: 360px;
          box-shadow:
@@ -940,11 +941,11 @@ import Base from '../layouts/Base.astro';
     <div class="pixel-btn bg-black flex flex-col h-full" style="border: 3px solid #dc2626; box-shadow: inset 1px 1px 0 0 rgba(255,255,255,0.06);">
       <!-- Title bar — drag handle. Window chrome borrows old-software cues:
            inset highlight, monospace, tracking, single accent dot. -->
-      <div id="library-titlebar" class="flex items-center gap-2 px-2 py-1.5 bg-white/10 border-b border-white/25 select-none" style="cursor: grab; font-family: monospace; box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.08);">
+      <div id="library-titlebar" class="flex items-center gap-2 px-2 py-1.5 bg-white/10 border-b border-white/25 select-none" style="cursor: grab; font-family: 'VCR', monospace; box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.08);">
         <span class="inline-block w-1.5 h-1.5 bg-red-500 ml-1" style="box-shadow: 0 0 6px rgba(229,57,53,0.6);"></span>
         <span class="text-white/85 font-bold text-[11px] tracking-[0.15em] uppercase">VHS Garage — Library</span>
         <span class="flex-1"></span>
-        <button id="to-capture-btn" type="button" class="w-5 h-5 flex items-center justify-center bg-red-600 hover:bg-red-500 text-white text-sm leading-none transition-colors" title="Close" style="font-family: monospace;">×</button>
+        <button id="to-capture-btn" type="button" class="w-5 h-5 flex items-center justify-center bg-red-600 hover:bg-red-500 text-white text-sm leading-none transition-colors" title="Close" style="font-family: 'VCR', monospace;">×</button>
       </div>
 
       <!-- Body — scrolls internally. Either the folder placeholder OR the file list. -->

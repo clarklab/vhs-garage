@@ -1735,6 +1735,39 @@ async function demoFlash(el) {
   el.style.position = prevPos;
 }
 
+// Quick VHS-style static blast over a container — drawn as canvas noise so
+// it actually looks like analog interference rather than a tinted overlay.
+// Fire-and-forget by default (no await) so it doesn't delay the timeline
+// it's blasted into; the canvas removes itself when the duration elapses or
+// when the demo gets cancelled.
+function demoStaticBlast(container, ms = 300) {
+  if (!container) return;
+  const canvas = document.createElement('canvas');
+  canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:25;pointer-events:none;mix-blend-mode:screen;';
+  canvas.width = 320;
+  canvas.height = 240;
+  container.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+  const start = performance.now();
+  let raf = 0;
+  const draw = () => {
+    if (!demoActive || performance.now() - start > ms) {
+      cancelAnimationFrame(raf);
+      canvas.remove();
+      return;
+    }
+    const img = ctx.createImageData(canvas.width, canvas.height);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const v = Math.random() < 0.5 ? Math.random() * 80 : Math.random() * 255;
+      d[i] = v; d[i + 1] = v; d[i + 2] = v; d[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    raf = requestAnimationFrame(draw);
+  };
+  draw();
+}
+
 async function runDemo() {
   // Note: every await goes through demoSleep, which throws if demoActive
   // flips to false (ESC). The outer .catch in startDemoCountdown swallows
@@ -1765,19 +1798,139 @@ async function runDemo() {
   recOverlay?.classList.remove('hidden');
   recBtn?.classList.add('recording');
 
-  // Tick "00:00:00 → 00:00:08" + size meter for ~8 seconds.
-  const REC_SECONDS = 8;
-  for (let s = 0; s <= REC_SECONDS; s++) {
+  // RECORDING PHASE — 20s long. Two concurrent timelines:
+  //
+  //   recordingTask : tick the 00:00:NN timer + size meter every second.
+  //                   Every 3 seconds (3, 6, 9, 12, 15, 18) fire a 0.3s
+  //                   VHS-style static blast over the preview AND jump the
+  //                   playhead forward 6 seconds, so the clip looks like
+  //                   it's being scrubbed/jumped through the tape.
+  //
+  //   actionsTask   : the metadata flow runs in parallel — sleeve flashes,
+  //                   panel reveals, title typing, AI loading, suggestion,
+  //                   "Use this." All scheduled at offsets within the 20s
+  //                   window so the viewer sees lots of motion at once.
+  //
+  // Both kick off, both run, await Promise.all to converge before we move
+  // to the post-recording sequence (thumbnails, upload, success).
+  const REC_SECONDS = 20;
+  const sleeveCaptureView = document.getElementById('sleeve-capture-view');
+  const webcamContainer = document.getElementById('webcam-container');
+  const sleeveFront = document.getElementById('sleeve-front-preview');
+  const sleeveBackSkeleton = document.getElementById('sleeve-back-skeleton');
+  const sleeveBackPreview = document.getElementById('sleeve-back-preview');
+  const sugTitle = document.getElementById('yt-pub-suggestion-title');
+  const sugDesc = document.getElementById('yt-pub-suggestion-desc');
+  const sugTags = document.getElementById('yt-pub-suggestion-tags');
+
+  const recordingTask = (async () => {
+    for (let s = 0; s <= REC_SECONDS; s++) {
+      if (!demoActive) return;
+      const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+      const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+      const ss = String(s % 60).padStart(2, '0');
+      const t = `${hh}:${mm}:${ss}`;
+      if (recTimer) recTimer.textContent = t;
+      if (recOverlay) recOverlay.textContent = t;
+      if (recSize) recSize.textContent = (s * 4.4).toFixed(1) + ' MB';
+      // Every 3s (skip t=0 and the final tick at t=20): static blast +
+      // playhead jump. Static is fire-and-forget so it doesn't shift the
+      // timer cadence.
+      if (s > 0 && s < REC_SECONDS && s % 3 === 0) {
+        demoStaticBlast(previewContainer, 300);
+        if (preview && preview.duration && isFinite(preview.duration)) {
+          // Wrap with modulo so we don't seek past the end of a short
+          // sample (vhs-sample.mp4 might only be a few seconds long; with
+          // loop=true the wrap reads as a continuous fast-forward).
+          preview.currentTime = (preview.currentTime + 6) % preview.duration;
+        }
+      }
+      await demoSleep(1000);
+    }
+  })();
+
+  const actionsTask = (async () => {
+    // t=2s — front sleeve flash + capture
+    await demoSleep(2000);
     if (!demoActive) return;
-    const hh = String(Math.floor(s / 3600)).padStart(2, '0');
-    const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
-    const ss = String(s % 60).padStart(2, '0');
-    const t = `${hh}:${mm}:${ss}`;
-    if (recTimer) recTimer.textContent = t;
-    if (recOverlay) recOverlay.textContent = t;
-    if (recSize) recSize.textContent = (s * 4.4).toFixed(1) + ' MB';
-    await demoSleep(1000);
-  }
+    demoFlash(webcamContainer); // fire-and-forget so it overlaps the next beat
+    await demoSleep(150);
+    if (sleeveFront) {
+      sleeveFront.innerHTML = '<img src="/puppet/box-front.jpg" class="w-full h-full object-cover" alt="">';
+      sleeveFront.classList.remove('hidden');
+    }
+
+    // t=5s — back sleeve flash + capture (flash the back skeleton this
+    // time; in real product the webcam container relocates here).
+    await demoSleep(2850);
+    if (!demoActive) return;
+    demoFlash(sleeveBackSkeleton || webcamContainer);
+    await demoSleep(150);
+    if (sleeveBackSkeleton) sleeveBackSkeleton.classList.add('hidden');
+    if (sleeveBackPreview) {
+      sleeveBackPreview.innerHTML = '<img src="/puppet/box-back.png" class="w-full h-full object-cover" alt="">';
+      sleeveBackPreview.classList.remove('hidden');
+    }
+    if (sleeveCaptureView) sleeveCaptureView.classList.add('hidden');
+
+    // t=6.5s — reveal Thumbnail + Publish panels and the signed-in banner
+    // so the right column has somewhere for the title/description to land.
+    await demoSleep(1500);
+    if (!demoActive) return;
+    document.getElementById('cap-thumb-fieldset')?.classList.remove('hidden');
+    document.getElementById('cap-pub-fieldset')?.classList.remove('hidden');
+    document.getElementById('yt-pub-form')?.classList.remove('hidden');
+    document.getElementById('yt-pub-signin')?.classList.add('hidden');
+    const acct = document.getElementById('yt-pub-account');
+    const acctName = document.getElementById('yt-pub-account-name');
+    if (acct && acctName) {
+      acctName.textContent = '@vhsgaragevideo';
+      acct.classList.remove('hidden');
+    }
+
+    // t=7s — start typing the title (~2s)
+    await demoSleep(500);
+    if (!demoActive) return;
+    await demoType(document.getElementById('clip-title'), '3 Ninjas');
+
+    // t≈10s — click AI; loading panel for ~2.5s, then suggestion panel
+    await demoSleep(700);
+    if (!demoActive) return;
+    document.getElementById('yt-pub-form')?.classList.add('hidden');
+    document.getElementById('yt-pub-loading')?.classList.remove('hidden');
+    await demoSleep(2400);
+    if (!demoActive) return;
+    document.getElementById('yt-pub-loading')?.classList.add('hidden');
+    if (sugTitle) sugTitle.textContent = '3 Ninjas (1992) — Original VHS Capture';
+    if (sugDesc) sugDesc.textContent =
+      "Original 1992 VHS release of 3 Ninjas, the family martial-arts comedy starring Victor Wong as Grandpa Mori and Michael Treanor, Max Elliott Slade, and Chad Power as Rocky, Colt, and Tum-Tum.\n\nCaptured from a well-loved tape — minor tracking artifacts and the warm color cast that only a 30+ year old VHS gives you.\n\nCaptured with VHS Garage\nhttps://vhsgarage.com";
+    if (sugTags) sugTags.textContent = '3 ninjas, 1992, family movie, martial arts, vhs, kids movie, 90s, victor wong';
+    document.getElementById('yt-pub-suggestion-title-group')?.classList.remove('hidden');
+    document.getElementById('yt-pub-suggestion-desc-group')?.classList.remove('hidden');
+    document.getElementById('yt-pub-suggestion-tags-group')?.classList.remove('hidden');
+    document.getElementById('yt-pub-suggestion')?.classList.remove('hidden');
+    document.getElementById('yt-pub-suggestion-meta').textContent = 'Generated from your sleeve photos and clip metadata.';
+
+    // t≈15s — "Use this" — fields populate, suggestion panel hides
+    await demoSleep(2200);
+    if (!demoActive) return;
+    document.getElementById('clip-title').value = '3 Ninjas (1992) — Original VHS Capture';
+    document.getElementById('clip-description').value = sugDesc?.textContent || '';
+    document.getElementById('clip-tags').value = sugTags?.textContent || '';
+    document.getElementById('clip-year').value = '1992';
+    document.getElementById('clip-tape').value = '3 Ninjas';
+    document.getElementById('clip-distributor').value = 'Touchstone Pictures';
+    document.getElementById('clip-tape-length').value = 'T-120';
+    document.getElementById('clip-speed').value = 'SP';
+    document.getElementById('clip-condition').value = 'Good';
+    document.getElementById('yt-pub-suggestion')?.classList.add('hidden');
+    document.getElementById('yt-pub-form')?.classList.remove('hidden');
+    // Recording continues for ~5 more seconds with all panels populated —
+    // gives the viewer a beat to take in the finished state before we stop.
+  })();
+
+  await Promise.all([recordingTask, actionsTask]);
+  if (!demoActive) return;
 
   // 2) "Stop" — clear recording UI, switch to playback tab with the same
   // sample clip as the playback source.
@@ -1807,91 +1960,6 @@ async function runDemo() {
   // Show the Delete button (matches what showPlaybackTab does).
   document.getElementById('delete-recording-btn')?.classList.remove('hidden');
 
-  await demoSleep(1500);
-
-  // 3) Front sleeve — flash the webcam container, then stamp box-front.jpg
-  // into the front preview slot.
-  const sleeveCaptureView = document.getElementById('sleeve-capture-view');
-  const webcamContainer = document.getElementById('webcam-container');
-  const sleeveFront = document.getElementById('sleeve-front-preview');
-  await demoFlash(webcamContainer);
-  if (sleeveFront) {
-    sleeveFront.innerHTML = '<img src="/puppet/box-front.jpg" class="w-full h-full object-cover" alt="">';
-    sleeveFront.classList.remove('hidden');
-  }
-  await demoSleep(900);
-
-  // 4) Back sleeve — flash again (the webcam container moves into the back
-  // slot in real life; here we just flash whatever's standing in for the
-  // back capture area), stamp box-back.png in.
-  const sleeveBackSkeleton = document.getElementById('sleeve-back-skeleton');
-  const sleeveBackPreview = document.getElementById('sleeve-back-preview');
-  await demoFlash(webcamContainer);
-  if (sleeveBackSkeleton) sleeveBackSkeleton.classList.add('hidden');
-  if (sleeveBackPreview) {
-    sleeveBackPreview.innerHTML = '<img src="/puppet/box-back.png" class="w-full h-full object-cover" alt="">';
-    sleeveBackPreview.classList.remove('hidden');
-  }
-  // Hide the live capture controls now that both are "captured".
-  if (sleeveCaptureView) sleeveCaptureView.classList.add('hidden');
-  await demoSleep(900);
-
-  // 5) Reveal the Thumbnail and Publish panels (normally gated on a real
-  // clip being loaded into the editor) and switch the publish state to
-  // the form panel as if the user were already signed in.
-  document.getElementById('cap-thumb-fieldset')?.classList.remove('hidden');
-  document.getElementById('cap-pub-fieldset')?.classList.remove('hidden');
-  document.getElementById('yt-pub-form')?.classList.remove('hidden');
-  document.getElementById('yt-pub-signin')?.classList.add('hidden');
-  // Mocked account banner so it looks signed in.
-  const acct = document.getElementById('yt-pub-account');
-  const acctName = document.getElementById('yt-pub-account-name');
-  if (acct && acctName) {
-    acctName.textContent = '@vhsgaragevideo';
-    acct.classList.remove('hidden');
-  }
-
-  await demoSleep(600);
-
-  // 6) Type the title.
-  await demoType(document.getElementById('clip-title'), '3 Ninjas');
-  await demoSleep(600);
-
-  // 7) AI sparkle — flash the loading panel, then swap in a hand-crafted
-  // "3 Ninjas (1992)" suggestion. The real product calls Gemini here; the
-  // demo skips the network call so it's deterministic for social capture.
-  document.getElementById('yt-pub-form')?.classList.add('hidden');
-  document.getElementById('yt-pub-loading')?.classList.remove('hidden');
-  await demoSleep(2400);
-
-  document.getElementById('yt-pub-loading')?.classList.add('hidden');
-  const sugTitle = document.getElementById('yt-pub-suggestion-title');
-  const sugDesc = document.getElementById('yt-pub-suggestion-desc');
-  const sugTags = document.getElementById('yt-pub-suggestion-tags');
-  if (sugTitle) sugTitle.textContent = '3 Ninjas (1992) — Original VHS Capture';
-  if (sugDesc) sugDesc.textContent =
-    "Original 1992 VHS release of 3 Ninjas, the family martial-arts comedy starring Victor Wong as Grandpa Mori and Michael Treanor, Max Elliott Slade, and Chad Power as Rocky, Colt, and Tum-Tum.\n\nCaptured from a well-loved tape — minor tracking artifacts and the warm color cast that only a 30+ year old VHS gives you.\n\nCaptured with VHS Garage\nhttps://vhsgarage.com";
-  if (sugTags) sugTags.textContent = '3 ninjas, 1992, family movie, martial arts, vhs, kids movie, 90s, victor wong';
-  document.getElementById('yt-pub-suggestion-title-group')?.classList.remove('hidden');
-  document.getElementById('yt-pub-suggestion-desc-group')?.classList.remove('hidden');
-  document.getElementById('yt-pub-suggestion-tags-group')?.classList.remove('hidden');
-  document.getElementById('yt-pub-suggestion')?.classList.remove('hidden');
-  document.getElementById('yt-pub-suggestion-meta').textContent = 'Generated from your sleeve photos and clip metadata.';
-
-  await demoSleep(2200);
-
-  // 8) "Use this" — populate fields, hide the suggestion panel, restore form.
-  document.getElementById('clip-title').value = '3 Ninjas (1992) — Original VHS Capture';
-  document.getElementById('clip-description').value = sugDesc.textContent;
-  document.getElementById('clip-tags').value = sugTags.textContent;
-  document.getElementById('clip-year').value = '1992';
-  document.getElementById('clip-tape').value = '3 Ninjas';
-  document.getElementById('clip-distributor').value = 'Touchstone Pictures';
-  document.getElementById('clip-tape-length').value = 'T-120';
-  document.getElementById('clip-speed').value = 'SP';
-  document.getElementById('clip-condition').value = 'Good';
-  document.getElementById('yt-pub-suggestion')?.classList.add('hidden');
-  document.getElementById('yt-pub-form')?.classList.remove('hidden');
   await demoSleep(800);
 
   // 9) Thumbnails — generate a 6-cell grid of frame stills from the sample
