@@ -208,25 +208,29 @@ import Base from '../layouts/Base.astro';
       padding: 0;
       box-sizing: border-box;
     }
-    .os-scrollbar.os-theme-vhs.os-scrollbar-vertical { width: 12px; }
-    .os-scrollbar.os-theme-vhs.os-scrollbar-horizontal { height: 12px; }
+    /* 10px-wide channel, totally square — no border-radius on the handle,
+       no inset gap on either side. Reads as a chunky pixel block sliding
+       in a hard-edged groove (the vintage / utilitarian look the rest of
+       the UI uses). */
+    .os-scrollbar.os-theme-vhs.os-scrollbar-vertical { width: 10px; }
+    .os-scrollbar.os-theme-vhs.os-scrollbar-horizontal { height: 10px; }
     .os-scrollbar.os-theme-vhs > .os-scrollbar-track { background: #141214; }
     .os-scrollbar.os-theme-vhs.os-scrollbar-vertical > .os-scrollbar-track {
       border-left: 1px solid rgba(255, 255, 255, 0.04);
     }
     .os-scrollbar.os-theme-vhs > .os-scrollbar-track > .os-scrollbar-handle {
       background: #dc2626;
-      border-radius: 2px;
+      border-radius: 0;
       min-height: 24px;
       min-width: 24px;
     }
     .os-scrollbar.os-theme-vhs.os-scrollbar-vertical > .os-scrollbar-track > .os-scrollbar-handle {
-      width: calc(100% - 4px);
-      margin-left: 2px;
+      width: 100%;
+      margin-left: 0;
     }
     .os-scrollbar.os-theme-vhs.os-scrollbar-horizontal > .os-scrollbar-track > .os-scrollbar-handle {
-      height: calc(100% - 4px);
-      margin-top: 2px;
+      height: 100%;
+      margin-top: 0;
     }
     .os-scrollbar.os-theme-vhs > .os-scrollbar-track > .os-scrollbar-handle:hover,
     .os-scrollbar.os-theme-vhs.os-scrollbar-active > .os-scrollbar-track > .os-scrollbar-handle {
