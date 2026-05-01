@@ -201,47 +201,41 @@ import Base from '../layouts/Base.astro';
        missing that class, so scoped rules silently fail to apply. Keep
        these rules global so they reach those runtime-built nodes. -->
   <style is:global>
-    /* OverlayScrollbars VHS theme — the scrollbar/track/handle elements
-       are created by the OverlayScrollbars JS, so these selectors must be
-       global to match. */
+    /* OverlayScrollbars VHS theme. Driven entirely by the library's own CSS
+       variables (defined in overlayscrollbars.css around the .os-scrollbar
+       selector ~line 516). The library consumes them like:
+         .os-scrollbar-vertical   { width: var(--os-size); }
+         .os-scrollbar-horizontal { height: var(--os-size); }
+         .os-scrollbar-vertical .os-scrollbar-handle   { width:  var(--os-handle-perpendicular-size); min-height: var(--os-handle-min-size); }
+         .os-scrollbar-horizontal .os-scrollbar-handle { height: var(--os-handle-perpendicular-size); min-width:  var(--os-handle-min-size); }
+       Setting them in the theme is the correct way to size and color the
+       bars; previous attempts that overrode width / min-width directly
+       were fighting these variable rules and inflating the handle to a
+       solid red strip. */
     .os-scrollbar.os-theme-vhs {
-      padding: 0;
-      box-sizing: border-box;
-    }
-    /* 10px-wide channel, totally square — no border-radius on the handle,
-       no inset gap on either side. Reads as a chunky pixel block sliding
-       in a hard-edged groove (the vintage / utilitarian look the rest of
-       the UI uses). */
-    .os-scrollbar.os-theme-vhs.os-scrollbar-vertical { width: 10px; }
-    .os-scrollbar.os-theme-vhs.os-scrollbar-horizontal { height: 10px; }
-    .os-scrollbar.os-theme-vhs > .os-scrollbar-track { background: #141214; }
-    .os-scrollbar.os-theme-vhs.os-scrollbar-vertical > .os-scrollbar-track {
-      border-left: 1px solid rgba(255, 255, 255, 0.04);
-    }
-    .os-scrollbar.os-theme-vhs > .os-scrollbar-track > .os-scrollbar-handle {
-      background: #dc2626;
-      border-radius: 0;
-    }
-    /* Per-orientation min-size: keep the handle visible/draggable even when
-       content barely overflows. CRITICALLY: the min-size constraint must be
-       split by orientation. A shared "min-width: 24px" was getting applied
-       to the vertical handle (where width should be 10px = the track width)
-       and inflating it to 24px wide — which is why the vertical bar
-       previously looked like a giant red strip. Vertical → min-height,
-       horizontal → min-width. */
-    .os-scrollbar.os-theme-vhs.os-scrollbar-vertical > .os-scrollbar-track > .os-scrollbar-handle {
-      width: 100%;
-      margin-left: 0;
-      min-height: 40px;
-    }
-    .os-scrollbar.os-theme-vhs.os-scrollbar-horizontal > .os-scrollbar-track > .os-scrollbar-handle {
-      height: 100%;
-      margin-top: 0;
-      min-width: 40px;
-    }
-    .os-scrollbar.os-theme-vhs > .os-scrollbar-track > .os-scrollbar-handle:hover,
-    .os-scrollbar.os-theme-vhs.os-scrollbar-active > .os-scrollbar-track > .os-scrollbar-handle {
-      background: #ef4444;
+      /* 6px channel for both orientations. */
+      --os-size: 6px;
+      /* No padding around the handle — it fills the channel edge-to-edge. */
+      --os-padding-perpendicular: 0;
+      --os-padding-axis: 0;
+      /* Dark gutter / channel. */
+      --os-track-bg: #141214;
+      --os-track-bg-hover: #141214;
+      --os-track-bg-active: #141214;
+      --os-track-border-radius: 0;
+      /* Red handle ("scrubber") with hover/active brighter red. */
+      --os-handle-bg: #dc2626;
+      --os-handle-bg-hover: #ef4444;
+      --os-handle-bg-active: #ef4444;
+      --os-handle-border-radius: 0;
+      /* Handle is 40px in the scroll-axis dimension (height for vertical,
+         width for horizontal) so it stays visible/draggable even when
+         content barely overflows. */
+      --os-handle-min-size: 40px;
+      /* Handle fills the full 6px perpendicular to the scroll axis. */
+      --os-handle-perpendicular-size: 100%;
+      --os-handle-perpendicular-size-hover: 100%;
+      --os-handle-perpendicular-size-active: 100%;
     }
 
     /* Classic 80s/90s desktop drop-down menu (System 7 / Win 3.1 vibe) for
