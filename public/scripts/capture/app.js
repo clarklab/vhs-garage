@@ -1442,6 +1442,12 @@ function startDemoCountdown() {
   });
   closeToolbarMenu();
 
+  // Wipe everything that might be on screen so the demo starts from a true
+  // blank canvas (rather than playing on top of the user's actual webcam,
+  // existing form data, sleeves, etc.). Done DURING the countdown so the
+  // viewer sees the page reset to empty just before the puppet starts.
+  resetForDemo();
+
   const modal = document.getElementById('demo-countdown');
   const numEl = document.getElementById('demo-countdown-num');
   if (!modal || !numEl) { demoActive = false; return; }
@@ -1483,6 +1489,113 @@ function cancelDemo() {
   // Land on the Complete modal so the user has a clear way out (otherwise
   // they're stranded in whatever half-puppeteered state we were in).
   showDemoComplete();
+}
+
+// Wipe every panel / video / form back to its first-paint state so the
+// puppet sequence starts from a true blank page. Called during the
+// countdown so the viewer sees the reset happen, then the demo begins
+// from zero. We DON'T touch toolbar / device pickers — those stay live
+// so the menus still work mid-demo if someone goes hunting.
+function resetForDemo() {
+  // 1. Live preview: stop the active capture stream and clear the video
+  // element so the live camera feed isn't visible behind the demo.
+  try { if (captureStream) captureStream.getTracks().forEach(t => t.stop()); } catch {}
+  captureStream = null;
+  const preview = document.getElementById('preview');
+  if (preview) {
+    try { preview.pause(); } catch {}
+    preview.srcObject = null;
+    preview.removeAttribute('src');
+    preview.load();
+    preview.classList.remove('hidden');
+  }
+  // Show the no-signal placeholder briefly so col 1 reads as empty.
+  document.getElementById('no-signal')?.classList.remove('hidden');
+
+  // 2. Playback video: clear so no leftover playback bleeds through.
+  const playback = document.getElementById('playback');
+  if (playback) {
+    try { playback.pause(); } catch {}
+    playback.removeAttribute('src');
+    playback.load();
+    playback.classList.add('hidden');
+  }
+
+  // 3. Recording overlays / chrome.
+  document.getElementById('preview-container')?.classList.remove('recording-active');
+  const recOverlay = document.getElementById('rec-overlay-timer');
+  if (recOverlay) {
+    recOverlay.classList.add('hidden');
+    recOverlay.textContent = '00:00:00';
+  }
+  document.getElementById('rec-btn')?.classList.remove('recording');
+  const recTimer = document.getElementById('rec-timer');
+  if (recTimer) recTimer.textContent = '00:00:00';
+  const recSize = document.getElementById('rec-size');
+  if (recSize) recSize.textContent = '0.0 MB';
+  // Hide the Last Recording tab + Delete button (both gated on having a clip).
+  const tabPlayback = document.getElementById('tab-playback');
+  tabPlayback?.classList.add('hidden');
+  tabPlayback?.classList.remove('text-white/70');
+  tabPlayback?.classList.add('text-white/30');
+  document.getElementById('tab-live')?.classList.remove('text-white/30');
+  document.getElementById('tab-live')?.classList.add('text-white/70');
+  document.getElementById('delete-recording-btn')?.classList.add('hidden');
+
+  // 4. Sleeve column: stop the webcam stream, hide any captured previews,
+  // restore the back skeleton + capture controls to their first-paint state.
+  try { stopWebcam(); } catch {}
+  const sleeveWebcam = document.getElementById('sleeve-webcam');
+  if (sleeveWebcam) {
+    try { sleeveWebcam.pause(); } catch {}
+    sleeveWebcam.srcObject = null;
+  }
+  const sleeveFront = document.getElementById('sleeve-front-preview');
+  if (sleeveFront) {
+    sleeveFront.classList.add('hidden');
+    sleeveFront.innerHTML = '<span class="flex items-center justify-center w-full h-full text-white/10 text-[10px]">--</span>';
+  }
+  const sleeveBack = document.getElementById('sleeve-back-preview');
+  if (sleeveBack) {
+    sleeveBack.classList.add('hidden');
+    sleeveBack.innerHTML = '<span class="flex items-center justify-center w-full h-full text-white/10 text-[10px]">--</span>';
+  }
+  document.getElementById('sleeve-back-skeleton')?.classList.remove('hidden');
+  document.getElementById('sleeve-capture-view')?.classList.remove('hidden');
+  document.getElementById('sleeve-review-view')?.classList.add('hidden');
+
+  // 5. Form fields: empty all of them so no prior text leaks into the demo.
+  ['clip-title','clip-description','clip-year','clip-tags','clip-tape',
+   'clip-distributor','clip-tape-length','clip-speed','clip-condition',
+   'clip-notes'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+
+  // 6. Thumbnail panel: collapse to first-paint placeholder grid.
+  document.getElementById('cap-thumb-fieldset')?.classList.add('hidden');
+  document.getElementById('player-thumb-empty')?.classList.remove('hidden');
+  document.getElementById('player-thumb-loading')?.classList.add('hidden');
+  document.getElementById('player-thumb-grid-wrap')?.classList.add('hidden');
+  const thumbGrid = document.getElementById('player-thumb-grid');
+  if (thumbGrid) thumbGrid.innerHTML = '';
+
+  // 7. Publish panel: collapse the entire fieldset and reset its inner
+  // panels so the next reveal starts on the form (not on whatever state
+  // the prior demo run left behind).
+  document.getElementById('cap-pub-fieldset')?.classList.add('hidden');
+  ['yt-pub-account','yt-pub-signin','yt-pub-form','yt-pub-loading',
+   'yt-pub-suggestion','yt-pub-progress','yt-pub-done','yt-pub-error',
+   'yt-pub-thumb-warn'].forEach(id => {
+    document.getElementById(id)?.classList.add('hidden');
+  });
+  const upBtn = document.getElementById('yt-pub-upload');
+  if (upBtn) {
+    upBtn.disabled = false;
+    upBtn.textContent = 'Upload to YouTube';
+  }
+  const bar = document.getElementById('yt-pub-progress-bar');
+  if (bar) bar.style.width = '0%';
 }
 
 function finishDemo() {

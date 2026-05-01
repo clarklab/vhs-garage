@@ -221,16 +221,23 @@ import Base from '../layouts/Base.astro';
     .os-scrollbar.os-theme-vhs > .os-scrollbar-track > .os-scrollbar-handle {
       background: #dc2626;
       border-radius: 0;
-      min-height: 24px;
-      min-width: 24px;
     }
+    /* Per-orientation min-size: keep the handle visible/draggable even when
+       content barely overflows. CRITICALLY: the min-size constraint must be
+       split by orientation. A shared "min-width: 24px" was getting applied
+       to the vertical handle (where width should be 10px = the track width)
+       and inflating it to 24px wide — which is why the vertical bar
+       previously looked like a giant red strip. Vertical → min-height,
+       horizontal → min-width. */
     .os-scrollbar.os-theme-vhs.os-scrollbar-vertical > .os-scrollbar-track > .os-scrollbar-handle {
       width: 100%;
       margin-left: 0;
+      min-height: 40px;
     }
     .os-scrollbar.os-theme-vhs.os-scrollbar-horizontal > .os-scrollbar-track > .os-scrollbar-handle {
       height: 100%;
       margin-top: 0;
+      min-width: 40px;
     }
     .os-scrollbar.os-theme-vhs > .os-scrollbar-track > .os-scrollbar-handle:hover,
     .os-scrollbar.os-theme-vhs.os-scrollbar-active > .os-scrollbar-track > .os-scrollbar-handle {
