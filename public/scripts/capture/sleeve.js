@@ -140,7 +140,13 @@ export async function initWebcam(deviceId) {
     const video = document.getElementById('sleeve-webcam');
     video.srcObject = webcamStream;
     document.getElementById('no-webcam').classList.add('hidden');
+    // Reveal the rectangle-detector overlay group: target reticle, top HUD,
+    // and the snap-progress bar. All three are hidden by default in markup
+    // so they don't overlap the "No webcam" empty-state placeholder before
+    // a webcam is connected.
     document.getElementById('sleeve-target').classList.remove('hidden');
+    document.getElementById('detect-hud')?.classList.remove('hidden');
+    document.getElementById('detect-snap-bar')?.classList.remove('hidden');
   } catch (err) {
     console.warn('Could not open webcam:', err);
   }

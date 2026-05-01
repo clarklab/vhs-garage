@@ -1284,6 +1284,12 @@ function unsetWebcamDevice() {
     sleeveWebcam.srcObject = null;
   }
   document.getElementById('no-webcam')?.classList.remove('hidden');
+  // Re-hide the rectangle-detector overlay group — it was revealed when
+  // initWebcam ran, and shouldn't sit on top of the empty-state placeholder
+  // once the webcam is released.
+  document.getElementById('sleeve-target')?.classList.add('hidden');
+  document.getElementById('detect-hud')?.classList.add('hidden');
+  document.getElementById('detect-snap-bar')?.classList.add('hidden');
   updateStatusWebcam(null);
 }
 
@@ -1616,6 +1622,11 @@ function resetForDemo() {
     try { sleeveWebcam.pause(); } catch {}
     sleeveWebcam.srcObject = null;
   }
+  // Re-hide the detection overlay group so it doesn't sit on top of the
+  // "No webcam" placeholder during the demo countdown.
+  document.getElementById('sleeve-target')?.classList.add('hidden');
+  document.getElementById('detect-hud')?.classList.add('hidden');
+  document.getElementById('detect-snap-bar')?.classList.add('hidden');
   const sleeveFront = document.getElementById('sleeve-front-preview');
   if (sleeveFront) {
     sleeveFront.classList.add('hidden');
