@@ -382,6 +382,15 @@ import Base from '../layouts/Base.astro';
         <span class="inline-flex items-center justify-center w-4 h-4 border border-white/40 text-[9px] leading-none" style="border-radius:50%;">?</span>
       </button>
 
+      <!-- Demo: scripted "player piano" run-through of a full capture
+           session using files in /public/puppet/. Used for new-user
+           orientation and social/marketing capture. Sits before Legal so
+           it reads as a normal app menu, not an admin/legal item. -->
+      <button id="status-demo-trigger" class="toolbar-trigger flex items-center gap-1.5 px-3 py-2 border-l border-white/15 shrink-0 text-white/50 hover:text-white/80 transition-colors" title="Run a sample demo">
+        <span class="uppercase tracking-wider">Demo</span>
+        <span class="text-white/30 text-[8px]" aria-hidden="true">▾</span>
+      </button>
+
       <!-- Legal: opens a small menu with links to the terms + privacy
            pages on vhsgarage.com. Sits last so it reads like the "About"
            position in classic desktop apps. -->
@@ -852,6 +861,44 @@ import Base from '../layouts/Base.astro';
        Style is the chiseled-bevel "raised" look from System 7 / Win 3.1
        (defined as .toolbar-menu in the <style> block above). -->
   <div id="toolbar-menu" class="toolbar-menu hidden"></div>
+
+  <!-- Demo countdown modal — shown for ~3s before the puppet sequence
+       starts. Same chiseled-bevel look as the toolbar dropdowns + library
+       context menu so it reads as part of the same UI family. -->
+  <div id="demo-countdown" class="hidden fixed inset-0 z-[70] bg-black/70 flex items-center justify-center" style="font-family: monospace;">
+    <div class="bg-[#1a181a] text-white border border-black p-8 text-center" style="
+         min-width: 320px;
+         box-shadow:
+           inset 1px 1px 0 0 rgba(255,255,255,0.18),
+           inset -1px -1px 0 0 rgba(0,0,0,0.85),
+           4px 4px 0 0 rgba(0,0,0,0.6);">
+      <p class="text-white/60 text-[10px] uppercase tracking-[0.18em] mb-3">Demo Mode</p>
+      <p class="text-white text-sm mb-4">Sample footage starting in</p>
+      <p id="demo-countdown-num" class="text-red-500 text-7xl font-bold tabular-nums leading-none mb-4">3</p>
+      <p class="text-white/40 text-[10px] uppercase tracking-wider">Hit ESC key to stop demo</p>
+    </div>
+  </div>
+
+  <!-- Demo complete modal — shown ~6s after the demo finishes (or when ESC
+       is pressed mid-flow). Two actions: re-run the demo or exit back to
+       a fresh capture screen. Both use a session-storage flag + reload to
+       guarantee a clean reset. -->
+  <div id="demo-complete" class="hidden fixed inset-0 z-[70] bg-black/70 flex items-center justify-center" style="font-family: monospace;">
+    <div class="bg-[#1a181a] text-white border border-black p-8 text-center" style="
+         min-width: 360px;
+         box-shadow:
+           inset 1px 1px 0 0 rgba(255,255,255,0.18),
+           inset -1px -1px 0 0 rgba(0,0,0,0.85),
+           4px 4px 0 0 rgba(0,0,0,0.6);">
+      <p class="text-white/60 text-[10px] uppercase tracking-[0.18em] mb-3">Demo Mode</p>
+      <p class="text-white text-lg mb-2">Demo Complete</p>
+      <p id="demo-complete-tagline" class="text-white/40 text-xs mb-6">That's the full capture flow — record, snap sleeves, let AI write the metadata, pick a thumbnail, publish.</p>
+      <div class="flex gap-3 justify-center">
+        <button id="demo-again-btn" class="pixel-btn px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs uppercase tracking-wider transition-colors">Show me again</button>
+        <button id="demo-exit-btn" class="pixel-btn px-4 py-2 border border-white/30 text-white/70 hover:text-white hover:border-white/60 text-xs uppercase tracking-wider transition-colors">Exit</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Library: draggable + resizable "computer window" overlay. Click and
        drag the title bar to move; drag the bottom-right corner to resize
