@@ -1278,6 +1278,7 @@ function wireToolbarMenus() {
   const audTrigger = document.getElementById('status-aud-trigger');
   const camTrigger = document.getElementById('status-cam-trigger');
   const dirTrigger = document.getElementById('status-dir-trigger');
+  const legalTrigger = document.getElementById('status-legal-trigger');
 
   // Helper: build a per-device menu. `kind` selects which saved-setting key
   // the checkmark / connect handler keys off of.
@@ -1361,6 +1362,15 @@ function wireToolbarMenus() {
       items.push({ separator: true });
       items.push({ label: 'Open Device Settings…', onClick: () => openDeviceSettingsModal() });
       openToolbarMenu(dirTrigger, items);
+    });
+  }
+  if (legalTrigger) {
+    legalTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openToolbarMenu(legalTrigger, [
+        { label: 'Terms of Use', onClick: () => window.open('https://vhsgarage.com/terms', '_blank', 'noopener') },
+        { label: 'Privacy Policy', onClick: () => window.open('https://vhsgarage.com/privacy', '_blank', 'noopener') },
+      ]);
     });
   }
 }

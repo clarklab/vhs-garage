@@ -193,7 +193,11 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
     </div>
   </section>
 
-  <footer class="text-left text-gray-600 text-sm pb-8 max-w-2xl mx-auto px-6">&copy; 2026 VHS Garage</footer>
+  <footer class="text-left text-gray-600 text-sm pb-8 max-w-2xl mx-auto px-6 flex flex-wrap items-center gap-x-4 gap-y-2">
+    <span>&copy; 2026 VHS Garage</span>
+    <a href="/terms" class="hover:text-white/70">Terms</a>
+    <a href="/privacy" class="hover:text-white/70">Privacy</a>
+  </footer>
 
   <script is:inline define:vars={{ heroScreen: JSON.stringify(g.screen) }}>
     (() => {

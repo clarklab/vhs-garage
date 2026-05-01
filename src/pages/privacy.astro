@@ -1,0 +1,90 @@
+---
+import Base from '../layouts/Base.astro';
+const updated = 'May 1, 2026';
+---
+
+<Base
+  title="Privacy"
+  description="What VHS Garage collects, what it doesn't, and what we do with the small amount we have."
+>
+  <div class="min-h-screen px-6 py-12 max-w-2xl mx-auto">
+    <a href="/" class="text-white/30 text-xs hover:text-white/50 transition-colors">← vhsgarage.com</a>
+
+    <h1 class="text-4xl mt-8 mb-2">Privacy Policy</h1>
+    <p class="text-white/40 text-xs mb-10">Last updated: {updated}</p>
+
+    <div class="space-y-8 text-gray-300 leading-relaxed">
+      <p>We try to collect as little as possible. Here's exactly what happens with your data when you use vhsgarage.com or the VHS Garage Recorder.</p>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">The short version</h2>
+        <ul class="list-disc pl-5 space-y-2">
+          <li>We don't run ads. We don't sell your data. We don't have a tracker pixel.</li>
+          <li>Your video recordings stay on your own computer. We never see them.</li>
+          <li>If you sign up for events, we keep your email or phone so we can tell you about events.</li>
+          <li>If you use the AI title helper, your sleeve photo goes to Google's Gemini AI for that one request. We don't store it.</li>
+          <li>If you upload to YouTube, you're using your own YouTube account. We can't see your videos.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Signups (email or phone)</h2>
+        <p>When you give us your email or phone number on the site, we store it so we can tell you about upcoming swap meets and tape drops. We use Netlify Forms to collect it. We don't sell or share this list. You can ask us to delete you any time — message <a href="https://x.com/clarklab" target="_blank" rel="noopener" class="text-white underline hover:text-gray-300">Clark</a> on Twitter and we'll take you off.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Garage submissions</h2>
+        <p>If you submit a photo of your setup, we keep the photo and any details you send so we can decide whether to feature it. If we feature it, it'll show up on the site. If we don't, the photo just sits with us — let us know if you want it removed.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">The Recorder</h2>
+        <p>The VHS Garage Recorder runs entirely in your browser. Here's what stays on your machine and what leaves it:</p>
+
+        <h3 class="text-white/80 mt-5 mb-2">Stays on your computer</h3>
+        <ul class="list-disc pl-5 space-y-2">
+          <li>Every video you record. They save to a folder you pick. We don't have a copy.</li>
+          <li>Your settings (which capture device, mic, save folder) — stored in your browser's local storage.</li>
+          <li>Your YouTube login token, if you connect one — also stored in your browser's local storage so you don't have to log in every time.</li>
+        </ul>
+
+        <h3 class="text-white/80 mt-5 mb-2">Leaves your computer</h3>
+        <ul class="list-disc pl-5 space-y-2">
+          <li><strong class="text-white">Sleeve photos to AI:</strong> when you tap "scan sleeve," we send your sleeve photo to Google's Gemini AI through our server so it can suggest a title, year, and description. We don't save the photo on our end. Google's terms apply to that request.</li>
+          <li><strong class="text-white">YouTube uploads:</strong> if you publish, the video goes from your browser straight to YouTube using your own account. We don't proxy it and don't see it.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">YouTube account access</h2>
+        <p>If you connect YouTube, we ask for permission to upload videos and read your channel info. We use that only to upload the recording you're publishing and to show your channel name in the app. We never post without you clicking the button. You can revoke access any time at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener" class="text-white underline hover:text-gray-300">myaccount.google.com/permissions</a>.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Cookies and tracking</h2>
+        <p>We don't use tracking cookies and we don't run analytics that watch you across the web. The recorder uses your browser's local storage to remember your settings — that's it.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Kids</h2>
+        <p>This site isn't aimed at kids under 13. If you're a parent and your kid signed up by accident, message us and we'll remove them.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Changes</h2>
+        <p>If we change how we handle data, we'll update this page and bump the "Last updated" date at the top.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Contact</h2>
+        <p>Anything you want to ask, fix, or delete? Hit up <a href="https://x.com/oracrest" target="_blank" rel="noopener" class="text-white underline hover:text-gray-300">Matt</a> or <a href="https://x.com/clarklab" target="_blank" rel="noopener" class="text-white underline hover:text-gray-300">Clark</a> on Twitter.</p>
+      </section>
+    </div>
+
+    <footer class="mt-16 pt-8 border-t border-white/10 flex flex-wrap gap-4 text-xs text-white/40">
+      <a href="/" class="hover:text-white/70">Home</a>
+      <a href="/terms" class="hover:text-white/70">Terms</a>
+      <a href="/capture" class="hover:text-white/70">Recorder</a>
+    </footer>
+  </div>
+</Base>
