@@ -147,6 +147,9 @@ async function startApp() {
   wireThumbnailPicker();
   wireLibraryDrag();
   wireLibraryBatchUpload();
+  wireLibraryFilter();
+  wireLibraryResync();
+  wireCharCounters();
   wireCustomScrollbars();
   wireKeyboardShortcuts();
   wireBeforeUnload();
@@ -2306,7 +2309,16 @@ async function wireCustomScrollbars() {
 
 function refreshLibrary() {
   updateLibraryFolderBanner();
-  const clips = getClips();
+  // Side-effect: scan disk for orphaned sidecars and reveal/hide the
+  // resync banner. Fire-and-forget so refreshLibrary stays sync-fast.
+  checkLibraryResyncBanner().catch(() => {});
+  const allClips = getClips();
+  // Apply the user's "Show: All" / "Show: Un-uploaded" filter. Persisted
+  // in localStorage by wireLibraryFilter; default is 'all'.
+  const filter = getLibraryFilter();
+  const clips = filter === 'unuploaded'
+    ? allClips.filter(c => !c.youtubeUrl)
+    : allClips;
   const grid = document.getElementById('library-grid');
   const empty = document.getElementById('library-empty');
 
@@ -2499,10 +2511,10 @@ function openBatchReviewModal() {
           : '<span class="text-white/15 text-[10px]">--</span>'}
       </div>
       <div class="flex-1 min-w-0 flex flex-col gap-1.5">
-        <input type="text" data-field="title" value="${escapeHtml(titleVal)}"
+        <input type="text" data-field="title" value="${escapeHtml(titleVal)}" maxlength="100"
           placeholder="(no title)"
           class="w-full bg-black border border-white/15 text-white text-[12px] px-2 py-1 focus:outline-none focus:border-white/40">
-        <textarea data-field="description" rows="3" placeholder="(no description)"
+        <textarea data-field="description" rows="3" placeholder="(no description)" maxlength="5000"
           class="w-full bg-black border border-white/15 text-white text-[11px] px-2 py-1 resize-none focus:outline-none focus:border-white/40">${escapeHtml(descVal)}</textarea>
       </div>
       <button type="button" data-action="remove" title="Remove from batch"
@@ -2601,6 +2613,147 @@ async function confirmBatchUpload() {
   document.getElementById('library-backdrop')?.classList.add('hidden');
 }
 
+// --- Library: filter (Show All / Un-uploaded) ---
+//
+// Once the library has more than a couple dozen clips and most are
+// uploaded, finding the un-uploaded ones is a chore. The titlebar button
+// flips between "Show: All" and "Show: Un-uploaded"; choice persists in
+// localStorage. refreshLibrary respects the filter when rendering.
+
+const LIBRARY_FILTER_KEY = 'vhsg_library_filter';
+function getLibraryFilter() {
+  try { return localStorage.getItem(LIBRARY_FILTER_KEY) || 'all'; }
+  catch { return 'all'; }
+}
+function setLibraryFilter(v) {
+  try { localStorage.setItem(LIBRARY_FILTER_KEY, v); } catch {}
+  updateLibraryFilterButton();
+  refreshLibrary();
+}
+function updateLibraryFilterButton() {
+  const btn = document.getElementById('library-filter-btn');
+  if (!btn) return;
+  const f = getLibraryFilter();
+  btn.textContent = f === 'unuploaded' ? 'Show: Un-uploaded' : 'Show: All';
+}
+function wireLibraryFilter() {
+  const btn = document.getElementById('library-filter-btn');
+  if (!btn) return;
+  updateLibraryFilterButton();
+  btn.addEventListener('click', () => {
+    setLibraryFilter(getLibraryFilter() === 'unuploaded' ? 'all' : 'unuploaded');
+  });
+}
+
+// --- Library: resync from disk ---
+//
+// Catalog lives in localStorage which can be cleared (browser cleanup,
+// quota, dev tools, switching browsers). The on-disk .json sidecars are
+// the durable source of truth. checkLibraryResyncBanner scans the save
+// folder for sidecars whose basename isn't in the catalog and reveals a
+// banner offering to import the missing entries. Hidden when catalog
+// and disk agree (no need to clutter the library when nothing's wrong).
+
+async function findOrphanedSidecarsOnDisk() {
+  if (!directoryHandle) return [];
+  const catalog = getClips();
+  const knownBasenames = new Set(
+    catalog.map(c => c.filename || '').filter(Boolean)
+      .map(f => f.replace(/\.(webm|mp4)$/, ''))
+  );
+  const orphans = [];
+  try {
+    for await (const [name, handle] of directoryHandle.entries()) {
+      if (handle.kind !== 'file') continue;
+      if (!name.endsWith('.json')) continue;
+      if (name === 'catalog.json') continue; // exported aggregate, skip
+      const basename = name.replace(/\.json$/, '');
+      if (knownBasenames.has(basename)) continue;
+      try {
+        const file = await handle.getFile();
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        if (parsed && parsed.id) orphans.push(parsed);
+      } catch {}
+    }
+  } catch (e) {
+    console.warn('[resync] could not scan folder:', e.message);
+  }
+  return orphans;
+}
+
+async function checkLibraryResyncBanner() {
+  const banner = document.getElementById('library-resync-banner');
+  const countEl = document.getElementById('library-resync-count');
+  if (!banner || !countEl) return;
+  if (!directoryHandle) {
+    banner.classList.add('hidden');
+    return;
+  }
+  const orphans = await findOrphanedSidecarsOnDisk();
+  if (orphans.length === 0) {
+    banner.classList.add('hidden');
+    return;
+  }
+  countEl.textContent = String(orphans.length);
+  banner.classList.remove('hidden');
+}
+
+function wireLibraryResync() {
+  const btn = document.getElementById('library-resync-btn');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Resyncing…';
+    try {
+      const orphans = await findOrphanedSidecarsOnDisk();
+      for (const entry of orphans) {
+        // Re-add to catalog using the sidecar as-is; sidecars store the same
+        // shape as the catalog entry (minus the heavy image fields).
+        addClip(entry);
+      }
+      refreshLibrary();
+      await checkLibraryResyncBanner();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Resync';
+    }
+  });
+}
+
+// --- Char counters with enforcement ---
+//
+// Every input/textarea with `data-char-counter` + `data-char-max` gets a
+// live count rendered into the matching `<p id="counter-...">`. Color
+// flips yellow at 90%, red at 100% (which is also the maxlength so the
+// browser blocks any further typing). Re-runs on input AND on programmatic
+// .value changes (renderSuggestion, demoStreamText, applySuggestion, etc.)
+// via a tiny refreshAllCharCounters() that the affected paths can call.
+
+function refreshCharCounter(input) {
+  if (!input) return;
+  const counterId = input.dataset.charCounter;
+  const max = parseInt(input.dataset.charMax, 10);
+  if (!counterId || !max) return;
+  const counterEl = document.getElementById(counterId);
+  if (!counterEl) return;
+  const len = (input.value || '').length;
+  counterEl.textContent = `${len} / ${max}`;
+  counterEl.classList.toggle('is-warn', len >= max * 0.9 && len < max);
+  counterEl.classList.toggle('is-max', len >= max);
+}
+
+function refreshAllCharCounters() {
+  document.querySelectorAll('[data-char-counter]').forEach(refreshCharCounter);
+}
+
+function wireCharCounters() {
+  document.querySelectorAll('[data-char-counter]').forEach((input) => {
+    input.addEventListener('input', () => refreshCharCounter(input));
+    refreshCharCounter(input); // initial paint
+  });
+}
+
 // Read a saved sleeve image from disk and return it as a data URL. Returns
 // null if the file isn't present or can't be read. Used as a fallback for
 // clips whose catalog entry doesn't carry the sleeve data URLs (older
@@ -2680,6 +2833,9 @@ async function loadClipIntoEditor(clipId) {
   setVal('clip-speed', merged.recordingSpeed);
   setVal('clip-condition', merged.condition);
   setVal('clip-notes', merged.cassetteNotes);
+  // Programmatic .value writes don't fire 'input', so the counters
+  // attached via wireCharCounters never recompute. Force a refresh.
+  if (typeof refreshAllCharCounters === 'function') refreshAllCharCounters();
 
   // 4. Restore sleeve previews. Sleeves now live on disk only (storing the
   // full data URLs in the catalog blew localStorage quota and broke the
@@ -3275,6 +3431,7 @@ function wireResetButtons() {
     document.getElementById('clip-speed').value = '';
     document.getElementById('clip-condition').value = '';
     document.getElementById('clip-notes').value = '';
+    refreshAllCharCounters();
   });
 }
 
@@ -4220,6 +4377,7 @@ function wireYouTubePublish() {
     suggestionTitle.value = data.title || '';
     suggestionDesc.value = data.description || '';
     suggestionTags.value = data.tags || '';
+    refreshAllCharCounters();
   }
 
   async function fetchSuggestion(scope) {
@@ -4287,6 +4445,7 @@ function wireYouTubePublish() {
       if (tags) tagsInput.value = tags;
     }
     currentSuggestion = null;
+    refreshAllCharCounters();
     showForm();
   }
 

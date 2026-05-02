@@ -497,6 +497,22 @@ import Base from '../layouts/Base.astro';
       background: #ef4444;
       border-color: #ef4444;
     }
+
+    /* Char counter under YouTube-bound text fields. Subtle by default,
+       turns yellow at 90% of the limit, red at 100%. wireCharCounters()
+       in app.js manages the count text + at-limit class. */
+    .char-counter {
+      font-size: 9px;
+      color: rgba(255, 255, 255, 0.3);
+      text-align: right;
+      margin-top: 2px;
+      letter-spacing: 0.04em;
+      tabular-nums: true;
+      font-variant-numeric: tabular-nums;
+      pointer-events: none;
+    }
+    .char-counter.is-warn { color: #fbbf24; }
+    .char-counter.is-max  { color: #f87171; }
   </style>
 
   <!-- Browser check -->
@@ -802,7 +818,8 @@ import Base from '../layouts/Base.astro';
               <div>
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Clip Title</label>
                 <div class="relative">
-                  <input id="clip-title" type="text" placeholder="My Home Videos 1994"
+                  <input id="clip-title" type="text" placeholder="My Home Videos 1994" maxlength="100"
+                    data-char-counter="counter-clip-title" data-char-max="100"
                     class="w-full pl-2 pr-8 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
                   <button id="yt-pub-ai-title" type="button"
                           class="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-red-400 transition-colors leading-none"
@@ -813,11 +830,13 @@ import Base from '../layouts/Base.astro';
                     </svg>
                   </button>
                 </div>
+                <p id="counter-clip-title" class="char-counter">0 / 100</p>
               </div>
               <div>
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Description</label>
                 <div class="relative">
-                  <textarea id="clip-description" rows="2" placeholder="What's on this clip..."
+                  <textarea id="clip-description" rows="2" placeholder="What's on this clip..." maxlength="5000"
+                    data-char-counter="counter-clip-description" data-char-max="5000"
                     class="w-full pl-2 pr-8 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
                   <button id="yt-pub-ai-desc" type="button"
                           class="absolute right-2 top-2 text-white/30 hover:text-red-400 transition-colors leading-none"
@@ -828,6 +847,7 @@ import Base from '../layouts/Base.astro';
                     </svg>
                   </button>
                 </div>
+                <p id="counter-clip-description" class="char-counter">0 / 5000</p>
               </div>
               <div id="ai-fields" class="space-y-2">
                 <!-- Year + Distributor share a row to save vertical space in
@@ -848,8 +868,10 @@ import Base from '../layouts/Base.astro';
                 </div>
                 <div>
                   <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tags</label>
-                  <input id="clip-tags" type="text" placeholder="home video, 90s, family"
+                  <input id="clip-tags" type="text" placeholder="home video, 90s, family" maxlength="500"
+                    data-char-counter="counter-clip-tags" data-char-max="500"
                     class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                  <p id="counter-clip-tags" class="char-counter">0 / 500</p>
                 </div>
                 <div>
                   <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">VHS Tape</label>
@@ -967,20 +989,26 @@ import Base from '../layouts/Base.astro';
                    here flow through to the main sidebar fields. -->
               <div id="yt-pub-suggestion-title-group" class="hidden mb-3">
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Title</label>
-                <input id="yt-pub-suggestion-title" type="text"
+                <input id="yt-pub-suggestion-title" type="text" maxlength="100"
+                  data-char-counter="counter-yt-pub-suggestion-title" data-char-max="100"
                   class="w-full text-white/90 text-xs bg-black/50 border border-white/10 p-2 focus:outline-none focus:border-white/40" />
+                <p id="counter-yt-pub-suggestion-title" class="char-counter">0 / 100</p>
               </div>
 
               <div id="yt-pub-suggestion-desc-group" class="hidden mb-3">
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Description</label>
-                <textarea id="yt-pub-suggestion-desc" rows="6"
+                <textarea id="yt-pub-suggestion-desc" rows="6" maxlength="5000"
+                  data-char-counter="counter-yt-pub-suggestion-desc" data-char-max="5000"
                   class="w-full text-white/90 text-xs bg-black/50 border border-white/10 p-2 max-h-40 overflow-y-auto resize-none focus:outline-none focus:border-white/40"></textarea>
+                <p id="counter-yt-pub-suggestion-desc" class="char-counter">0 / 5000</p>
               </div>
 
               <div id="yt-pub-suggestion-tags-group" class="hidden mb-4">
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tags</label>
-                <input id="yt-pub-suggestion-tags" type="text"
+                <input id="yt-pub-suggestion-tags" type="text" maxlength="500"
+                  data-char-counter="counter-yt-pub-suggestion-tags" data-char-max="500"
                   class="w-full text-white/90 text-xs bg-black/50 border border-white/10 p-2 focus:outline-none focus:border-white/40" />
+                <p id="counter-yt-pub-suggestion-tags" class="char-counter">0 / 500</p>
               </div>
 
               <div class="flex gap-2 flex-wrap">
@@ -1159,6 +1187,16 @@ import Base from '../layouts/Base.astro';
         <span class="inline-block w-1.5 h-1.5 bg-red-500 ml-1" style="box-shadow: 0 0 6px rgba(229,57,53,0.6);"></span>
         <span class="text-white/85 font-bold text-[11px] tracking-[0.15em] uppercase">VHS Garage — Library</span>
         <span class="flex-1"></span>
+        <!-- Filter toggle — flips between showing all clips vs. only
+             un-uploaded ones. Persists across sessions in localStorage.
+             Useful once the library has 30+ clips and the un-uploaded
+             ones get lost in a sea of YouTube pills. -->
+        <button id="library-filter-btn" type="button"
+                class="px-2 h-5 flex items-center justify-center text-white/80 hover:text-white border border-white/25 hover:border-white/50 text-[10px] tracking-wider uppercase transition-colors"
+                title="Toggle showing all vs. un-uploaded clips">
+          Show: All
+        </button>
+
         <!-- Upload Many — toggles batch-selection mode. Becomes the
              "Upload (N of 6)" counter while selecting; click again with
              0 selected (or hit Esc) to exit selection mode. Once N > 0
@@ -1178,6 +1216,17 @@ import Base from '../layouts/Base.astro';
           <p class="text-white/80 text-sm mb-2">Pick your local drive folder to view your clips</p>
           <p class="text-white/40 text-xs mb-5 max-w-sm">VHS Garage doesn't know where your recordings are saved until you point it at the folder. Read access only.</p>
           <button id="library-pick-dir" class="px-4 py-2 border border-white/30 text-white/80 hover:text-white hover:border-white text-xs transition-colors">Choose folder…</button>
+        </div>
+
+        <!-- Resync banner — only shown when checkLibraryResyncBanner finds
+             clips on disk (with a .json sidecar) that aren't in the catalog.
+             One click rebuilds the missing entries from the sidecars. Hidden
+             when catalog and disk agree. -->
+        <div id="library-resync-banner" class="hidden flex items-center gap-2 px-3 py-2 border-b border-yellow-500/30" style="background: rgba(202, 138, 4, 0.12);">
+          <span class="text-yellow-300/85 text-[11px] flex-1">
+            Found <span id="library-resync-count" class="font-bold">0</span> clip(s) on disk not in your library.
+          </span>
+          <button id="library-resync-btn" class="px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-white text-[10px] uppercase tracking-wider transition-colors">Resync</button>
         </div>
 
         <div id="library-grid" class="grid grid-cols-3 sm:grid-cols-4 gap-2 p-3"></div>
