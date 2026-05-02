@@ -798,19 +798,27 @@ import Base from '../layouts/Base.astro';
               <p id="yt-pub-suggestion-meta" class="text-white/30 text-[10px] mb-3"></p>
               <p id="yt-pub-suggestion-fallback" class="hidden text-yellow-400/80 text-[10px] mb-3"></p>
 
+              <!-- Suggestion fields are real <input>/<textarea> so the user
+                   can tweak the AI's output BEFORE clicking "Use this".
+                   applySuggestion (in app.js) reads from these elements'
+                   .value, NOT from the stored AI response, so any edits
+                   here flow through to the main sidebar fields. -->
               <div id="yt-pub-suggestion-title-group" class="hidden mb-3">
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Title</label>
-                <p id="yt-pub-suggestion-title" class="text-white/90 text-xs bg-black/50 border border-white/10 p-2"></p>
+                <input id="yt-pub-suggestion-title" type="text"
+                  class="w-full text-white/90 text-xs bg-black/50 border border-white/10 p-2 focus:outline-none focus:border-white/40" />
               </div>
 
               <div id="yt-pub-suggestion-desc-group" class="hidden mb-3">
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Description</label>
-                <p id="yt-pub-suggestion-desc" class="text-white/90 text-xs bg-black/50 border border-white/10 p-2 whitespace-pre-wrap max-h-40 overflow-y-auto"></p>
+                <textarea id="yt-pub-suggestion-desc" rows="6"
+                  class="w-full text-white/90 text-xs bg-black/50 border border-white/10 p-2 max-h-40 overflow-y-auto resize-none focus:outline-none focus:border-white/40"></textarea>
               </div>
 
               <div id="yt-pub-suggestion-tags-group" class="hidden mb-4">
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tags</label>
-                <p id="yt-pub-suggestion-tags" class="text-white/90 text-xs bg-black/50 border border-white/10 p-2"></p>
+                <input id="yt-pub-suggestion-tags" type="text"
+                  class="w-full text-white/90 text-xs bg-black/50 border border-white/10 p-2 focus:outline-none focus:border-white/40" />
               </div>
 
               <div class="flex gap-2 flex-wrap">

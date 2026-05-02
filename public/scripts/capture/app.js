@@ -1739,18 +1739,22 @@ async function demoFlash(el) {
   el.style.position = prevPos;
 }
 
-// Stream text into a non-input element (e.g. a <p>). `mode` controls cadence:
+// Stream text into an element. Handles <p>/<span> (textContent) AND
+// <input>/<textarea> (value) — the suggestion preview targets are now
+// real form fields so the user can edit them, but we still want the demo
+// to type-stream into them for the LLM-streaming illusion.
 //   'char' — one character every `delay` ms (good for short titles)
 //   'word' — one word every `delay` ms (good for descriptions; faster apparent)
-// Used to fake an LLM streaming the suggestion in rather than dumping all
-// the text at once.
 async function demoStreamText(el, text, mode = 'word', delay = 60) {
   if (!el) return;
-  el.textContent = '';
+  const isField = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
+  const get = () => (isField ? el.value : el.textContent) || '';
+  const set = (v) => { if (isField) el.value = v; else el.textContent = v; };
+  set('');
   if (mode === 'char') {
     for (let i = 0; i < text.length; i++) {
       if (!demoActive) return;
-      el.textContent += text[i];
+      set(get() + text[i]);
       await demoSleep(delay);
     }
     return;
@@ -1760,7 +1764,7 @@ async function demoStreamText(el, text, mode = 'word', delay = 60) {
   const tokens = text.split(/(\s+)/);
   for (let i = 0; i < tokens.length; i++) {
     if (!demoActive) return;
-    el.textContent += tokens[i];
+    set(get() + tokens[i]);
     // Don't sleep on whitespace tokens — only on content tokens, otherwise
     // the cadence drags.
     if (tokens[i].trim()) await demoSleep(delay);
@@ -1973,7 +1977,8 @@ async function runDemo() {
     document.getElementById('yt-pub-suggestion-meta').textContent = 'Generated from your sleeve photos and clip metadata.';
     if (sugTitle) await demoStreamText(sugTitle, TITLE, 'char', 22);
     if (sugDesc) await demoStreamText(sugDesc, DESC, 'word', 32);
-    if (sugTags) sugTags.textContent = TAGS;
+    // sugTags is an <input> now, not a <p> — write to .value, not textContent.
+    if (sugTags) sugTags.value = TAGS;
 
     // t≈5.7s — "Use this" populates fields (instant), suggestion hides
     await demoSleep(300);
@@ -3424,9 +3429,13 @@ function wireYouTubePublish() {
     suggestionDescGroup.classList.toggle('hidden', !showDesc);
     suggestionTagsGroup.classList.toggle('hidden', !showTags);
 
-    suggestionTitle.textContent = data.title || '';
-    suggestionDesc.textContent = data.description || '';
-    suggestionTags.textContent = data.tags || '';
+    // Suggestion fields are now real <input>/<textarea>, not <p> — write
+    // to .value so they're editable in place. The user can tweak any of
+    // the three before clicking Use this; applySuggestion reads back from
+    // these same .value properties (not from `data`).
+    suggestionTitle.value = data.title || '';
+    suggestionDesc.value = data.description || '';
+    suggestionTags.value = data.tags || '';
   }
 
   async function fetchSuggestion(scope) {
@@ -3475,16 +3484,23 @@ function wireYouTubePublish() {
   }
 
   function applySuggestion() {
-    if (!currentSuggestion) return;
-    const s = currentSuggestion;
+    // Pull from the visible suggestion fields (which the user may have
+    // edited) rather than the stashed AI response. This is what makes
+    // the preview meaningfully editable — the AI gives you a starting
+    // point, you tweak it, "Use this" copies your version into the
+    // main sidebar form. Empty fields don't overwrite (so an accidental
+    // wipe doesn't blow away whatever's already in the sidebar).
     if (currentSuggestionScope === 'all' || currentSuggestionScope === 'title') {
-      if (s.title) titleInput.value = s.title;
+      const t = (suggestionTitle.value || '').trim();
+      if (t) titleInput.value = t;
     }
     if (currentSuggestionScope === 'all' || currentSuggestionScope === 'description') {
-      if (s.description) descInput.value = s.description;
+      const d = suggestionDesc.value || '';
+      if (d.trim()) descInput.value = d;
     }
     if (currentSuggestionScope === 'all') {
-      if (s.tags) tagsInput.value = s.tags;
+      const tags = (suggestionTags.value || '').trim();
+      if (tags) tagsInput.value = tags;
     }
     currentSuggestion = null;
     showForm();
