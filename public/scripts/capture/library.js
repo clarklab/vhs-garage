@@ -1,5 +1,19 @@
 const CATALOG_KEY = 'vhsg_catalog';
 
+// Library-tile thumbnails live in localStorage alongside the catalog, so they
+// have to stay tiny. 320px / JPEG-0.6 keeps a typical frame under ~15KB even
+// from a 1080p source. Heavier image data (full-res YT thumbnails, sleeves)
+// must never be persisted into the catalog itself — see saveClips' quota
+// recovery and the `HEAVY_FIELDS` list below.
+const MAX_THUMB_DIM = 320;
+const THUMB_QUALITY = 0.6;
+
+// Fields that can be evicted from the catalog under quota pressure. Sleeves
+// are recoverable from disk (`{basename}_front.jpg` / `_back.jpg`) and the
+// full-res YT thumbnail can be re-picked from the player; the small
+// `thumbnail` is the last to go because dropping it leaves an empty tile.
+const HEAVY_FIELDS = ['sleeveFront', 'sleeveBack', 'ytThumbnailDataUrl', 'thumbnail'];
+
 export function getClips() {
   try {
     return JSON.parse(localStorage.getItem(CATALOG_KEY) || '[]');
@@ -8,8 +22,38 @@ export function getClips() {
   }
 }
 
+function isQuotaError(e) {
+  return e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014);
+}
+
+// Persist clips, recovering from QuotaExceededError by stripping heavy image
+// fields from the oldest clips first. Mutates `clips` in place when a trim
+// happens so the caller's array reflects what actually got saved.
 function saveClips(clips) {
-  localStorage.setItem(CATALOG_KEY, JSON.stringify(clips));
+  try {
+    localStorage.setItem(CATALOG_KEY, JSON.stringify(clips));
+    return true;
+  } catch (e) {
+    if (!isQuotaError(e)) throw e;
+  }
+
+  const trimmed = clips.map(c => ({ ...c }));
+  for (const field of HEAVY_FIELDS) {
+    // Strip oldest-first (clips are stored newest-first via unshift).
+    for (let i = trimmed.length - 1; i >= 0; i--) {
+      if (trimmed[i][field] == null) continue;
+      delete trimmed[i][field];
+      try {
+        localStorage.setItem(CATALOG_KEY, JSON.stringify(trimmed));
+        clips.splice(0, clips.length, ...trimmed);
+        return true;
+      } catch (e) {
+        if (!isQuotaError(e)) throw e;
+      }
+    }
+  }
+  console.error('[catalog] save failed: quota exhausted even after trim');
+  return false;
 }
 
 export function addClip(entry) {
@@ -52,11 +96,41 @@ export function createClipEntry(title, filename, duration, fileSize, bitrate) {
 
 export function captureThumbnail(videoElement) {
   const canvas = document.getElementById('capture-canvas');
-  canvas.width = videoElement.videoWidth || 320;
-  canvas.height = videoElement.videoHeight || 240;
+  const sw = videoElement.videoWidth || 320;
+  const sh = videoElement.videoHeight || 240;
+  const scale = Math.min(1, MAX_THUMB_DIM / sw, MAX_THUMB_DIM / sh);
+  canvas.width = Math.max(1, Math.round(sw * scale));
+  canvas.height = Math.max(1, Math.round(sh * scale));
   const ctx = canvas.getContext('2d');
   ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', 0.7);
+  return canvas.toDataURL('image/jpeg', THUMB_QUALITY);
+}
+
+// Downscale a JPEG data URL into a library-tile-sized thumbnail. Used when
+// the user picks a YouTube thumbnail from the player (full-res frame) and
+// we need a small companion image to show in the library grid. Returns the
+// original on failure so callers don't have to handle errors.
+export async function shrinkDataUrlForCatalog(dataUrl) {
+  if (!dataUrl) return dataUrl;
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('image decode failed'));
+      i.src = dataUrl;
+    });
+    const sw = img.naturalWidth || MAX_THUMB_DIM;
+    const sh = img.naturalHeight || MAX_THUMB_DIM;
+    const scale = Math.min(1, MAX_THUMB_DIM / sw, MAX_THUMB_DIM / sh);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(sw * scale));
+    canvas.height = Math.max(1, Math.round(sh * scale));
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', THUMB_QUALITY);
+  } catch {
+    return dataUrl;
+  }
 }
 
 export async function exportCatalog(directoryHandle) {

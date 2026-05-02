@@ -6,7 +6,7 @@ import {
   startRecording, stopRecording, isRecording, formatTime, formatSize, generateFilename, getLastFileHandle
 } from './recorder.js';
 import {
-  getClips, addClip, updateClip, deleteClip, createClipEntry, captureThumbnail, exportCatalog, renderLibrary
+  getClips, addClip, updateClip, deleteClip, createClipEntry, captureThumbnail, exportCatalog, renderLibrary, shrinkDataUrlForCatalog
 } from './library.js';
 import {
   initWebcam, stopWebcam, handleSleeveCapture, handleSleeveRetake, getSleeveData, getSleeveState,
@@ -873,11 +873,15 @@ function wireRecordButton() {
         entry.recordingSpeed = speed;
         entry.condition = condition;
 
-        // Attach sleeve data
-        const sleeveData = getSleeveData();
-        entry.sleeveFront = sleeveData.front;
-        entry.sleeveBack = sleeveData.back;
-        addClip(entry);
+        // Sleeve photos are persisted to disk via saveSleevePhotos below and
+        // re-read from disk on demand by readSleeveFromDisk — keeping the
+        // full data URLs in the catalog blew the localStorage quota after a
+        // few clips and broke the rest of this onStop handler.
+        try {
+          addClip(entry);
+        } catch (e) {
+          console.error('[capture] catalog save failed:', e);
+        }
         lastClipId = entry.id;
         // Reveal Thumbnail + Publish fieldsets in column 3 for the new clip.
         updateClipDependentPanels();
@@ -2328,24 +2332,17 @@ async function loadClipIntoEditor(clipId) {
   setVal('clip-condition', clip.condition);
   setVal('clip-notes', clip.cassetteNotes);
 
-  // 4. Restore sleeve previews. Prefer the data URLs already in the catalog,
-  // but fall back to reading the matching {basename}_front.jpg /
-  // {basename}_back.jpg from disk if the catalog entry doesn't carry them
-  // (older recordings, catalog imported from another machine, sleeve data
-  // URLs ever pruned for catalog size, etc.). When found on disk, also
-  // backfill the catalog so subsequent loads are fast.
+  // 4. Restore sleeve previews. Sleeves now live on disk only (storing the
+  // full data URLs in the catalog blew localStorage quota and broke the
+  // record→playback flow). Prefer in-catalog data for back-compat with old
+  // entries, then fall back to {basename}_front.jpg / _back.jpg from disk.
+  // We don't write back to the catalog — the disk file is the source of truth.
   let frontData = clip.sleeveFront || null;
   let backData = clip.sleeveBack || null;
   if (clip.filename && directoryHandle) {
     const baseForSleeve = clip.filename.replace(/\.(webm|mp4)$/, '');
-    if (!frontData) {
-      frontData = await readSleeveFromDisk(directoryHandle, baseForSleeve, 'front');
-      if (frontData) updateClip(clipId, { sleeveFront: frontData });
-    }
-    if (!backData) {
-      backData = await readSleeveFromDisk(directoryHandle, baseForSleeve, 'back');
-      if (backData) updateClip(clipId, { sleeveBack: backData });
-    }
+    if (!frontData) frontData = await readSleeveFromDisk(directoryHandle, baseForSleeve, 'front');
+    if (!backData) backData = await readSleeveFromDisk(directoryHandle, baseForSleeve, 'back');
   }
   // restoreSleeve also re-syncs the sleeve module's internal state machine
   // so Retake / Capture Back behave naturally afterward — both captured
@@ -2486,10 +2483,11 @@ function wireThumbnailPicker() {
 
   async function selectThumbnail(dataUrl) {
     if (!lastClipId) return;
-    // ytThumbnailDataUrl is what gets uploaded to YouTube; thumbnail is the
-    // library tile preview. Reusing the same data URL for both keeps them
-    // visually in sync.
-    updateClip(lastClipId, { ytThumbnailDataUrl: dataUrl, thumbnail: dataUrl });
+    // ytThumbnailDataUrl is the full-res frame uploaded to YouTube; thumbnail
+    // is the library-tile preview and has to stay tiny so the catalog fits in
+    // localStorage. Both come from the same source frame so they stay in sync.
+    const small = await shrinkDataUrlForCatalog(dataUrl);
+    updateClip(lastClipId, { ytThumbnailDataUrl: dataUrl, thumbnail: small });
     refreshLibrary();
     renderGrid();
   }
@@ -2744,15 +2742,31 @@ function regenerateFilenameWithTitle(oldFilename, newTitle, nameFormat) {
 // Rename a file in the user's save folder. Prefers the modern
 // FileSystemFileHandle.move() and falls back to copy-then-delete. Returns
 // the new filename on success, null on failure.
+//
+// The move() path can throw InvalidModificationError on user-visible folder
+// handles (e.g. immediately after the recorder closed its writable, before
+// the OS releases the lock). We catch that and fall through to the copy
+// path instead of giving up — the previous version only attempted the
+// fallback when move was undefined, leaving the file mis-named whenever
+// the new API was present but unhappy.
 async function renameFileOnDisk(oldName, newName) {
   if (!directoryHandle || !oldName || !newName || oldName === newName) return null;
+  let oldHandle;
   try {
-    const oldHandle = await directoryHandle.getFileHandle(oldName);
-    if (typeof oldHandle.move === 'function') {
+    oldHandle = await directoryHandle.getFileHandle(oldName);
+  } catch (e) {
+    console.warn('[rename] could not open source:', e.message);
+    return null;
+  }
+  if (typeof oldHandle.move === 'function') {
+    try {
       await oldHandle.move(newName);
       return newName;
+    } catch (e) {
+      console.warn('[rename] move() failed, falling back to copy:', e.message);
     }
-    // Fallback: copy bytes to a new handle, then remove the original.
+  }
+  try {
     const file = await oldHandle.getFile();
     const newHandle = await directoryHandle.getFileHandle(newName, { create: true });
     const writable = await newHandle.createWritable();
@@ -2761,7 +2775,7 @@ async function renameFileOnDisk(oldName, newName) {
     await directoryHandle.removeEntry(oldName);
     return newName;
   } catch (e) {
-    console.warn('[rename] failed:', e.message);
+    console.warn('[rename] copy fallback failed:', e.message);
     return null;
   }
 }
