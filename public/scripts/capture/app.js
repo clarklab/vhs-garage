@@ -146,6 +146,7 @@ async function startApp() {
   wireMainEditorAutosave();
   wireThumbnailPicker();
   wireLibraryDrag();
+  wireLibraryBatchUpload();
   wireCustomScrollbars();
   wireKeyboardShortcuts();
   wireBeforeUnload();
@@ -2374,7 +2375,230 @@ function refreshLibrary() {
     }
 
     refreshLibrary();
-  }, onOpen, onUpload);
+  }, onOpen, onUpload, {
+    mode: batchSelection.mode,
+    selectedIds: batchSelection.ids,
+    onToggleSelect: toggleBatchSelection,
+  });
+}
+
+// --- Library batch upload (Upload Many) ---
+//
+// Toggles the library into a selection mode where every un-uploaded tile
+// gets a checkbox. User picks up to 6 clips; the titlebar button becomes
+// the "Upload (N of 6)" counter. Clicking it (with N > 0) opens a review
+// modal where the user can quick-edit title/description per clip before
+// confirming. Confirm enqueues all of them into the existing toast upload
+// queue (concurrency 2) and exits selection mode.
+
+const BATCH_CAP = 6;
+const batchSelection = {
+  mode: false,
+  ids: new Set(),
+};
+
+function setBatchMode(on) {
+  batchSelection.mode = on;
+  if (!on) batchSelection.ids.clear();
+  updateBatchCounterButton();
+  refreshLibrary();
+}
+
+function toggleBatchSelection(clipId) {
+  if (batchSelection.ids.has(clipId)) {
+    batchSelection.ids.delete(clipId);
+  } else {
+    if (batchSelection.ids.size >= BATCH_CAP) return; // silently cap
+    batchSelection.ids.add(clipId);
+  }
+  updateBatchCounterButton();
+  refreshLibrary();
+}
+
+function updateBatchCounterButton() {
+  const btn = document.getElementById('library-upload-many-btn');
+  if (!btn) return;
+  if (!batchSelection.mode) {
+    btn.textContent = 'Upload Many';
+    btn.classList.remove('is-active');
+    return;
+  }
+  const n = batchSelection.ids.size;
+  btn.textContent = `Upload (${n} of ${BATCH_CAP})`;
+  btn.classList.toggle('is-active', n > 0);
+}
+
+function wireLibraryBatchUpload() {
+  const btn = document.getElementById('library-upload-many-btn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    if (!batchSelection.mode) {
+      // Enter selection mode.
+      setBatchMode(true);
+      return;
+    }
+    // Already in selection mode — count = 0 → exit; count > 0 → open review.
+    if (batchSelection.ids.size === 0) {
+      setBatchMode(false);
+      return;
+    }
+    openBatchReviewModal();
+  });
+
+  // Esc exits selection mode (only when no other modal owns the key).
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!batchSelection.mode) return;
+    const reviewOpen = !document.getElementById('batch-review-modal')?.classList.contains('hidden');
+    if (reviewOpen) return; // let the review modal handle Esc itself
+    setBatchMode(false);
+  });
+
+  // Wire the review modal's Cancel + Confirm + backdrop dismiss.
+  const modal = document.getElementById('batch-review-modal');
+  const cancelBtn = document.getElementById('batch-review-cancel');
+  const confirmBtn = document.getElementById('batch-review-confirm');
+  if (cancelBtn) cancelBtn.addEventListener('click', closeBatchReviewModal);
+  if (modal) modal.addEventListener('click', (e) => {
+    // Only the backdrop (the modal element itself) dismisses; clicks on
+    // the inner card don't bubble through.
+    if (e.target === modal) closeBatchReviewModal();
+  });
+  if (confirmBtn) confirmBtn.addEventListener('click', confirmBatchUpload);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const isOpen = !document.getElementById('batch-review-modal')?.classList.contains('hidden');
+    if (isOpen) closeBatchReviewModal();
+  });
+}
+
+function openBatchReviewModal() {
+  const modal = document.getElementById('batch-review-modal');
+  const list = document.getElementById('batch-review-list');
+  const count = document.getElementById('batch-review-count');
+  if (!modal || !list) return;
+
+  const clips = getClips();
+  const selected = Array.from(batchSelection.ids)
+    .map(id => clips.find(c => c.id === id))
+    .filter(Boolean);
+
+  if (count) count.textContent = `${selected.length} clip${selected.length === 1 ? '' : 's'}`;
+
+  list.innerHTML = '';
+  selected.forEach(clip => {
+    const row = document.createElement('div');
+    row.className = 'flex gap-3 items-start border border-white/15 p-3';
+    row.dataset.clipId = clip.id;
+    const titleVal = clip.title || '';
+    const descVal = clip.description || '';
+    row.innerHTML = `
+      <div class="shrink-0 w-20 aspect-video bg-black border border-white/10 overflow-hidden flex items-center justify-center">
+        ${clip.thumbnail
+          ? `<img src="${clip.thumbnail}" class="w-full h-full object-cover" alt="">`
+          : '<span class="text-white/15 text-[10px]">--</span>'}
+      </div>
+      <div class="flex-1 min-w-0 flex flex-col gap-1.5">
+        <input type="text" data-field="title" value="${escapeHtml(titleVal)}"
+          placeholder="(no title)"
+          class="w-full bg-black border border-white/15 text-white text-[12px] px-2 py-1 focus:outline-none focus:border-white/40">
+        <textarea data-field="description" rows="3" placeholder="(no description)"
+          class="w-full bg-black border border-white/15 text-white text-[11px] px-2 py-1 resize-none focus:outline-none focus:border-white/40">${escapeHtml(descVal)}</textarea>
+      </div>
+      <button type="button" data-action="remove" title="Remove from batch"
+        class="shrink-0 w-5 h-5 flex items-center justify-center text-white/40 hover:text-red-400 text-sm leading-none">×</button>
+    `;
+    // Per-row remove button — drops the clip from this batch (selection set
+    // also updates so on Cancel you can see the new state).
+    const removeBtn = row.querySelector('[data-action=remove]');
+    if (removeBtn) removeBtn.addEventListener('click', () => {
+      batchSelection.ids.delete(clip.id);
+      updateBatchCounterButton();
+      refreshLibrary();
+      // Re-render or close the modal if no clips remain.
+      if (batchSelection.ids.size === 0) {
+        closeBatchReviewModal();
+      } else {
+        openBatchReviewModal();
+      }
+    });
+    list.appendChild(row);
+  });
+
+  modal.classList.remove('hidden');
+}
+
+function closeBatchReviewModal() {
+  document.getElementById('batch-review-modal')?.classList.add('hidden');
+  // Selection is preserved so the user can re-open and continue editing.
+}
+
+async function confirmBatchUpload() {
+  const list = document.getElementById('batch-review-list');
+  if (!list) return;
+
+  // 1) Persist the in-modal edits back to the catalog so they survive
+  // the upload AND show in the library tile next time.
+  const rows = list.querySelectorAll('[data-clip-id]');
+  rows.forEach(row => {
+    const clipId = row.dataset.clipId;
+    const titleEl = row.querySelector('[data-field=title]');
+    const descEl = row.querySelector('[data-field=description]');
+    const updates = {};
+    if (titleEl) updates.title = titleEl.value;
+    if (descEl) updates.description = descEl.value;
+    updateClip(clipId, updates);
+  });
+
+  // 2) Make sure we have a token before queueing the batch — refresh once
+  // and reuse for all items so we don't fire N parallel token fetches.
+  let token = currentToken;
+  if (!token) {
+    token = await fetchAccessTokenInBackground();
+    if (!token) return;
+  }
+
+  // 3) Enqueue every selected clip. The existing queue handles
+  // concurrency (2 at a time) and toast rendering. Snapshotting happens
+  // inside enqueueUpload — it reads the now-updated catalog title/desc.
+  // We bypass the per-clip publish-form snapshot by writing the values
+  // straight to the form for each enqueue (form snapshot reads the form,
+  // not the catalog — see snapshotPublishForm). Since the form is keyed
+  // to a single active clip, easiest is to populate the form per enqueue
+  // before calling.
+  const orderedIds = rows ? Array.from(rows).map(r => r.dataset.clipId)
+                          : Array.from(batchSelection.ids);
+
+  for (const id of orderedIds) {
+    // Make snapshotPublishForm see this clip's saved values by writing
+    // them into the form briefly. Restore the form values we just
+    // overwrote at the very end so the editor doesn't mutate behind
+    // the user's back if they happen to be editing a different clip.
+    const clips = getClips();
+    const clip = clips.find(c => c.id === id);
+    if (!clip) continue;
+    const titleEl = document.getElementById('clip-title');
+    const descEl = document.getElementById('clip-description');
+    const tagsEl = document.getElementById('clip-tags');
+    const prevTitle = titleEl ? titleEl.value : '';
+    const prevDesc = descEl ? descEl.value : '';
+    const prevTags = tagsEl ? tagsEl.value : '';
+    if (titleEl) titleEl.value = clip.title || '';
+    if (descEl) descEl.value = clip.description || '';
+    if (tagsEl) tagsEl.value = clip.tags || '';
+    enqueueUpload(id, token);
+    // Restore on the next microtask so enqueueUpload has time to snapshot.
+    if (titleEl) titleEl.value = prevTitle;
+    if (descEl) descEl.value = prevDesc;
+    if (tagsEl) tagsEl.value = prevTags;
+  }
+
+  // 4) Close the modal, exit selection mode, close the library window so
+  //    the user sees the toast stack take over.
+  closeBatchReviewModal();
+  setBatchMode(false);
+  document.getElementById('view-library')?.classList.add('hidden');
+  document.getElementById('library-backdrop')?.classList.add('hidden');
 }
 
 // Read a saved sleeve image from disk and return it as a data URL. Returns

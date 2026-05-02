@@ -170,7 +170,13 @@ function clipToJSON(clip) {
   return JSON.stringify(obj, null, 2);
 }
 
-export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUpload) {
+// renderLibrary now optionally takes a selection-mode bundle. When
+// `selection.mode` is true, every un-uploaded tile gets a checkbox
+// indicator at the top-left and the click handler toggles selection
+// instead of opening the clip. Uploaded tiles dim out and ignore clicks.
+// Selection cap is enforced by the caller's onToggleSelect — if it
+// returns false (cap hit on a new selection), we don't visually toggle.
+export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUpload, selection) {
   if (!clips.length) {
     container.innerHTML = '';
     emptyMsg.classList.remove('hidden');
@@ -178,6 +184,10 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
   }
 
   emptyMsg.classList.add('hidden');
+  const selectionMode = !!(selection && selection.mode);
+  const selectedIds = (selection && selection.selectedIds) || new Set();
+  const onToggleSelect = (selection && selection.onToggleSelect) || null;
+
   // File-icon layout: thumbnail on top, two-line title + duration beneath.
   // Whole tile is the click target. No inline delete button — destructive
   // actions live in the native-style right-click context menu (Open Clip /
@@ -189,17 +199,35 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
   // the pill opens the saved clip.youtubeUrl in a new tab.
   container.innerHTML = clips.map(clip => {
     const isUploaded = !!clip.youtubeUrl;
+    const isSelected = selectedIds.has(clip.id);
     const uploadedBadge = isUploaded
       ? `<a href="${clip.youtubeUrl}" target="_blank" rel="noopener" class="library-yt-pill absolute top-1 right-1 inline-flex items-center gap-1 pl-1.5 pr-2 py-0.5 bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors" title="View on YouTube">
            <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24" aria-hidden="true"><path d="m22,7v-2h-2v-1H4v1h-2v2h-1v10h1v2h2v1h16v-1h2v-2h1V7h-1Zm-10,8h-2v-6h2v1h2v1h2v2h-2v1h-2v1Z"/></svg>
            <span>Uploaded</span>
          </a>`
       : '';
-    const tileClass = `library-card relative flex flex-col border border-white/15 ${onOpen ? 'cursor-pointer hover:border-white/40 hover:bg-white/5' : ''} transition-colors select-none`;
+    // Selection-mode checkbox indicator. Only on un-uploaded tiles —
+    // uploaded ones can't be re-uploaded (and the YouTube pill already
+    // tells you what's up).
+    const checkboxIndicator = (selectionMode && !isUploaded)
+      ? `<span class="library-checkbox ${isSelected ? 'is-checked' : ''}">${isSelected ? '✓' : ''}</span>`
+      : '';
+    const cursorClass = selectionMode
+      ? (isUploaded ? 'cursor-default' : 'cursor-pointer')
+      : (onOpen ? 'cursor-pointer hover:border-white/40 hover:bg-white/5' : '');
+    const tileExtra = [
+      selectionMode && isUploaded ? 'is-uploaded-in-selection' : '',
+      isSelected ? 'is-selected' : '',
+    ].filter(Boolean).join(' ');
+    const tileClass = `library-card relative flex flex-col border border-white/15 ${cursorClass} ${tileExtra} transition-colors select-none`.trim();
+    const titleAttr = selectionMode
+      ? (isUploaded ? 'Already uploaded — exit selection mode to open' : 'Click to toggle selection')
+      : (onOpen ? 'Click to open · right-click for options' : 'Right-click for options');
     return `
-    <div class="${tileClass}" data-id="${clip.id}" data-filename="${clip.filename || ''}" ${onOpen ? `title="Click to open · right-click for options"` : 'title="Right-click for options"'}>
+    <div class="${tileClass}" data-id="${clip.id}" data-filename="${clip.filename || ''}" data-uploaded="${isUploaded ? '1' : '0'}" title="${titleAttr}">
       <div class="relative aspect-[4/3] bg-[#141214] overflow-hidden flex items-center justify-center">
         ${clip.thumbnail ? `<img src="${clip.thumbnail}" class="w-full h-full object-cover pointer-events-none" alt="">` : '<span class="text-white/10 text-[10px] pointer-events-none">--</span>'}
+        ${checkboxIndicator}
         ${uploadedBadge}
       </div>
       <div class="px-1.5 py-1.5 min-w-0">
@@ -210,18 +238,23 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
   `;
   }).join('');
 
-  // Left-click opens the clip (when there's a folder picked); right-click
-  // shows the native-style context menu with Open Clip + Delete.
+  // Click + right-click handlers. In selection mode, click toggles the
+  // checkbox for un-uploaded tiles; right-click context menu (Open Clip /
+  // Delete) is suppressed since those actions don't make sense mid-batch.
   container.querySelectorAll('.library-card').forEach(el => {
-    if (onOpen) {
-      el.addEventListener('click', (e) => {
-        // Inner buttons / links (e.g. ▶ Uploaded) handle their own click.
-        if (e.target.closest('button, a')) return;
-        onOpen(el.dataset.id, el.dataset.filename);
-      });
-    }
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('button, a')) return; // inner controls handle themselves
+      if (selectionMode) {
+        const isUploaded = el.dataset.uploaded === '1';
+        if (isUploaded) return; // can't select uploaded clips
+        if (onToggleSelect) onToggleSelect(el.dataset.id);
+        return;
+      }
+      if (onOpen) onOpen(el.dataset.id, el.dataset.filename);
+    });
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      if (selectionMode) return; // suppress in selection mode
       showLibraryContextMenu(e.clientX, e.clientY, el.dataset.id, el.dataset.filename, onOpen, onDelete);
     });
   });

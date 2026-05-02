@@ -450,6 +450,53 @@ import Base from '../layouts/Base.astro';
       line-height: 1.35;
       white-space: pre-line;
     }
+
+    /* Library batch-selection mode. Tiles created by renderLibrary() in
+       library.js add a small checkbox indicator at the top-left of the
+       thumbnail when selectionMode is on. Style is the same chunky pixel
+       aesthetic as the rest of the UI. */
+    .library-checkbox {
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      width: 16px;
+      height: 16px;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 12px;
+      line-height: 1;
+      pointer-events: none;
+      z-index: 4;
+    }
+    .library-checkbox.is-checked {
+      background: #dc2626;
+      border-color: #dc2626;
+    }
+    .library-card.is-selected {
+      outline: 2px solid #dc2626;
+      outline-offset: -2px;
+    }
+    /* Uploaded tiles in selection mode get dimmed since they can't be
+       added to a batch (they're already up). */
+    .library-card.is-uploaded-in-selection {
+      opacity: 0.4;
+      cursor: default;
+    }
+    /* Counter button in the library titlebar — gets red and glowy once
+       at least one clip is selected. */
+    #library-upload-many-btn.is-active {
+      background: #dc2626;
+      border-color: #dc2626;
+      color: #fff;
+    }
+    #library-upload-many-btn.is-active:hover {
+      background: #ef4444;
+      border-color: #ef4444;
+    }
   </style>
 
   <!-- Browser check -->
@@ -1037,6 +1084,28 @@ import Base from '../layouts/Base.astro';
        so a normal append puts the new toast at the visual TOP. -->
   <div id="toast-stack" class="fixed bottom-4 right-4 z-[55] flex flex-col-reverse gap-2 pointer-events-none" style="font-family: 'VCR', monospace;"></div>
 
+  <!-- Batch upload review modal — shown after the user clicks the
+       "Upload (N of 6)" counter in the library titlebar. Body is a
+       vertical list of selected clips with editable title/description
+       per row (renderBatchReview in app.js builds the rows). Confirm
+       enqueues all of them into the existing toast queue. Same 1px-
+       border + VCR styling as the toast cards. -->
+  <div id="batch-review-modal" class="hidden fixed inset-0 z-[58] bg-black/70 flex items-center justify-center p-4" style="font-family: 'VCR', monospace;">
+    <div class="bg-[#1a181a] text-white border border-[#333] flex flex-col" style="width: 560px; max-width: 100%; max-height: 80vh;">
+      <div class="flex items-center gap-2 px-4 py-3 border-b border-white/15 shrink-0">
+        <span class="text-white/85 font-bold text-[11px] tracking-[0.15em] uppercase flex-1">Confirm batch upload</span>
+        <span id="batch-review-count" class="text-white/40 text-[10px] uppercase tracking-wider"></span>
+      </div>
+      <p class="px-4 pt-3 text-white/40 text-[10px] uppercase tracking-wider shrink-0">Edit title or description for any clip before uploading.</p>
+      <div id="batch-review-list" class="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3"></div>
+      <div class="flex items-center gap-2 px-4 py-3 border-t border-white/15 shrink-0">
+        <button id="batch-review-cancel" class="px-3 py-1.5 border border-white/25 text-white/70 hover:text-white hover:border-white/60 text-[11px] tracking-wider uppercase transition-colors">Cancel</button>
+        <span class="flex-1"></span>
+        <button id="batch-review-confirm" class="px-4 py-1.5 bg-red-600 hover:bg-red-500 text-white text-[11px] tracking-wider uppercase transition-colors">Upload</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Demo countdown modal — shown for ~3s before the puppet sequence
        starts. Same chiseled-bevel look as the toolbar dropdowns + library
        context menu so it reads as part of the same UI family. Font is
@@ -1090,6 +1159,15 @@ import Base from '../layouts/Base.astro';
         <span class="inline-block w-1.5 h-1.5 bg-red-500 ml-1" style="box-shadow: 0 0 6px rgba(229,57,53,0.6);"></span>
         <span class="text-white/85 font-bold text-[11px] tracking-[0.15em] uppercase">VHS Garage — Library</span>
         <span class="flex-1"></span>
+        <!-- Upload Many — toggles batch-selection mode. Becomes the
+             "Upload (N of 6)" counter while selecting; click again with
+             0 selected (or hit Esc) to exit selection mode. Once N > 0
+             clicking advances to the review modal. -->
+        <button id="library-upload-many-btn" type="button"
+                class="px-2 h-5 flex items-center justify-center text-white/80 hover:text-white border border-white/25 hover:border-white/50 text-[10px] tracking-wider uppercase transition-colors"
+                title="Select multiple clips to upload">
+          Upload Many
+        </button>
         <button id="to-capture-btn" type="button" class="w-5 h-5 flex items-center justify-center bg-red-600 hover:bg-red-500 text-white text-sm leading-none transition-colors" title="Close" style="font-family: 'VCR', monospace;">×</button>
       </div>
 
