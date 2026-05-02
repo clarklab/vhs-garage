@@ -3639,6 +3639,10 @@ function wireYouTubePublish() {
           // surface a soft warning underneath only if it fails.
           linkEl.href = ytUrl;
           form.classList.add('hidden');
+          // Hide progress explicitly — it now lives at the top of the
+          // publish section (sibling of the form) so it no longer
+          // disappears via parent inheritance when the form hides.
+          progressDiv.classList.add('hidden');
           done.classList.remove('hidden');
           if (thumbWarn) {
             thumbWarn.classList.add('hidden');

@@ -668,10 +668,21 @@ import Base from '../layouts/Base.astro';
                 </div>
               </div>
               <div id="ai-fields" class="space-y-2">
-                <div>
-                  <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Year</label>
-                  <input id="clip-year" type="text" placeholder="1994"
-                    class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                <!-- Year + Distributor share a row to save vertical space in
+                     this column. Year is short (4 chars), so the half-width
+                     input is plenty; Distributor truncates with ellipsis if
+                     it overflows the half-width slot. -->
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Year</label>
+                    <input id="clip-year" type="text" placeholder="1994"
+                      class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                  </div>
+                  <div>
+                    <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Distributor</label>
+                    <input id="clip-distributor" type="text" placeholder="Warner, Paramount..."
+                      class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                  </div>
                 </div>
                 <div>
                   <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tags</label>
@@ -681,11 +692,6 @@ import Base from '../layouts/Base.astro';
                 <div>
                   <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">VHS Tape</label>
                   <input id="clip-tape" type="text" placeholder="Which tape is this from?"
-                    class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
-                </div>
-                <div>
-                  <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Distributor</label>
-                  <input id="clip-distributor" type="text" placeholder="Warner, Paramount, Sony..."
                     class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
                 </div>
                 <div class="grid grid-cols-3 gap-2">
@@ -727,6 +733,18 @@ import Base from '../layouts/Base.astro';
           <div id="cap-pub-fieldset" class="hidden shrink-0 pt-3 border-t border-white/15">
             <p class="text-white/70 text-[11px] tracking-wider mb-3">░ Publish to YouTube ░</p>
 
+            <!-- Upload progress bar — pinned to the TOP of the publish
+                 section so it stays visible even when the panel has
+                 scrolled past the Upload button (which used to live below
+                 the bar). Shown only while a real upload is in flight;
+                 hidden in every other state. -->
+            <div id="yt-pub-progress" class="hidden mb-3">
+              <div style="height:4px;background:rgba(255,255,255,0.1);overflow:hidden;">
+                <div id="yt-pub-progress-bar" style="height:100%;width:0%;background:#e53935;transition:width 0.2s;"></div>
+              </div>
+              <p id="yt-pub-status" class="text-white/40 text-[10px] mt-1"></p>
+            </div>
+
             <!-- Signed-in account banner (visible when signed in) -->
             <div id="yt-pub-account" class="hidden flex items-center gap-2 mb-3 text-[11px] text-white/50">
               <img id="yt-pub-account-avatar" src="" alt="" class="w-5 h-5 rounded-full object-cover bg-white/10" />
@@ -766,12 +784,9 @@ import Base from '../layouts/Base.astro';
                 </select>
               </div>
               <button id="yt-pub-upload" class="w-full py-2 bg-red-600 hover:bg-red-500 text-white text-xs transition-colors">Upload to YouTube</button>
-              <div id="yt-pub-progress" class="hidden mt-3">
-                <div style="height:4px;background:rgba(255,255,255,0.1);overflow:hidden;">
-                  <div id="yt-pub-progress-bar" style="height:100%;width:0%;background:#e53935;transition:width 0.2s;"></div>
-                </div>
-                <p id="yt-pub-status" class="text-white/40 text-[10px] mt-1"></p>
-              </div>
+              <!-- (The #yt-pub-progress bar lives at the top of
+                   #cap-pub-fieldset above, NOT here — keeps it visible
+                   when the panel scrolls past the upload button.) -->
             </div>
 
             <!-- AI generating loader -->
