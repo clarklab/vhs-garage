@@ -543,6 +543,22 @@ function generateYouTubeText(entry) {
   return lines.join('\n');
 }
 
+// Read the per-clip {basename}.json sidecar from disk if present. Returns
+// the parsed object or null. Used by loadClipIntoEditor as a defense-in-
+// depth metadata source — the catalog (localStorage) is primary, but if
+// quota errors caused stale entries the sidecar fills in.
+async function readSidecarJson(dirHandle, basename) {
+  if (!dirHandle || !basename) return null;
+  try {
+    const fh = await dirHandle.getFileHandle(basename + '.json');
+    const file = await fh.getFile();
+    const text = await file.text();
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 async function saveSidecarFiles(dirHandle, basename, entry) {
   if (!dirHandle) return;
 
@@ -2324,18 +2340,37 @@ async function loadClipIntoEditor(clipId) {
   // 2. Make this the active clip so Save Data / ▶ YouTube / etc. all act on it.
   lastClipId = clipId;
 
-  // 3. Populate the main Clip Info form from the catalog entry.
+  // 2b. Merge in the sidecar JSON from disk (defense-in-depth).
+  // The catalog is the primary metadata source, but localStorage can drop
+  // updates silently when quota explodes — leaving the catalog stale or
+  // empty for the very fields we want to populate here. Every save also
+  // writes a per-clip {basename}.json sidecar to disk; read that and
+  // overlay any fields the catalog is missing. Catalog values always win
+  // when present (they're the freshest edits); sidecar fills in gaps.
+  let merged = clip;
+  if (clip.filename) {
+    const basename = clip.filename.replace(/\.(webm|mp4)$/, '');
+    const sidecar = await readSidecarJson(directoryHandle, basename);
+    if (sidecar) {
+      merged = { ...sidecar };
+      for (const [k, v] of Object.entries(clip)) {
+        if (v != null && v !== '') merged[k] = v;
+      }
+    }
+  }
+
+  // 3. Populate the main Clip Info form from the merged entry.
   const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
-  setVal('clip-title', clip.title);
-  setVal('clip-description', clip.description);
-  setVal('clip-year', clip.year);
-  setVal('clip-tags', clip.tags);
-  setVal('clip-tape', clip.tape);
-  setVal('clip-distributor', clip.distributor);
-  setVal('clip-tape-length', clip.tapeLength);
-  setVal('clip-speed', clip.recordingSpeed);
-  setVal('clip-condition', clip.condition);
-  setVal('clip-notes', clip.cassetteNotes);
+  setVal('clip-title', merged.title);
+  setVal('clip-description', merged.description);
+  setVal('clip-year', merged.year);
+  setVal('clip-tags', merged.tags);
+  setVal('clip-tape', merged.tape);
+  setVal('clip-distributor', merged.distributor);
+  setVal('clip-tape-length', merged.tapeLength);
+  setVal('clip-speed', merged.recordingSpeed);
+  setVal('clip-condition', merged.condition);
+  setVal('clip-notes', merged.cassetteNotes);
 
   // 4. Restore sleeve previews. Sleeves now live on disk only (storing the
   // full data URLs in the catalog blew localStorage quota and broke the
