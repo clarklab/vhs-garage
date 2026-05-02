@@ -14,6 +14,10 @@ import {
 } from './sleeve.js';
 import { startDetection, stopDetection, pauseDetection, resumeDetection } from './detector.js';
 import { initMeter, initMeterFromElement, pauseMeter, stopMeter } from './meter.js';
+import {
+  saveDirectoryHandle, loadDirectoryHandle, clearDirectoryHandle,
+  queryHandlePermission, tryRequestHandlePermission,
+} from './handle-store.js';
 
 let directoryHandle = null;
 let captureStream = null;
@@ -49,6 +53,33 @@ async function init() {
 
 async function startApp() {
   const settings = loadSettings();
+
+  // Restore the previously-picked save folder. Chrome remembers permission
+  // for "recently used" folders, so usually queryPermission returns
+  // 'granted' without re-prompting. If the browser downgraded permission to
+  // 'prompt' (long gap, cleared site data, etc.), we silently fall back —
+  // the user picks again via the toolbar's DIR menu like before.
+  try {
+    const savedDir = await loadDirectoryHandle();
+    if (savedDir) {
+      const perm = await queryHandlePermission(savedDir, 'readwrite');
+      if (perm === 'granted') {
+        directoryHandle = savedDir;
+        document.getElementById('status-dir-label').textContent = savedDir.name;
+      } else if (perm === 'prompt') {
+        // Try a silent re-grant — Chrome's heuristic decides if it shows a
+        // prompt or grants without one. If a prompt would have shown, this
+        // resolves to 'prompt' and we just leave the user-pick path.
+        const granted = await tryRequestHandlePermission(savedDir, 'readwrite');
+        if (granted === 'granted') {
+          directoryHandle = savedDir;
+          document.getElementById('status-dir-label').textContent = savedDir.name;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[startApp] could not restore save folder:', e.message);
+  }
 
   // Try to open capture stream with saved devices
   try {
@@ -360,7 +391,7 @@ function wireWelcomeModal() {
   if (pickDirBtn) {
     pickDirBtn.addEventListener('click', async () => {
       try {
-        directoryHandle = await window.showDirectoryPicker();
+        directoryHandle = await window.showDirectoryPicker(); saveDirectoryHandle(directoryHandle).catch(() => {});
         const name = directoryHandle.name;
         document.getElementById('welcome-dir-name').textContent = name;
         const settingDir = document.getElementById('setting-dir-name');
@@ -802,7 +833,7 @@ function wireRecordButton() {
 
     if (!directoryHandle) {
       try {
-        directoryHandle = await window.showDirectoryPicker();
+        directoryHandle = await window.showDirectoryPicker(); saveDirectoryHandle(directoryHandle).catch(() => {});
         document.getElementById('setting-dir-name').textContent = directoryHandle.name;
         document.getElementById('status-dir-label').textContent = directoryHandle.name;
       } catch {
@@ -816,7 +847,7 @@ function wireRecordButton() {
       const req = await directoryHandle.requestPermission({ mode: 'readwrite' });
       if (req !== 'granted') {
         alert('File system permission needed. Please re-select the save folder.');
-        try { directoryHandle = await window.showDirectoryPicker(); } catch { return; }
+        try { directoryHandle = await window.showDirectoryPicker(); saveDirectoryHandle(directoryHandle).catch(() => {}); } catch { return; }
       }
     }
 
@@ -1017,7 +1048,7 @@ function wireDevicePopover() {
 
   pickDir.addEventListener('click', async () => {
     try {
-      directoryHandle = await window.showDirectoryPicker();
+      directoryHandle = await window.showDirectoryPicker(); saveDirectoryHandle(directoryHandle).catch(() => {});
       document.getElementById('dp-dir-name').textContent = directoryHandle.name;
       document.getElementById('status-dir-label').textContent = directoryHandle.name;
     } catch {}
@@ -1320,7 +1351,7 @@ function unsetWebcamDevice() {
 
 async function pickSaveFolder() {
   try {
-    directoryHandle = await window.showDirectoryPicker();
+    directoryHandle = await window.showDirectoryPicker(); saveDirectoryHandle(directoryHandle).catch(() => {});
     const name = directoryHandle.name;
     const dpDirName = document.getElementById('dp-dir-name');
     if (dpDirName) dpDirName.textContent = name;
@@ -2128,7 +2159,7 @@ function wireLibrary() {
   document.getElementById('export-catalog-btn').addEventListener('click', async () => {
     if (!directoryHandle) {
       try {
-        directoryHandle = await window.showDirectoryPicker();
+        directoryHandle = await window.showDirectoryPicker(); saveDirectoryHandle(directoryHandle).catch(() => {});
       } catch { return; }
     }
     await exportCatalog(directoryHandle);
@@ -2142,7 +2173,7 @@ function wireLibrary() {
   if (pickDirBtn) {
     pickDirBtn.addEventListener('click', async () => {
       try {
-        directoryHandle = await window.showDirectoryPicker();
+        directoryHandle = await window.showDirectoryPicker(); saveDirectoryHandle(directoryHandle).catch(() => {});
         const name = directoryHandle.name;
         const settingDir = document.getElementById('setting-dir-name');
         if (settingDir) settingDir.textContent = name;
@@ -2291,8 +2322,57 @@ function refreshLibrary() {
     ? (id) => publishClip(id)
     : null;
 
-  renderLibrary(grid, empty, clips, (id) => {
+  renderLibrary(grid, empty, clips, async (id) => {
+    // 1. Snapshot the filename BEFORE removing from catalog (deleteClip wipes
+    //    the entry from localStorage so we lose the filename otherwise).
+    const allClips = getClips();
+    const target = allClips.find(c => c.id === id);
+    const filename = target && target.filename;
+
+    // 2. If the user is currently editing this clip, tear down the editor —
+    //    otherwise the playback element keeps a blob URL pointing at a file
+    //    we're about to delete and any subsequent action against the active
+    //    clip ID becomes a no-op (catalog already gone) or worse.
+    if (lastClipId === id) {
+      const playbackVideo = document.getElementById('playback');
+      if (playbackVideo) {
+        try { playbackVideo.pause(); } catch {}
+        playbackVideo.removeAttribute('src');
+        playbackVideo.load();
+      }
+      if (playbackBlobUrl) {
+        URL.revokeObjectURL(playbackBlobUrl);
+        playbackBlobUrl = null;
+      }
+      lastClipId = null;
+      hasPlayback = false;
+      showLiveTab();
+      document.getElementById('delete-recording-btn')?.classList.add('hidden');
+      updateClipDependentPanels();
+    }
+
+    // 3. Remove from catalog.
     deleteClip(id);
+
+    // 4. Remove from disk too (the previous behavior left the file behind,
+    //    which meant a "deleted" clip's file could surface again on import
+    //    or persist as orphaned bytes). Wipes the video AND its sidecars
+    //    (json, .youtube.txt, sleeve photos). Best-effort — missing files
+    //    are silently skipped.
+    if (filename && directoryHandle) {
+      const basename = filename.replace(/\.(webm|mp4)$/, '');
+      const targets = [
+        filename,
+        `${basename}.json`,
+        `${basename}.youtube.txt`,
+        `${basename}_front.jpg`,
+        `${basename}_back.jpg`,
+      ];
+      for (const name of targets) {
+        try { await directoryHandle.removeEntry(name); } catch {}
+      }
+    }
+
     refreshLibrary();
   }, onOpen, onUpload);
 }
@@ -4144,17 +4224,31 @@ function wirePlaybackTabs() {
 
     deleteConfirmPending = false;
 
+    // Look up the clip's filename from the CATALOG (the active clip might
+    // have been loaded from the library, in which case getLastFileHandle()
+    // points at a stale recorded handle and `removeEntry(fh.name)` would
+    // delete the wrong file — or no file at all if there's no recording in
+    // this session). Use the catalog filename for the active clip every time.
+    const clips = getClips();
+    const activeClip = clips.find(c => c.id === lastClipId);
+    const filenameToDelete = activeClip && activeClip.filename;
+
     // Remove from catalog
     deleteClip(lastClipId);
 
-    // Remove the file from disk
-    try {
-      const fh = getLastFileHandle();
-      if (fh && directoryHandle) {
-        await directoryHandle.removeEntry(fh.name);
+    // Remove the file from disk + its sidecars (json, sleeves, youtube.txt).
+    if (filenameToDelete && directoryHandle) {
+      const basename = filenameToDelete.replace(/\.(webm|mp4)$/, '');
+      const targets = [
+        filenameToDelete,
+        `${basename}.json`,
+        `${basename}.youtube.txt`,
+        `${basename}_front.jpg`,
+        `${basename}_back.jpg`,
+      ];
+      for (const name of targets) {
+        try { await directoryHandle.removeEntry(name); } catch {} // best-effort
       }
-    } catch (err) {
-      console.warn('Could not delete file:', err);
     }
 
     // Clean up playback — but do NOT clear form fields
