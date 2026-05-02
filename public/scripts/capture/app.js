@@ -3120,6 +3120,416 @@ function ytUpdateAccountUI() {
   }
 }
 
+// --- Upload queue + toast notifications ---
+//
+// Background non-blocking upload pipeline with a stack of toast cards in the
+// bottom-right. Clicking Upload in the publish panel:
+//   1. Snapshots the form state (title/desc/tags/privacy) into a queue item
+//   2. Spawns a toast card showing progress
+//   3. The first toast in a fresh interface triggers a 3-2-1 countdown +
+//      "Keep Tape Info" bail-out link; on completion the editor wipes back
+//      to live-feed-ready state so the user can immediately record again
+//   4. Up to 2 uploads run concurrently; the rest sit Queued in the stack
+//   5. Success → green border + View link, auto-dismiss after 6s
+//   6. Failure → red border + retry icon; toast persists until dismissed,
+//      catalog stays untouched (no youtubeUrl), so the clip is re-queue-able
+//      by either clicking the retry icon OR (later) selecting + batch-
+//      uploading from the library
+
+const uploadQueue = {
+  items: [],
+  concurrencyLimit: 2,
+  // Tracks which toast id "owns" the current 3-2-1 countdown. Null means no
+  // countdown active and the next enqueueUpload() will spawn a new one.
+  countdownItemId: null,
+};
+
+let nextUploadId = 1;
+let countdownTimerId = null;
+
+// Snapshot the publish form values at the moment the user clicks Upload.
+// We freeze them onto the queue item so a later "Use this" / autosave / new
+// clip captured behind the toast can't mutate what gets sent to YouTube.
+function snapshotPublishForm() {
+  const tagsRaw = document.getElementById('clip-tags')?.value || '';
+  return {
+    title: document.getElementById('clip-title')?.value || '',
+    description: document.getElementById('clip-description')?.value || '',
+    tags: tagsRaw.split(',').map(t => t.trim()).filter(Boolean),
+    privacyStatus: document.getElementById('yt-pub-privacy')?.value || 'public',
+  };
+}
+
+function enqueueUpload(clipId, token) {
+  // Dedupe — if the same clip is already queued or uploading, ignore the
+  // double-click. Successful/errored items can be re-queued (retry path)
+  // because they're not in queued/uploading state.
+  if (uploadQueue.items.some(it => it.clipId === clipId &&
+      (it.state === 'queued' || it.state === 'uploading'))) {
+    return null;
+  }
+  const clips = getClips();
+  const clip = clips.find(c => c.id === clipId);
+  if (!clip) return null;
+
+  const item = {
+    id: 'upload_' + (nextUploadId++),
+    clipId,
+    title: clip.title || 'Untitled',
+    state: 'queued',
+    progress: 0,
+    xhr: null,
+    ytUrl: null,
+    errorMsg: null,
+    token,
+    snippet: snapshotPublishForm(),
+    queuePosition: 1,
+    queueLength: 1,
+  };
+  uploadQueue.items.push(item);
+  renderToast(item);
+
+  // First toast in a fresh interface state owns the countdown. If a previous
+  // countdown is still running (rare — would mean two uploads inside 3s),
+  // skip; the existing one will clear for everyone.
+  if (uploadQueue.countdownItemId === null) {
+    startCountdownForItem(item);
+  }
+  refreshQueuePositions();
+  tryStartNext();
+  return item;
+}
+
+function tryStartNext() {
+  const active = uploadQueue.items.filter(it => it.state === 'uploading').length;
+  if (active >= uploadQueue.concurrencyLimit) return;
+  const next = uploadQueue.items.find(it => it.state === 'queued');
+  if (!next) return;
+  next.state = 'uploading';
+  renderToast(next);
+  refreshQueuePositions();
+  runUploadItem(next).finally(() => tryStartNext());
+}
+
+function refreshQueuePositions() {
+  const queued = uploadQueue.items.filter(it => it.state === 'queued');
+  queued.forEach((it, i) => {
+    it.queuePosition = i + 1;
+    it.queueLength = queued.length;
+    renderToast(it);
+  });
+}
+
+async function runUploadItem(item) {
+  try {
+    const clips = getClips();
+    const clip = clips.find(c => c.id === item.clipId);
+    if (!clip || !clip.filename) {
+      throw new Error('Clip file is missing — was it deleted from disk?');
+    }
+    const fh = await directoryHandle.getFileHandle(clip.filename);
+    const file = await fh.getFile();
+    const contentType = clip.filename.endsWith('.webm') ? 'video/webm' : 'video/mp4';
+
+    const uploadMeta = {
+      snippet: {
+        title: item.snippet.title,
+        description: item.snippet.description,
+        tags: item.snippet.tags,
+        categoryId: '22',
+      },
+      status: {
+        privacyStatus: item.snippet.privacyStatus,
+        selfDeclaredMadeForKids: false,
+      },
+    };
+
+    // Resumable init — uploadLimitExceeded comes back here, not from the PUT.
+    const initRes = await fetch(
+      'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${item.token}`,
+          'Content-Type': 'application/json',
+          'X-Upload-Content-Type': contentType,
+          'X-Upload-Content-Length': String(file.size),
+        },
+        body: JSON.stringify(uploadMeta),
+      }
+    );
+    if (!initRes.ok) {
+      const errBody = await initRes.text();
+      const parsed = parseYouTubeError(errBody, initRes.status);
+      console.warn('[upload] init failed:', parsed.reason || initRes.status, parsed.apiMessage);
+      throw new Error(parsed.display);
+    }
+    const uploadUrl = initRes.headers.get('location');
+
+    // PUT the file with progress events feeding the toast.
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      item.xhr = xhr;
+      xhr.open('PUT', uploadUrl);
+      xhr.setRequestHeader('Content-Type', contentType);
+      xhr.upload.addEventListener('progress', (e) => {
+        if (!e.lengthComputable) return;
+        item.progress = Math.round((e.loaded / e.total) * 100);
+        renderToast(item);
+      });
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const result = JSON.parse(xhr.responseText);
+            item.ytUrl = 'https://youtube.com/watch?v=' + result.id;
+            updateClip(item.clipId, { youtubeUrl: item.ytUrl, youtubeId: result.id });
+            // Fire-and-forget thumbnail upload (same pattern as before).
+            const clipsAfter = getClips();
+            const clipAfter = clipsAfter.find(c => c.id === item.clipId);
+            if (clipAfter && clipAfter.ytThumbnailDataUrl) {
+              uploadYouTubeThumbnail(result.id, item.token, clipAfter.ytThumbnailDataUrl)
+                .catch((e) => console.warn('[upload] thumbnail failed:', e.message));
+            }
+            resolve();
+          } catch (e) {
+            reject(new Error('Upload succeeded but response was unparseable.'));
+          }
+        } else {
+          const parsed = parseYouTubeError(xhr.responseText, xhr.status);
+          console.warn('[upload] PUT failed:', parsed.reason || xhr.status, parsed.apiMessage);
+          reject(new Error(parsed.display));
+        }
+      });
+      xhr.addEventListener('error', () => {
+        reject(new Error('Network error during upload. Check your connection and click retry.'));
+      });
+      xhr.send(file);
+    });
+
+    item.state = 'success';
+    item.progress = 100;
+    renderToast(item);
+    refreshLibrary(); // shows the YouTube badge on the library tile
+    // Auto-dismiss success after 6s. Errors stay until user dismisses.
+    setTimeout(() => dismissToast(item.id), 6000);
+  } catch (e) {
+    console.warn('[upload] item failed:', e.message);
+    item.state = 'error';
+    item.errorMsg = e.message || 'Upload failed.';
+    item.xhr = null;
+    renderToast(item);
+    // Catalog stays untouched (no youtubeUrl set) so the clip remains
+    // "not uploaded" in the library and is re-queueable.
+  }
+}
+
+function dismissToast(id) {
+  const item = uploadQueue.items.find(it => it.id === id);
+  if (!item) return;
+  const card = document.getElementById('toast-' + id);
+  if (card) {
+    card.classList.remove('is-visible');
+    setTimeout(() => card.remove(), 200);
+  }
+  uploadQueue.items = uploadQueue.items.filter(it => it.id !== id);
+  if (uploadQueue.countdownItemId === id) {
+    uploadQueue.countdownItemId = null;
+    if (countdownTimerId) {
+      clearTimeout(countdownTimerId);
+      countdownTimerId = null;
+    }
+  }
+  refreshQueuePositions();
+}
+
+function retryUpload(id) {
+  const item = uploadQueue.items.find(it => it.id === id);
+  if (!item || item.state !== 'error') return;
+  item.state = 'queued';
+  item.progress = 0;
+  item.errorMsg = null;
+  item.xhr = null;
+  // Refresh the access token (the previous one might be stale, especially
+  // for a "auth expired"-class failure).
+  fetchAccessTokenInBackground().then((tok) => {
+    if (tok) item.token = tok;
+    renderToast(item);
+    refreshQueuePositions();
+    tryStartNext();
+  }).catch(() => {
+    renderToast(item);
+    tryStartNext();
+  });
+}
+
+// 3-2-1 countdown attached to a specific toast. After 3 ticks (or immediately
+// if user clicks Keep Tape Info) we wipe the editor back to live-feed-ready.
+function startCountdownForItem(item) {
+  uploadQueue.countdownItemId = item.id;
+  let n = 3;
+  renderToast(item);
+  const tick = () => {
+    n -= 1;
+    if (n > 0) {
+      const numEl = document.querySelector(`#toast-${item.id} [data-countdown-num]`);
+      if (numEl) numEl.textContent = String(n);
+      countdownTimerId = setTimeout(tick, 1000);
+    } else {
+      // Countdown elapsed → clear interface, full wipe.
+      countdownTimerId = null;
+      uploadQueue.countdownItemId = null;
+      renderToast(item); // strips the countdown row
+      clearClipForNewCapture({ keepTapeInfo: false });
+    }
+  };
+  countdownTimerId = setTimeout(tick, 1000);
+}
+
+function endCountdownKeepingTape(item) {
+  if (uploadQueue.countdownItemId !== item.id) return;
+  if (countdownTimerId) {
+    clearTimeout(countdownTimerId);
+    countdownTimerId = null;
+  }
+  uploadQueue.countdownItemId = null;
+  renderToast(item); // strips the countdown row
+  clearClipForNewCapture({ keepTapeInfo: true });
+}
+
+// Render or update a toast card for a queue item. Idempotent — safe to call
+// after every state change.
+function renderToast(item) {
+  const stack = document.getElementById('toast-stack');
+  if (!stack) return;
+  let card = document.getElementById('toast-' + item.id);
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'toast-' + item.id;
+    card.className = 'toast-card';
+    stack.appendChild(card);
+    requestAnimationFrame(() => card.classList.add('is-visible'));
+  }
+  card.classList.toggle('is-success', item.state === 'success');
+  card.classList.toggle('is-error', item.state === 'error');
+
+  const stateLabel = (
+    item.state === 'queued'
+      ? `Queued · ${item.queuePosition} of ${item.queueLength}` :
+    item.state === 'uploading'
+      ? `Uploading · ${item.progress}%` :
+    item.state === 'success'
+      ? '✓ Uploaded' :
+    item.state === 'error'
+      ? '✗ Failed' :
+    ''
+  );
+
+  const showProgress = item.state === 'uploading' || item.state === 'success';
+  const showCountdown = uploadQueue.countdownItemId === item.id && item.state !== 'error';
+  const showRetry = item.state === 'error';
+  const showClose = item.state === 'success' || item.state === 'error';
+  const showViewLink = item.state === 'success' && item.ytUrl;
+
+  // Pixel-style retry icon (rotating arrow, similar feel to other UI).
+  const retryIcon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0012 4a8 8 0 100 16c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>`;
+
+  card.innerHTML = `
+    <div class="toast-title-row">
+      <span class="toast-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
+      <span class="toast-state-label">${stateLabel}</span>
+      ${showRetry ? `<button class="toast-retry-btn" data-action="retry" title="Retry upload">${retryIcon}</button>` : ''}
+      ${showClose ? `<button class="toast-close-btn" data-action="close" title="Dismiss">×</button>` : ''}
+    </div>
+    ${showProgress ? `<div class="toast-progress-track"><div class="toast-progress-bar" style="width:${item.progress}%"></div></div>` : ''}
+    ${showCountdown ? `
+      <div class="toast-meta-row">
+        <span>Starting next clip in <span data-countdown-num>3</span>…</span>
+        <button class="toast-secondary-link" data-action="keep">Keep Tape Info</button>
+      </div>
+    ` : ''}
+    ${showViewLink ? `<div class="toast-meta-row"><a class="toast-link" href="${item.ytUrl}" target="_blank" rel="noopener">View on YouTube →</a></div>` : ''}
+    ${item.state === 'error' ? `<p class="toast-error-msg">${escapeHtml(item.errorMsg || '')}</p>` : ''}
+  `;
+
+  card.querySelectorAll('[data-action]').forEach((el) => {
+    el.onclick = () => {
+      const action = el.dataset.action;
+      if (action === 'retry') retryUpload(item.id);
+      else if (action === 'close') dismissToast(item.id);
+      else if (action === 'keep') endCountdownKeepingTape(item);
+    };
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Reset the editor back to "ready to record" state. Runs at the end of the
+// 3-2-1 countdown OR immediately when the user clicks Keep Tape Info.
+//   keepTapeInfo: false → full wipe (clip-specific AND tape-level fields,
+//                          plus sleeves)
+//   keepTapeInfo: true  → wipe only clip-specific fields (title, description,
+//                          tags); keep year, distributor, format, speed,
+//                          condition, cassette notes, AND sleeve photos
+function clearClipForNewCapture({ keepTapeInfo = false } = {}) {
+  // Drop the active clip — hides Thumbnail + Publish panels via
+  // updateClipDependentPanels.
+  lastClipId = null;
+
+  // Stop and clear the playback video element.
+  const playbackVideo = document.getElementById('playback');
+  if (playbackVideo) {
+    try { playbackVideo.pause(); } catch {}
+    playbackVideo.removeAttribute('src');
+    playbackVideo.load();
+  }
+  if (playbackBlobUrl) {
+    URL.revokeObjectURL(playbackBlobUrl);
+    playbackBlobUrl = null;
+  }
+
+  // Switch back to the live-feed tab so the user is camera-ready.
+  showLiveTab();
+
+  // Clip-specific fields ALWAYS reset — they're per-recording.
+  ['clip-title', 'clip-description', 'clip-tags'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+
+  if (!keepTapeInfo) {
+    // Tape-level fields reset.
+    ['clip-year', 'clip-tape', 'clip-distributor', 'clip-tape-length',
+     'clip-speed', 'clip-condition', 'clip-notes'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    // Sleeves reset back to empty placeholders.
+    const sleeveFront = document.getElementById('sleeve-front-preview');
+    if (sleeveFront) {
+      sleeveFront.classList.add('hidden');
+      sleeveFront.innerHTML = '<span class="flex items-center justify-center w-full h-full text-white/10 text-[10px]">--</span>';
+    }
+    const sleeveBack = document.getElementById('sleeve-back-preview');
+    if (sleeveBack) {
+      sleeveBack.classList.add('hidden');
+      sleeveBack.innerHTML = '<span class="flex items-center justify-center w-full h-full text-white/10 text-[10px]">--</span>';
+    }
+    document.getElementById('sleeve-back-skeleton')?.classList.remove('hidden');
+    document.getElementById('sleeve-capture-view')?.classList.remove('hidden');
+    document.getElementById('sleeve-review-view')?.classList.add('hidden');
+    try { resetSleeve(); } catch {}
+  }
+
+  // Re-sync clip-dependent panels (hides Thumbnail + Publish since
+  // lastClipId is now null) and refresh the library so the just-uploaded
+  // clip shows the YouTube badge.
+  updateClipDependentPanels();
+  refreshLibrary();
+}
+
 // --- YouTube publish ---
 
 // Map YouTube API error reasons → user-readable messages. The Data API
@@ -3585,170 +3995,28 @@ function wireYouTubePublish() {
 
   uploadBtn.addEventListener('click', async () => {
     if (!publishClipId || !directoryHandle) return;
-
     const clips = getClips();
     const clip = clips.find(c => c.id === publishClipId);
     if (!clip || !clip.filename) return;
 
-    // If the background token fetch hasn't returned yet (slow network) or
-    // hasn't been kicked off, do it now before we attempt the upload.
-    if (!currentToken) {
+    // Make sure we have a token — refresh if needed before queueing so the
+    // queued item carries a valid bearer. (Subsequent items reuse this same
+    // token unless the user retries; retryUpload re-fetches.)
+    let token = currentToken;
+    if (!token) {
       uploadBtn.disabled = true;
       uploadBtn.textContent = 'Preparing...';
-      const tok = await fetchAccessTokenInBackground();
+      token = await fetchAccessTokenInBackground();
       uploadBtn.disabled = false;
       uploadBtn.textContent = 'Upload to YouTube';
-      if (!tok) return;
+      if (!token) return;
     }
 
-    uploadBtn.disabled = true;
-    uploadBtn.textContent = 'Uploading...';
-    progressDiv.classList.remove('hidden');
-
-    try {
-      // Read the video file from disk
-      const fh = await directoryHandle.getFileHandle(clip.filename);
-      const file = await fh.getFile();
-      const contentType = clip.filename.endsWith('.webm') ? 'video/webm' : 'video/mp4';
-
-      const tags = tagsInput.value.split(',').map(t => t.trim()).filter(Boolean);
-      const uploadMeta = {
-        snippet: {
-          title: titleInput.value,
-          description: descInput.value,
-          tags,
-          categoryId: '22',
-        },
-        status: {
-          privacyStatus: privacySelect.value,
-          selfDeclaredMadeForKids: false,
-        },
-      };
-
-      // Init resumable upload
-      statusEl.textContent = 'Initializing...';
-      const initRes = await fetch(
-        'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${currentToken}`,
-            'Content-Type': 'application/json',
-            'X-Upload-Content-Type': contentType,
-            'X-Upload-Content-Length': String(file.size),
-          },
-          body: JSON.stringify(uploadMeta),
-        }
-      );
-
-      if (!initRes.ok) {
-        // The init step is where uploadLimitExceeded comes back from YouTube
-        // (the API checks the channel's daily upload count BEFORE issuing a
-        // resumable URL). Parse the error JSON properly and route through
-        // showError so the user sees the prominent red panel with the
-        // specific reason — not just buried text in the progress label.
-        const errBody = await initRes.text();
-        const parsed = parseYouTubeError(errBody, initRes.status);
-        console.warn('[publish] init failed:', parsed.reason || initRes.status, parsed.apiMessage);
-        uploadBtn.disabled = false;
-        uploadBtn.textContent = 'Upload to YouTube';
-        progressDiv.classList.add('hidden');
-        showError(parsed.display);
-        return;
-      }
-
-      const uploadUrl = initRes.headers.get('location');
-
-      // Upload with XHR for progress
-      const xhr = new XMLHttpRequest();
-      xhr.open('PUT', uploadUrl);
-      xhr.setRequestHeader('Content-Type', contentType);
-
-      xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable) {
-          const pct = Math.round((e.loaded / e.total) * 100);
-          progressBar.style.width = pct + '%';
-          statusEl.textContent = pct + '% uploaded';
-        }
-      });
-
-      xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          const result = JSON.parse(xhr.responseText);
-          const ytUrl = 'https://youtube.com/watch?v=' + result.id;
-
-          // Save YouTube URL back to clip
-          updateClip(publishClipId, { youtubeUrl: ytUrl, youtubeId: result.id });
-
-          // Flip to the success state IMMEDIATELY. Matt reported the UI
-          // sometimes "doesn't switch" after upload — the cause was the old
-          // handler awaiting uploadYouTubeThumbnail() before unhiding the
-          // done panel. If thumbnails.set was slow (or hung on a non-verified
-          // channel), the user just sat staring at the upload form. The
-          // video upload is the source of truth for "uploaded" — show
-          // success now, run the thumbnail upload in the background, and
-          // surface a soft warning underneath only if it fails.
-          linkEl.href = ytUrl;
-          form.classList.add('hidden');
-          // Hide progress explicitly — it now lives at the top of the
-          // publish section (sibling of the form) so it no longer
-          // disappears via parent inheritance when the form hides.
-          progressDiv.classList.add('hidden');
-          done.classList.remove('hidden');
-          if (thumbWarn) {
-            thumbWarn.classList.add('hidden');
-            thumbWarn.textContent = '';
-          }
-          refreshLibrary();
-
-          // Fire-and-forget thumbnail upload. A 403 here means the channel
-          // isn't verified for custom thumbnails — surface a soft warning
-          // but never roll back the success state.
-          const clipsAfter = getClips();
-          const clipAfter = clipsAfter.find(c => c.id === publishClipId);
-          const thumbDataUrl = clipAfter && clipAfter.ytThumbnailDataUrl;
-          if (thumbDataUrl) {
-            uploadYouTubeThumbnail(result.id, currentToken, thumbDataUrl).catch((e) => {
-              console.warn('[publish] thumbnail upload failed:', e.message);
-              if (thumbWarn) {
-                thumbWarn.classList.remove('hidden');
-                thumbWarn.textContent = e.status === 403
-                  ? '⚠ Custom thumbnail requires channel verification.'
-                  : '⚠ Custom thumbnail upload failed.';
-              }
-            });
-          }
-        } else {
-          // Upload PUT failed — parse the YouTube error body and show the
-          // prominent error panel. Same reasoning as the init failure path:
-          // dropping a generic message into the small statusEl makes it
-          // easy to miss the actual reason (Matt missed his quota error
-          // exactly because of this).
-          const parsed = parseYouTubeError(xhr.responseText, xhr.status);
-          console.warn('[publish] upload failed:', parsed.reason || xhr.status, parsed.apiMessage);
-          uploadBtn.disabled = false;
-          uploadBtn.textContent = 'Upload to YouTube';
-          progressDiv.classList.add('hidden');
-          showError(parsed.display);
-        }
-      });
-
-      xhr.addEventListener('error', () => {
-        uploadBtn.disabled = false;
-        uploadBtn.textContent = 'Upload to YouTube';
-        progressDiv.classList.add('hidden');
-        showError('Network error during upload. Check your internet connection and click Retry.');
-      });
-
-      statusEl.textContent = 'Uploading...';
-      xhr.send(file);
-    } catch (e) {
-      console.warn('[publish] upload threw:', e);
-      uploadBtn.disabled = false;
-      uploadBtn.textContent = 'Upload to YouTube';
-      progressDiv.classList.add('hidden');
-      showError('Upload failed: ' + (e.message || 'unknown error'));
-    }
+    // Hand off to the upload queue. The button click is now non-blocking:
+    // a toast spawns, the 3-2-1 countdown starts, and the rest of the
+    // upload happens in the background. The user can immediately start
+    // recording another clip.
+    enqueueUpload(publishClipId, token);
   });
 }
 

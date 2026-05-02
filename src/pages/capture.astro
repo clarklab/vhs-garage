@@ -335,6 +335,121 @@ import Base from '../layouts/Base.astro';
       color: rgba(255, 255, 255, 0.35);
       text-transform: uppercase;
     }
+
+    /* Upload toast cards — bottom-right stacked notification system. Plain
+       1px border (no bevel/inset shadows), dark background, monospace
+       VCR font (inherited from the stack container). Each toast is a
+       320px card; multiple stack vertically with gap-2 between them.
+       Border color flips for success (green) and error (red) states. */
+    .toast-card {
+      width: 320px;
+      background: #1a181a;
+      border: 1px solid #333;
+      color: rgba(255, 255, 255, 0.85);
+      padding: 10px 12px;
+      font-size: 11px;
+      pointer-events: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transform: translateX(8px);
+      opacity: 0;
+      transition: transform 0.18s ease-out, opacity 0.18s ease-out;
+    }
+    .toast-card.is-visible {
+      transform: translateX(0);
+      opacity: 1;
+    }
+    .toast-card.is-success { border-color: #16a34a; }
+    .toast-card.is-error   { border-color: #dc2626; }
+
+    .toast-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .toast-title {
+      flex: 1;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 11px;
+    }
+    .toast-state-label {
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.5);
+      white-space: nowrap;
+    }
+    .toast-card.is-success .toast-state-label { color: #4ade80; }
+    .toast-card.is-error   .toast-state-label { color: #f87171; }
+
+    .toast-close-btn,
+    .toast-retry-btn {
+      width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 0;
+      color: rgba(255, 255, 255, 0.4);
+      cursor: pointer;
+      transition: color 0.15s;
+      padding: 0;
+      font-size: 12px;
+      line-height: 1;
+    }
+    .toast-close-btn:hover,
+    .toast-retry-btn:hover { color: #fff; }
+
+    .toast-progress-track {
+      height: 3px;
+      background: rgba(255, 255, 255, 0.08);
+      overflow: hidden;
+    }
+    .toast-progress-bar {
+      height: 100%;
+      width: 0%;
+      background: #dc2626;
+      transition: width 0.2s linear;
+    }
+
+    .toast-meta-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.55);
+    }
+    .toast-link {
+      color: #f87171;
+      text-decoration: none;
+      font-size: 11px;
+    }
+    .toast-link:hover { color: #fca5a5; }
+    .toast-secondary-link {
+      color: rgba(255, 255, 255, 0.4);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      font-size: 10px;
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+      padding: 0;
+      font-family: inherit;
+    }
+    .toast-secondary-link:hover { color: rgba(255, 255, 255, 0.85); }
+
+    .toast-error-msg {
+      color: #fca5a5;
+      font-size: 10px;
+      line-height: 1.35;
+      white-space: pre-line;
+    }
   </style>
 
   <!-- Browser check -->
@@ -914,6 +1029,13 @@ import Base from '../layouts/Base.astro';
        Style is the chiseled-bevel "raised" look from System 7 / Win 3.1
        (defined as .toolbar-menu in the <style> block above). -->
   <div id="toolbar-menu" class="toolbar-menu hidden"></div>
+
+  <!-- Upload toast stack — bottom-right, vertical column, newest on top.
+       Cards are dynamically appended by enqueueUpload() in app.js. The
+       stack lives outside the column grid so it floats above everything
+       and isn't constrained by the publish panel's scroll. flex-col-reverse
+       so a normal append puts the new toast at the visual TOP. -->
+  <div id="toast-stack" class="fixed bottom-4 right-4 z-[55] flex flex-col-reverse gap-2 pointer-events-none" style="font-family: 'VCR', monospace;"></div>
 
   <!-- Demo countdown modal — shown for ~3s before the puppet sequence
        starts. Same chiseled-bevel look as the toolbar dropdowns + library
