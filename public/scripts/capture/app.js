@@ -730,12 +730,17 @@ function resizeForAI(dataUrl) {
 }
 
 async function analyzeSleevePhotos(frontData, backData) {
+  // Both elements are optional — #clip-info-loader was removed from the
+  // markup at some point but the JS reference was left. Without the guard
+  // the call throws "Cannot read properties of null (reading 'classList')"
+  // and any downstream sleeve-AI work bails early. Keep aiFields dimming
+  // since that element does still exist; loader-toggling becomes a no-op
+  // when the element isn't present.
   const loader = document.getElementById('clip-info-loader');
   const aiFields = document.getElementById('ai-fields');
 
-  // Show loader, dim only AI-filled fields (leave Clip Title & Description editable)
-  loader.classList.remove('hidden');
-  aiFields.classList.add('opacity-30', 'pointer-events-none');
+  loader?.classList.remove('hidden');
+  aiFields?.classList.add('opacity-30', 'pointer-events-none');
 
   try {
     const smallFront = await resizeForAI(frontData);
@@ -771,8 +776,8 @@ async function analyzeSleevePhotos(frontData, backData) {
   }
 
   // Hide loader, restore AI fields
-  loader.classList.add('hidden');
-  aiFields.classList.remove('opacity-30', 'pointer-events-none');
+  loader?.classList.add('hidden');
+  aiFields?.classList.remove('opacity-30', 'pointer-events-none');
 }
 
 // --- Record button ---
@@ -2617,6 +2622,36 @@ function wireMainEditorAutosave() {
           await renameSiblings(oldBase, renamed.replace(/\.(webm|mp4)$/, ''));
           clips = getClips();
           clip = clips.find(c => c.id === id);
+
+          // Renaming the file on disk invalidates the existing blob URL —
+          // it was created from a File handle bound to the OLD path, and
+          // Chrome's File System Access reads lazily, so dereferencing it
+          // now returns ERR_FILE_NOT_FOUND. Symptoms: playback breaks
+          // silently, thumbnail "Refresh" fails with "Video failed to load
+          // for thumbnail extraction." Re-create the blob URL from the new
+          // file handle and rewire the playback element + module-level ref
+          // so subsequent reads (refresh thumbs, scrub, play) work.
+          try {
+            const newFh = await directoryHandle.getFileHandle(renamed);
+            const newFile = await newFh.getFile();
+            if (playbackBlobUrl) URL.revokeObjectURL(playbackBlobUrl);
+            playbackBlobUrl = URL.createObjectURL(newFile);
+            const playbackVideo = document.getElementById('playback');
+            if (playbackVideo) {
+              const wasTime = playbackVideo.currentTime;
+              const wasPaused = playbackVideo.paused;
+              playbackVideo.src = playbackBlobUrl;
+              playbackVideo.load();
+              // Restore playhead position so the user doesn't jump back to
+              // 0 every time they edit the title.
+              playbackVideo.addEventListener('loadedmetadata', () => {
+                try { playbackVideo.currentTime = wasTime; } catch {}
+                if (!wasPaused) { try { playbackVideo.play(); } catch {} }
+              }, { once: true });
+            }
+          } catch (e) {
+            console.warn('[autosave] could not refresh blob URL after rename:', e.message);
+          }
         }
       }
       const basename = clip.filename.replace(/\.(webm|mp4)$/, '');
