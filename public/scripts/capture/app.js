@@ -26,6 +26,47 @@ let playbackBlobUrl = null;
 let lastClipId = null;
 let publishClip = null;
 
+// YouTube OAuth access token cache. Populated by fetchAccessTokenInBackground
+// (defined below) and by wireYouTubePublish on every clip switch. Module-
+// scoped so the upload queue + retry handlers (which run outside
+// wireYouTubePublish's closure) can read it.
+let currentToken = null;
+
+// Pre-warm / refresh the YouTube access token from the stored refresh token.
+// Returns the access token string on success; clears credentials and
+// returns null on 401 (refresh token expired/revoked). Module-scoped so
+// every upload code path uses the same implementation.
+async function fetchAccessTokenInBackground() {
+  if (currentToken) return currentToken;
+  const refreshToken = ytGetRefreshToken && ytGetRefreshToken();
+  if (!refreshToken) return null;
+  try {
+    const res = await fetch('/api/youtube-publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'token', refreshToken }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      // Stale refresh token — wipe creds and bounce the publish UI back
+      // to the sign-in panel. Helpers might not exist yet at very first
+      // call so guard them.
+      if (typeof ytClearCredentials === 'function') ytClearCredentials();
+      if (typeof ytUpdateAccountUI === 'function') ytUpdateAccountUI();
+      return null;
+    }
+    if (!res.ok || !data.accessToken) {
+      console.warn('[publish] token fetch failed:', data.error);
+      return null;
+    }
+    currentToken = data.accessToken;
+    return currentToken;
+  } catch (e) {
+    console.warn('[publish] token fetch threw:', e.message);
+    return null;
+  }
+}
+
 async function init() {
   // Browser check
   if (!isChrome() || !hasFileSystemAccess()) {
@@ -4258,7 +4299,10 @@ function wireYouTubePublish() {
   const suggestionRetryBtn = document.getElementById('yt-pub-suggestion-retry');
   const suggestionCancelBtn = document.getElementById('yt-pub-suggestion-cancel');
 
-  let currentToken = null;
+  // currentToken now lives at module scope (declared near the top of the
+  // file alongside lastClipId etc.) so retryUpload, confirmBatchUpload,
+  // and the rest of the upload-queue code can read it without going
+  // through wireYouTubePublish's closure.
   // Clip being published in this modal session. May differ from `lastClipId`
   // when the publish is triggered from the library card.
   let publishClipId = null;
@@ -4390,39 +4434,10 @@ function wireYouTubePublish() {
     };
   }
 
-  // Pre-warm the upload access token in the background so that 1) Upload
-  // can start instantly without an extra round trip, and 2) a stale refresh
-  // token surfaces immediately as a re-sign-in prompt instead of after the
-  // user has spent time editing copy.
-  async function fetchAccessTokenInBackground() {
-    if (currentToken) return currentToken;
-    try {
-      const res = await fetch('/api/youtube-publish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'token',
-          refreshToken: ytGetRefreshToken(),
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 401) {
-        ytClearCredentials();
-        ytUpdateAccountUI();
-        showSignInPanel();
-        return null;
-      }
-      if (!res.ok || !data.accessToken) {
-        console.warn('[publish] token fetch failed:', data.error);
-        return null;
-      }
-      currentToken = data.accessToken;
-      return currentToken;
-    } catch (e) {
-      console.warn('[publish] token fetch threw:', e.message);
-      return null;
-    }
-  }
+  // (fetchAccessTokenInBackground was hoisted to module scope so the
+  // upload queue + retry handlers — which run outside this closure — can
+  // call it. The version up top also calls showSignInPanel via a guarded
+  // helper lookup; this closure no longer owns it.)
 
   // Triggered by the "▶ YouTube" button after recording and library card
   // publish buttons. With the publish UI now permanently inline in column 3,

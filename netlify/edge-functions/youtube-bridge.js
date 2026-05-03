@@ -129,6 +129,13 @@ export default async (req) => {
       }, 503);
     }
 
+    // CRITICAL: pass through the user's Origin header so YouTube issues
+    // proper CORS headers on the resumable upload URL it returns. Without
+    // this, the browser PUT to the upload URL gets blocked by CORS
+    // because the response has no Access-Control-Allow-Origin header.
+    // Localhost origins (netlify dev) work the same way.
+    const userOrigin = req.headers.get('origin') || 'https://vhsgarage.com';
+
     const initRes = await fetch(
       'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
       {
@@ -138,6 +145,7 @@ export default async (req) => {
           'Content-Type': 'application/json',
           'X-Upload-Content-Type': contentType,
           'X-Upload-Content-Length': String(fileSize),
+          'Origin': userOrigin,
         },
         body: JSON.stringify({ snippet, status: videoStatus || { privacyStatus: 'private' } }),
       }
