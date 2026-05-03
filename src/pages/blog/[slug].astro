@@ -80,14 +80,21 @@ const formatter = new Intl.DateTimeFormat('en', {
         28px 28px 0 rgba(220, 38, 38, 0.05),
         33px 33px 0 rgba(220, 38, 38, 0.03),
         38px 38px 0 rgba(220, 38, 38, 0.02);
-      /* The halftone mask — black dots = "show this area", transparent
-         gaps = "hide this area". Tiles infinitely across the painted
-         output, including the whole text-shadow trail. */
-      mask-image:         radial-gradient(circle, #000 1.2px, transparent 1.7px);
-      mask-size:          3px 3px;
+      /* Dither mask — a hand-placed 8×8 tile with mixed shapes:
+           singles · horizontal 2-ups · vertical 2-ups · 2×2 clusters
+           · plus-crosses · X's
+         (The radial-gradient version we tried before only does dots.
+         Real dither needs the irregular shapes to read as a stipple
+         rather than a regular grid.)
+         Each "unit" in the SVG viewBox is scaled to 2px on screen via
+         mask-size: 16px 16px — so a single dot is 2x2px, the X and +
+         shapes are 6x6px, etc. shape-rendering='crispEdges' keeps the
+         pixel boundaries hard. */
+      mask-image:         url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'><rect x='0' y='0' width='1' height='1' fill='%23000'/><rect x='5' y='0' width='1' height='1' fill='%23000'/><rect x='2' y='1' width='2' height='2' fill='%23000'/><rect x='6' y='1' width='2' height='1' fill='%23000'/><rect x='4' y='2' width='1' height='2' fill='%23000'/><rect x='1' y='3' width='1' height='1' fill='%23000'/><rect x='7' y='3' width='1' height='1' fill='%23000'/><rect x='1' y='4' width='1' height='1' fill='%23000'/><rect x='4' y='4' width='1' height='1' fill='%23000'/><rect x='6' y='4' width='1' height='1' fill='%23000'/><rect x='0' y='5' width='3' height='1' fill='%23000'/><rect x='5' y='5' width='1' height='1' fill='%23000'/><rect x='1' y='6' width='1' height='1' fill='%23000'/><rect x='4' y='6' width='1' height='1' fill='%23000'/><rect x='6' y='6' width='1' height='1' fill='%23000'/><rect x='3' y='7' width='1' height='1' fill='%23000'/><rect x='7' y='7' width='1' height='1' fill='%23000'/></svg>");
+      mask-size:          16px 16px;
       mask-repeat:        repeat;
-      -webkit-mask-image: radial-gradient(circle, #000 1.2px, transparent 1.7px);
-      -webkit-mask-size:  3px 3px;
+      -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'><rect x='0' y='0' width='1' height='1' fill='%23000'/><rect x='5' y='0' width='1' height='1' fill='%23000'/><rect x='2' y='1' width='2' height='2' fill='%23000'/><rect x='6' y='1' width='2' height='1' fill='%23000'/><rect x='4' y='2' width='1' height='2' fill='%23000'/><rect x='1' y='3' width='1' height='1' fill='%23000'/><rect x='7' y='3' width='1' height='1' fill='%23000'/><rect x='1' y='4' width='1' height='1' fill='%23000'/><rect x='4' y='4' width='1' height='1' fill='%23000'/><rect x='6' y='4' width='1' height='1' fill='%23000'/><rect x='0' y='5' width='3' height='1' fill='%23000'/><rect x='5' y='5' width='1' height='1' fill='%23000'/><rect x='1' y='6' width='1' height='1' fill='%23000'/><rect x='4' y='6' width='1' height='1' fill='%23000'/><rect x='6' y='6' width='1' height='1' fill='%23000'/><rect x='3' y='7' width='1' height='1' fill='%23000'/><rect x='7' y='7' width='1' height='1' fill='%23000'/></svg>");
+      -webkit-mask-size:  16px 16px;
       -webkit-mask-repeat: repeat;
     }
   </style>
