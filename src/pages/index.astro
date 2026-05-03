@@ -62,36 +62,95 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
       Hosted by <a href="https://x.com/oracrest" target="_blank" class="text-white underline hover:text-gray-300">Matt Manchester</a>. Co-hosted by <a href="https://x.com/clarklab" target="_blank" class="text-white underline hover:text-gray-300">Clark Wimberly</a>.
     </p>
 
-    <!-- What We're Into -->
-    <div class="mb-12">
+    <!-- What We're Into.
+         Cards now lead with a pixel icon (from @hackernoon/pixel-icon-library),
+         end with a button CTA, and the VHS Recorder card sits first since
+         it's the active product / what new visitors are most likely to care
+         about. Each card is a flex column so the buttons line up at the
+         bottom regardless of description length. -->
+    <div class="mb-16">
       <h3 class="text-2xl mb-6">#What We're Into</h3>
-      <div class="grid md:grid-cols-3 gap-6 text-sm text-gray-300">
-        <fieldset class="border border-white/20 px-5 pb-5 pt-3">
-          <legend class="text-white/50 text-xs px-2">░ VHS Swap Meets ░</legend>
-          <p class="mb-4">We buy, sell, and trade tapes in person. Bring your doubles.</p>
-          <a href="#local-events" class="text-[#39ff14] text-xs hover:underline">Find us IRL →</a>
-        </fieldset>
-        <fieldset class="border border-white/20 px-5 pb-5 pt-3">
-          <legend class="text-white/50 text-xs px-2">░ Found Footage ░</legend>
-          <p class="mb-4">Random clips from old tapes. Stuff nobody was supposed to keep.</p>
-          <a href="/watch" class="text-[#39ff14] text-xs hover:underline block mb-1">Watch in the Garage →</a>
-          <a href="https://www.youtube.com/user/oracrest" target="_blank" class="text-[#39ff14] text-xs hover:underline block">Watch on YouTube →</a>
-        </fieldset>
-        <fieldset class="border border-white/20 px-5 pb-5 pt-3">
-          <legend class="text-white/50 text-xs px-2">░ Daily Play ░</legend>
-          <p class="mb-4">A little daily game — stock the shelves of a '90s video store one tape at a time. New puzzle every day.</p>
-          <a href="https://game.vhsgarage.com" target="_blank" class="text-[#39ff14] text-xs hover:underline">Play today's shelf →</a>
-        </fieldset>
-        <fieldset class="border border-white/20 px-5 pb-5 pt-3">
-          <legend class="text-white/50 text-xs px-2">░ VHS Recorder ░</legend>
-          <p class="mb-4">Capture your tapes with any USB capture card. AI writes the titles, you make the call, uploads go straight to your own YouTube channel — best of both worlds.</p>
-          <a href="/capture" class="text-[#39ff14] text-xs hover:underline">Start recording →</a>
-        </fieldset>
-        <fieldset class="border border-white/20 px-5 pb-5 pt-3">
-          <legend class="text-white/50 text-xs px-2">░ Limited Drops ░</legend>
-          <p class="mb-4">Small-batch merch and curated tape packs. When they're gone, they're gone.</p>
-          <a href="#signup" class="text-[#39ff14] text-xs hover:underline">Coming soon →</a>
-        </fieldset>
+      <div class="grid md:grid-cols-3 gap-4 text-sm text-gray-300">
+
+        <!-- VHS Recorder — primary product, first slot -->
+        <div class="flex flex-col border border-white/20 hover:border-white/40 transition-colors p-5">
+          <div class="flex items-center gap-2 mb-3">
+            <svg class="w-5 h-5 text-[#39ff14] fill-current" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M22,5V4H2V5H1V19H2v1H4V19H5V17H6V16H7V15H17v1h1v1h1v2h1v1h2V19h1V5ZM7,11H6v1H4V11H3V9H4V8H6V9H7Zm8-2H14v2h1v1H9V11h1V9H9V8h6Zm6,2H20v1H18V11H17V9h1V8h2V9h1Z"/>
+              <polygon points="17 19 18 19 18 20 6 20 6 19 7 19 7 17 8 17 8 16 16 16 16 17 17 17 17 19"/>
+            </svg>
+            <p class="text-white text-xs uppercase tracking-[0.18em]">VHS Recorder</p>
+          </div>
+          <p class="mb-5 flex-1">Capture your tapes with any USB capture card. AI writes the titles, you make the call, uploads go straight to your own YouTube channel.</p>
+          <a href="/capture" class="self-start inline-block px-4 py-2 bg-[#39ff14] text-black text-xs uppercase tracking-wider hover:bg-white transition-colors">
+            Start recording →
+          </a>
+        </div>
+
+        <!-- Found Footage -->
+        <div class="flex flex-col border border-white/20 hover:border-white/40 transition-colors p-5">
+          <div class="flex items-center gap-2 mb-3">
+            <svg class="w-5 h-5 text-[#39ff14] fill-current" viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="22 11 22 13 21 13 21 14 20 14 20 15 18 15 18 16 16 16 16 17 15 17 15 18 13 18 13 19 11 19 11 20 10 20 10 21 8 21 8 22 6 22 6 23 3 23 3 22 2 22 2 2 3 2 3 1 6 1 6 2 8 2 8 3 10 3 10 4 11 4 11 5 13 5 13 6 15 6 15 7 16 7 16 8 18 8 18 9 20 9 20 10 21 10 21 11 22 11"/>
+            </svg>
+            <p class="text-white text-xs uppercase tracking-[0.18em]">Found Footage</p>
+          </div>
+          <p class="mb-5 flex-1">Random clips from old tapes. Stuff nobody was supposed to keep.</p>
+          <div class="flex flex-wrap gap-2">
+            <a href="/watch" class="inline-block px-3 py-2 border border-white/30 text-white text-xs uppercase tracking-wider hover:border-white hover:bg-white/5 transition-colors">
+              Watch in Garage
+            </a>
+            <a href="https://www.youtube.com/user/oracrest" target="_blank" class="inline-block px-3 py-2 border border-white/15 text-white/60 text-xs uppercase tracking-wider hover:border-white/40 hover:text-white transition-colors">
+              YouTube ↗
+            </a>
+          </div>
+        </div>
+
+        <!-- VHS Swap Meets -->
+        <div class="flex flex-col border border-white/20 hover:border-white/40 transition-colors p-5">
+          <div class="flex items-center gap-2 mb-3">
+            <svg class="w-5 h-5 text-[#39ff14] fill-current" viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="6 12 7 12 7 13 12 13 12 12 14 12 14 13 15 13 15 14 16 14 16 15 17 15 17 16 18 16 18 19 17 19 17 18 16 18 16 17 15 17 15 16 14 16 14 15 13 15 13 16 14 16 14 17 15 17 15 18 16 18 16 19 17 19 17 20 16 20 16 21 15 21 15 20 14 20 14 19 13 19 13 18 12 18 12 17 11 17 11 16 10 16 10 17 11 17 11 18 12 18 12 19 13 19 13 20 14 20 14 21 11 21 11 20 10 20 10 19 9 19 9 18 8 18 8 19 9 19 9 20 10 20 10 21 7 21 7 20 6 20 6 19 5 19 5 18 4 18 4 17 3 17 3 16 2 16 2 15 1 15 1 4 2 4 2 5 4 5 4 6 6 6 6 5 9 5 9 7 8 7 8 8 7 8 7 9 6 9 6 12"/>
+              <polygon points="23 4 23 15 22 15 22 16 21 16 21 17 20 17 20 16 19 16 19 15 18 15 18 14 17 14 17 13 16 13 16 12 15 12 15 11 14 11 14 10 12 10 12 11 11 11 11 12 7 12 7 10 8 10 8 9 9 9 9 8 10 8 10 7 11 7 11 6 12 6 12 5 17 5 17 6 20 6 20 5 22 5 22 4 23 4"/>
+            </svg>
+            <p class="text-white text-xs uppercase tracking-[0.18em]">Swap Meets</p>
+          </div>
+          <p class="mb-5 flex-1">We buy, sell, and trade tapes in person. Bring your doubles.</p>
+          <a href="#local-events" class="self-start inline-block px-4 py-2 border border-white/30 text-white text-xs uppercase tracking-wider hover:border-white hover:bg-white/5 transition-colors">
+            Find us IRL →
+          </a>
+        </div>
+
+        <!-- Daily Play -->
+        <div class="flex flex-col border border-white/20 hover:border-white/40 transition-colors p-5">
+          <div class="flex items-center gap-2 mb-3">
+            <svg class="w-5 h-5 text-[#39ff14] fill-current" viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="10 14 11 14 11 22 10 22 10 23 2 23 2 22 1 22 1 14 2 14 2 13 10 13 10 14"/>
+              <polygon points="10 2 11 2 11 10 10 10 10 11 2 11 2 10 1 10 1 2 2 2 2 1 10 1 10 2"/>
+              <polygon points="22 14 23 14 23 22 22 22 22 23 14 23 14 22 13 22 13 14 14 14 14 13 22 13 22 14"/>
+              <polygon points="23 2 23 10 22 10 22 11 14 11 14 10 13 10 13 2 14 2 14 1 22 1 22 2 23 2"/>
+            </svg>
+            <p class="text-white text-xs uppercase tracking-[0.18em]">Daily Play</p>
+          </div>
+          <p class="mb-5 flex-1">A little daily game — stock the shelves of a '90s video store one tape at a time. New puzzle every day.</p>
+          <a href="https://game.vhsgarage.com" target="_blank" class="self-start inline-block px-4 py-2 border border-white/30 text-white text-xs uppercase tracking-wider hover:border-white hover:bg-white/5 transition-colors">
+            Play today's shelf ↗
+          </a>
+        </div>
+
+        <!-- Limited Drops -->
+        <div class="flex flex-col border border-white/20 hover:border-white/40 transition-colors p-5">
+          <div class="flex items-center gap-2 mb-3">
+            <svg class="w-5 h-5 text-[#39ff14] fill-current" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m19,13v-3h-1v-1h-1v-3h-1v-2h-1v-1h-1v-1h-1v-1h-2v1h1v2h-1v2h-1v1h-1v1h-1v1h-1v1h-1v3h1v2h-1v-1h-1v-2h-1v2h-1v3h1v2h1v1h1v1h1v1h1v1h8v-1h1v-1h1v-1h1v-2h1v-5h-1Zm-2,7h-1v1h-2v1h-4v-1h-1v-4h1v-1h1v-1h1v-1h1v-3h-1v-1h-1v-1h1v1h2v2h1v5h-1v2h1v-1h1v-1h1v3Z"/>
+            </svg>
+            <p class="text-white text-xs uppercase tracking-[0.18em]">Limited Drops</p>
+          </div>
+          <p class="mb-5 flex-1">Small-batch merch and curated tape packs. When they're gone, they're gone.</p>
+          <a href="#signup" class="self-start inline-block px-4 py-2 border border-white/15 text-white/50 text-xs uppercase tracking-wider hover:border-white/40 hover:text-white transition-colors">
+            Get notified →
+          </a>
+        </div>
       </div>
     </div>
 
@@ -129,24 +188,37 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
       <p class="text-gray-400">Follow <a href="https://x.com/oracrest" target="_blank" class="text-white underline hover:text-gray-300">Matt on Twitter</a> for more event announcements, or send us an invite to your event. We'll probably show up!</p>
     </div>
 
-    <!-- Blog -->
-    <div id="blog" class="mb-12">
-      <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-6">
+    <!-- Garage Dispatches (blog) — latest 3 non-draft posts. Cleaner row
+         layout: one post per row with date pill + title + description in a
+         single visual line, then a single "Read the blog →" CTA at the
+         bottom of the section. -->
+    <div id="blog" class="mb-16">
+      <div class="flex items-end justify-between gap-3 mb-6">
         <div>
           <h3 class="text-2xl mb-2">#Garage Dispatches</h3>
-          <p class="text-gray-400 text-sm">Capture guides, gear notes, event updates, and other VHS Garage signals.</p>
+          <p class="text-gray-400 text-sm">Capture guides, gear notes, event updates, and other signals from the Garage.</p>
         </div>
-        <a href="/blog" class="text-[#39ff14] text-xs hover:underline shrink-0">Read the blog →</a>
       </div>
 
-      <div class="grid gap-4">
+      <div class="border-t border-white/10">
         {latestPosts.map((post) => (
-          <a href={`/blog/${postSlug(post.id)}`} class="border border-white/15 p-5 hover:border-white/35 transition-colors">
-            <p class="text-white/35 text-[10px] uppercase tracking-widest mb-2">Blog</p>
-            <p class="text-white text-lg mb-2">{post.data.title}</p>
-            <p class="text-gray-500 text-sm leading-6">{post.data.description}</p>
+          <a href={`/blog/${postSlug(post.id)}`} class="group block border-b border-white/10 py-4 hover:bg-white/[0.02] transition-colors">
+            <div class="flex items-baseline gap-3 mb-1">
+              <span class="text-white/35 text-[10px] uppercase tracking-widest tabular-nums shrink-0">
+                {post.data.pubDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              </span>
+              <span class="h-px flex-1 bg-white/10 mb-1"></span>
+            </div>
+            <p class="text-white text-lg group-hover:text-[#39ff14] transition-colors">{post.data.title}</p>
+            <p class="text-gray-500 text-sm leading-6 mt-1">{post.data.description}</p>
           </a>
         ))}
+      </div>
+
+      <div class="mt-6">
+        <a href="/blog" class="inline-block px-4 py-2 border border-white/30 text-white text-xs uppercase tracking-wider hover:border-white hover:bg-white/5 transition-colors">
+          Read all dispatches →
+        </a>
       </div>
     </div>
 
