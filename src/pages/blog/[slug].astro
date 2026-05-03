@@ -37,6 +37,16 @@ const formatter = new Intl.DateTimeFormat('en', {
         <p class="text-gray-300 text-base sm:text-lg leading-8">{post.data.description}</p>
       </header>
 
+      {post.data.image && (
+        <!-- Hero image — sits between the header and the body content.
+             max-w matches the prose column width so it doesn't blow the
+             reading rhythm. Lazy-loaded since it's below the LCP fold. -->
+        <figure class="max-w-3xl mt-10">
+          <img src={post.data.image} alt="" loading="lazy"
+            class="w-full aspect-video object-cover bg-[#141214] border border-white/10" />
+        </figure>
+      )}
+
       <div class="prose vhs-prose max-w-[72ch] mt-10">
         <Content />
       </div>

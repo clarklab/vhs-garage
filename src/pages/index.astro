@@ -200,17 +200,28 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
         </div>
       </div>
 
-      <div class="border-t border-white/10">
+      <!-- Image-led card grid. Each card: 16:9 hero image on top, info
+           block (date, title, description) underneath. Posts without an
+           image render a hatched placeholder block in the same slot so
+           the grid stays uniform. -->
+      <div class="grid md:grid-cols-3 gap-4">
         {latestPosts.map((post) => (
-          <a href={`/blog/${postSlug(post.id)}`} class="group block border-b border-white/10 py-4 hover:bg-white/[0.02] transition-colors">
-            <div class="flex items-baseline gap-3 mb-1">
-              <span class="text-white/35 text-[10px] uppercase tracking-widest tabular-nums shrink-0">
-                {post.data.pubDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-              </span>
-              <span class="h-px flex-1 bg-white/10 mb-1"></span>
+          <a href={`/blog/${postSlug(post.id)}`} class="group flex flex-col border border-white/15 hover:border-white/40 transition-colors overflow-hidden">
+            <div class="aspect-video bg-[#141214] overflow-hidden">
+              {post.data.image ? (
+                <img src={post.data.image} alt="" loading="lazy"
+                  class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+              ) : (
+                <div class="w-full h-full flex items-center justify-center text-white/15 text-2xl tracking-widest">░ ▓ ░</div>
+              )}
             </div>
-            <p class="text-white text-lg group-hover:text-[#39ff14] transition-colors">{post.data.title}</p>
-            <p class="text-gray-500 text-sm leading-6 mt-1">{post.data.description}</p>
+            <div class="p-4 flex-1 flex flex-col">
+              <p class="text-white/35 text-[10px] uppercase tracking-widest tabular-nums mb-1">
+                {post.data.pubDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              </p>
+              <p class="text-white text-base leading-snug group-hover:text-[#39ff14] transition-colors mb-1">{post.data.title}</p>
+              <p class="text-gray-500 text-sm leading-6 flex-1">{post.data.description}</p>
+            </div>
           </a>
         ))}
       </div>

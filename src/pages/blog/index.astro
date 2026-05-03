@@ -30,16 +30,27 @@ const getSlug = (id: string) => id.replace(/\.(md|mdx)$/, '');
         </p>
       </div>
 
+      <!-- Index list — each post is a horizontal row: 16:9 thumbnail on
+           the left, title/description on the right. Posts without an
+           image render a hatched placeholder so rows stay aligned. The
+           whole row is a single link target so click-anywhere works. -->
       <div class="mt-14 grid gap-5">
         {posts.map((post) => (
-          <article class="border border-white/15 p-5 hover:border-white/35 transition-colors">
-            <p class="text-white/35 text-xs uppercase tracking-widest mb-3">{formatter.format(post.data.pubDate)}</p>
-            <h2 class="text-2xl sm:text-3xl mb-3">
-              <a href={`/blog/${getSlug(post.id)}`} class="hover:text-[#39ff14] transition-colors">{post.data.title}</a>
-            </h2>
-            <p class="text-gray-400 text-base leading-7 max-w-3xl">{post.data.description}</p>
-            <a href={`/blog/${getSlug(post.id)}`} class="inline-flex mt-5 text-[#39ff14] text-xs hover:underline">Read the post →</a>
-          </article>
+          <a href={`/blog/${getSlug(post.id)}`} class="group flex flex-col sm:flex-row gap-5 border border-white/15 p-5 hover:border-white/35 transition-colors">
+            <div class="shrink-0 sm:w-56 aspect-video bg-[#141214] border border-white/10 overflow-hidden">
+              {post.data.image ? (
+                <img src={post.data.image} alt="" loading="lazy"
+                  class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+              ) : (
+                <div class="w-full h-full flex items-center justify-center text-white/15 text-xl tracking-widest">░ ▓ ░</div>
+              )}
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-white/35 text-xs uppercase tracking-widest mb-2">{formatter.format(post.data.pubDate)}</p>
+              <h2 class="text-2xl sm:text-3xl mb-3 group-hover:text-[#39ff14] transition-colors">{post.data.title}</h2>
+              <p class="text-gray-400 text-base leading-7">{post.data.description}</p>
+            </div>
+          </a>
         ))}
       </div>
     </section>
