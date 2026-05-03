@@ -18,6 +18,7 @@ function wireDropdowns() {
       window.ToolbarMenu.open(openTrigger, [
         { label: 'All Posts',         href: '/blog' },
         { label: 'VHS Garage Gear',   href: '/gear' },
+        { label: 'Places',            href: '/places' },
         { label: 'Videos',            href: '/blog/videos' },
       ]);
     });

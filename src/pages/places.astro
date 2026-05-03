@@ -1,0 +1,64 @@
+---
+import Base from '../layouts/Base.astro';
+import PlaceCard from '../components/PlaceCard.astro';
+import { PLACES } from '../data/places.js';
+
+// Same convention as /gear: certified items float to the top, then the
+// rest in their natural editorial order. Two sections rather than one
+// big sorted list so the "we've actually been here" recommendations
+// read distinctly from the "we've heard about" picks.
+const certified = PLACES.filter((p) => p.certified);
+const others    = PLACES.filter((p) => !p.certified);
+---
+
+<Base
+  title="Places"
+  description="Real-life thrift shops, record stores, swap meets, and video stores worth visiting. Garage-certified picks first."
+>
+  <main class="min-h-svh bg-black text-white antialiased isolate">
+    <section class="max-w-3xl mx-auto px-6 py-16 sm:py-24">
+      <a href="/" class="text-[#dc2626] text-xs hover:underline">← VHS Garage</a>
+
+      <div class="mt-8 max-w-2xl">
+        <p class="text-white/40 text-xs uppercase tracking-widest mb-4">Places</p>
+        <h1 class="text-4xl sm:text-6xl text-pretty mb-5">Where to Go IRL</h1>
+        <p class="text-gray-300 text-base sm:text-lg leading-8">
+          Real-life spots — thrift shops, record stores, swap meets, video stores —
+          worth your time. Places we've actually been get a
+          <span class="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[#dc2626] text-white text-[9px] font-bold uppercase tracking-widest align-middle">✓ Garage Certified</span>
+          badge and float to the top.
+        </p>
+      </div>
+
+      {PLACES.length === 0 && (
+        <p class="mt-14 text-white/40 text-sm">
+          No places listed yet — spots will appear here as we add them to <code class="text-white/60">src/data/places.js</code>.
+        </p>
+      )}
+
+      {certified.length > 0 && (
+        <section class="mt-14">
+          <h2 class="text-2xl mb-2">#Garage Certified</h2>
+          <p class="text-gray-400 text-sm mb-2">Spots we've walked through ourselves.</p>
+          <div>
+            {certified.map((place) => (
+              <PlaceCard slug={place.slug} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {others.length > 0 && (
+        <section class="mt-14">
+          <h2 class="text-2xl mb-2">#Other Spots</h2>
+          <p class="text-gray-400 text-sm mb-2">Recommended by friends or referenced in posts. Not yet personally visited.</p>
+          <div>
+            {others.map((place) => (
+              <PlaceCard slug={place.slug} />
+            ))}
+          </div>
+        </section>
+      )}
+    </section>
+  </main>
+</Base>

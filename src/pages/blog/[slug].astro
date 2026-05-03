@@ -22,83 +22,6 @@ const formatter = new Intl.DateTimeFormat('en', {
 ---
 
 <Base title={post.data.title} description={post.data.description}>
-  <style>
-    /* Post title — pixelated motion-blur drop trail.
-       Stacked single-pixel offset shadows with progressively-decreasing
-       opacity create a "pixel ghost" trail extending down + right from
-       the letter, like the text was dragged diagonally across the page
-       and left a fading pixel afterimage behind it. Each shadow is at
-       an integer pixel step (1px, 2px, 3px…) with no blur, so the
-       falloff reads as discrete pixels rather than a smooth gradient.
-       letter-spacing kept at 1px so the trail also gets per-character
-       gaps. */
-    .post-title-vhs {
-      position: relative;
-      letter-spacing: 1px;
-      isolation: isolate; /* own stacking context for the ::before z-index */
-    }
-
-    /* The letter on top stays crisp/white. The shadow trail lives on a
-       ::before pseudo: same text via `content: attr(data-title)`, made
-       invisible (color: transparent) so only its text-shadow paints,
-       then a radial-gradient halftone mask punches dots through the
-       whole shadow stack at once.
-
-       How to tune the tone:
-         dot radius < gap radius → quarter tone   (sparser, lighter)
-         dot radius = gap radius → halftone       (50%)
-         dot radius > gap radius → three-quarter tone (denser, fuller)
-       Below: 1.2px dot vs 1.7px gap on a 3px grid = roughly 50% halftone.
-       For a coarser print look, bump --halftone-grid to 4–5px.
-       For a denser/finer look, drop to 2px. */
-    .post-title-vhs::before {
-      content: attr(data-title);
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      letter-spacing: inherit;
-      font: inherit;
-      color: transparent;          /* hide the pseudo's own text — we only want its shadow */
-      pointer-events: none;
-      z-index: -1;                 /* behind the real H1 letters */
-      /* Same shooting-star trail as before — head dense, mid gappy,
-         tail disintegrating. */
-      text-shadow:
-        1px 1px 0 rgba(220, 38, 38, 1.00),
-        2px 2px 0 rgba(220, 38, 38, 0.92),
-        3px 3px 0 rgba(220, 38, 38, 0.82),
-        4px 4px 0 rgba(220, 38, 38, 0.70),
-        5px 5px 0 rgba(220, 38, 38, 0.58),
-        7px 7px 0 rgba(220, 38, 38, 0.46),
-        9px 9px 0 rgba(220, 38, 38, 0.36),
-        11px 11px 0 rgba(220, 38, 38, 0.27),
-        14px 14px 0 rgba(220, 38, 38, 0.20),
-        17px 17px 0 rgba(220, 38, 38, 0.15),
-        20px 20px 0 rgba(220, 38, 38, 0.11),
-        24px 24px 0 rgba(220, 38, 38, 0.07),
-        28px 28px 0 rgba(220, 38, 38, 0.05),
-        33px 33px 0 rgba(220, 38, 38, 0.03),
-        38px 38px 0 rgba(220, 38, 38, 0.02);
-      /* Dither mask — a hand-placed 8×8 tile with mixed shapes:
-           singles · horizontal 2-ups · vertical 2-ups · 2×2 clusters
-           · plus-crosses · X's
-         (The radial-gradient version we tried before only does dots.
-         Real dither needs the irregular shapes to read as a stipple
-         rather than a regular grid.)
-         Each "unit" in the SVG viewBox is scaled to 2px on screen via
-         mask-size: 16px 16px — so a single dot is 2x2px, the X and +
-         shapes are 6x6px, etc. shape-rendering='crispEdges' keeps the
-         pixel boundaries hard. */
-      mask-image:         url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'><rect x='0' y='0' width='1' height='1' fill='%23000'/><rect x='5' y='0' width='1' height='1' fill='%23000'/><rect x='2' y='1' width='2' height='2' fill='%23000'/><rect x='6' y='1' width='2' height='1' fill='%23000'/><rect x='4' y='2' width='1' height='2' fill='%23000'/><rect x='1' y='3' width='1' height='1' fill='%23000'/><rect x='7' y='3' width='1' height='1' fill='%23000'/><rect x='1' y='4' width='1' height='1' fill='%23000'/><rect x='4' y='4' width='1' height='1' fill='%23000'/><rect x='6' y='4' width='1' height='1' fill='%23000'/><rect x='0' y='5' width='3' height='1' fill='%23000'/><rect x='5' y='5' width='1' height='1' fill='%23000'/><rect x='1' y='6' width='1' height='1' fill='%23000'/><rect x='4' y='6' width='1' height='1' fill='%23000'/><rect x='6' y='6' width='1' height='1' fill='%23000'/><rect x='3' y='7' width='1' height='1' fill='%23000'/><rect x='7' y='7' width='1' height='1' fill='%23000'/></svg>");
-      mask-size:          16px 16px;
-      mask-repeat:        repeat;
-      -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'><rect x='0' y='0' width='1' height='1' fill='%23000'/><rect x='5' y='0' width='1' height='1' fill='%23000'/><rect x='2' y='1' width='2' height='2' fill='%23000'/><rect x='6' y='1' width='2' height='1' fill='%23000'/><rect x='4' y='2' width='1' height='2' fill='%23000'/><rect x='1' y='3' width='1' height='1' fill='%23000'/><rect x='7' y='3' width='1' height='1' fill='%23000'/><rect x='1' y='4' width='1' height='1' fill='%23000'/><rect x='4' y='4' width='1' height='1' fill='%23000'/><rect x='6' y='4' width='1' height='1' fill='%23000'/><rect x='0' y='5' width='3' height='1' fill='%23000'/><rect x='5' y='5' width='1' height='1' fill='%23000'/><rect x='1' y='6' width='1' height='1' fill='%23000'/><rect x='4' y='6' width='1' height='1' fill='%23000'/><rect x='6' y='6' width='1' height='1' fill='%23000'/><rect x='3' y='7' width='1' height='1' fill='%23000'/><rect x='7' y='7' width='1' height='1' fill='%23000'/></svg>");
-      -webkit-mask-size:  16px 16px;
-      -webkit-mask-repeat: repeat;
-    }
-  </style>
-
   <BlogHeader />
 
   <main class="min-h-svh bg-black text-white antialiased isolate">
@@ -108,7 +31,7 @@ const formatter = new Intl.DateTimeFormat('en', {
         post.data.template === 'guide' ? 'border-[#dc2626]/30' : '',
       ]}>
         <p class="text-white/40 text-xs uppercase tracking-widest mb-4">{formatter.format(post.data.pubDate)}</p>
-        <h1 class="post-title-vhs text-4xl sm:text-6xl text-pretty mb-5" data-title={post.data.title}>{post.data.title}</h1>
+        <h1 class="text-4xl sm:text-6xl text-pretty mb-5">{post.data.title}</h1>
         <p class="text-gray-300 text-base sm:text-lg leading-8">{post.data.description}</p>
       </header>
 
