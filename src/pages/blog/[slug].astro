@@ -34,15 +34,40 @@ const formatter = new Intl.DateTimeFormat('en', {
        gaps. */
     .post-title-vhs {
       letter-spacing: 1px;
+      /* Three-stage trail tuned to look like a shooting-star streak:
+           HEAD  (1–5px)  — every pixel, bright. The dense leading edge
+                            close to the letter gives the trail
+                            something solid to read against.
+           MID   (7–12px) — every other pixel, dimming. Gaps start
+                            appearing between offset positions; the
+                            "halftone" feeling kicks in here.
+           TAIL  (16+px)  — increasingly large gaps + sharp opacity
+                            falloff. By 38px the shadow is at 2% alpha
+                            and barely there. The big spacing toward
+                            the end is what makes it read as scattered
+                            pixels rather than a continuous fade.
+         All at integer pixel offsets with no blur so each step
+         remains a sharp single-pixel duplicate. Trail stays on the
+         down-right diagonal so the "drag direction" reads cleanly. */
       text-shadow:
+        /* HEAD — dense, every pixel */
         1px 1px 0 rgba(220, 38, 38, 1.00),
-        2px 2px 0 rgba(220, 38, 38, 0.85),
-        3px 3px 0 rgba(220, 38, 38, 0.70),
-        4px 4px 0 rgba(220, 38, 38, 0.55),
-        5px 5px 0 rgba(220, 38, 38, 0.40),
-        6px 6px 0 rgba(220, 38, 38, 0.28),
-        7px 7px 0 rgba(220, 38, 38, 0.18),
-        8px 8px 0 rgba(220, 38, 38, 0.10);
+        2px 2px 0 rgba(220, 38, 38, 0.92),
+        3px 3px 0 rgba(220, 38, 38, 0.82),
+        4px 4px 0 rgba(220, 38, 38, 0.70),
+        5px 5px 0 rgba(220, 38, 38, 0.58),
+        /* MID — every-other-pixel spacing, dimming */
+        7px 7px 0 rgba(220, 38, 38, 0.46),
+        9px 9px 0 rgba(220, 38, 38, 0.36),
+        11px 11px 0 rgba(220, 38, 38, 0.27),
+        /* TAIL — gaps widen 3 → 4 → 5 → 6px, opacity falls hard */
+        14px 14px 0 rgba(220, 38, 38, 0.20),
+        17px 17px 0 rgba(220, 38, 38, 0.15),
+        20px 20px 0 rgba(220, 38, 38, 0.11),
+        24px 24px 0 rgba(220, 38, 38, 0.07),
+        28px 28px 0 rgba(220, 38, 38, 0.05),
+        33px 33px 0 rgba(220, 38, 38, 0.03),
+        38px 38px 0 rgba(220, 38, 38, 0.02);
     }
   </style>
 
