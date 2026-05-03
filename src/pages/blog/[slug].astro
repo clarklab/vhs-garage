@@ -23,17 +23,43 @@ const formatter = new Intl.DateTimeFormat('en', {
 
 <Base title={post.data.title} description={post.data.description}>
   <style>
-    /* Post title — VHS sub-pixel offset shadow.
-       letter-spacing: 1px adds a 1px gap between every character; the
-       text-shadow lays a single red copy 1px down + 1px right, with no
-       blur (sharp pixel edges). The result reads as a "dotted" red
-       drop shadow because the shadow gets the same character gaps the
-       letters do — gaps show through, leaving the shadow as discrete
-       per-letter chunks rather than a continuous bar. Kind of a CRT
-       chromatic-aberration vibe matched to our pixel/VHS aesthetic. */
+    /* Post title — VHS halftone drop-shadow.
+       Three layers, front-to-back:
+         1. Letter (white, on top)
+         2. Gap (the 6px offset between letter and shadow shows the
+            page background through — the "nothing in between" the
+            user asked for)
+         3. Halftone red drop-shadow (the ::before pseudo-element)
+       The pseudo duplicates the text via `content: attr(data-title)`
+       and uses background-clip: text to clip a radial-gradient dot
+       pattern (#dc2626 dots on a transparent grid) to the text shape.
+       Result reads as a chunky halftone-print red shadow rather than
+       a flat color shadow. letter-spacing keeps the per-character gaps
+       from the previous version. */
     .post-title-vhs {
+      position: relative;
       letter-spacing: 1px;
-      text-shadow: 1px 1px 0 #dc2626;
+      isolation: isolate;            /* own stacking context so z-index works locally */
+    }
+    .post-title-vhs::before {
+      content: attr(data-title);
+      position: absolute;
+      top: 6px;                      /* offset puts visible "gap" between letter and shadow */
+      left: 6px;
+      width: 100%;
+      letter-spacing: inherit;
+      font: inherit;
+      /* Radial-gradient halftone: 1.4px red dots on a 4px grid. The
+         gap-to-dot ratio + size determines how "dotty" it reads — bump
+         dot size for more saturated, shrink for more sparse. */
+      background-image: radial-gradient(circle, #dc2626 1.4px, transparent 1.8px);
+      background-size: 4px 4px;
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent;
+      z-index: -1;                   /* behind the actual H1 text */
+      pointer-events: none;
     }
   </style>
 
@@ -46,7 +72,7 @@ const formatter = new Intl.DateTimeFormat('en', {
         post.data.template === 'guide' ? 'border-[#dc2626]/30' : '',
       ]}>
         <p class="text-white/40 text-xs uppercase tracking-widest mb-4">{formatter.format(post.data.pubDate)}</p>
-        <h1 class="post-title-vhs text-4xl sm:text-6xl text-pretty mb-5">{post.data.title}</h1>
+        <h1 class="post-title-vhs text-4xl sm:text-6xl text-pretty mb-5" data-title={post.data.title}>{post.data.title}</h1>
         <p class="text-gray-300 text-base sm:text-lg leading-8">{post.data.description}</p>
       </header>
 
