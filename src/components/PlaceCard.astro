@@ -42,18 +42,9 @@ const cardId = `place-card-${slug || Math.random().toString(36).slice(2)}`;
 
 <aside
   id={cardId}
-  class="place-card relative my-8 border border-white/15 bg-black p-4 sm:p-5"
+  class="place-card my-8 border border-white/15 bg-black p-4 sm:p-5"
   data-slug={slug}
 >
-  {certified && (
-    // Same green pill as the Garage Certified badge on AmazonCard so
-    // the two systems read as one shelf of recommendations. Right
-    // column gets pr-28/32 to keep title text from sliding under it.
-    <span class="absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 bg-[#dc2626] text-white text-[9px] font-bold uppercase tracking-widest">
-      ✓ Garage Certified
-    </span>
-  )}
-
   <div class="flex gap-4">
     <div class="shrink-0">
       {image ? (
@@ -66,18 +57,22 @@ const cardId = `place-card-${slug || Math.random().toString(36).slice(2)}`;
       )}
     </div>
 
-    <div class:list={["min-w-0 flex-1", certified && "pr-28 sm:pr-32"]}>
-      <p class="text-white/40 text-xs uppercase tracking-widest mb-2">{eyebrow}</p>
+    <div class="min-w-0 flex-1">
+      {certified && (
+        // Inline pill above the name. Self-start so it shrink-wraps to
+        // the badge text rather than stretching across the column.
+        <span class="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 bg-[#dc2626] text-white text-[9px] font-bold uppercase tracking-widest">
+          ✓ Garage Certified
+        </span>
+      )}
       <h3 class="text-white text-xl leading-7 mb-1">{name}</h3>
 
       {(address || city) && (
-        // Address line — small, dim, sits between title and description.
-        <p class="text-white/40 text-xs mb-2">
+        // Address line — small, dim, sits between title and the action button.
+        <p class="text-white/40 text-xs mb-3">
           {address}{address && city && ' · '}{city}
         </p>
       )}
-
-      {description && <p class="text-gray-400 text-base sm:text-sm leading-7 mb-4">{description}</p>}
 
       <div class="flex flex-wrap items-center gap-2">
         <a href={resolvedMapsUrl} target="_blank" rel="noopener" class="place-card-cta inline-flex h-10 items-center justify-center gap-1.5 bg-[#dc2626] px-3 text-white text-sm font-medium no-underline hover:bg-[#ef4444] transition-colors">
