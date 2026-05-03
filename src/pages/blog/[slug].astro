@@ -33,34 +33,46 @@ const formatter = new Intl.DateTimeFormat('en', {
        letter-spacing kept at 1px so the trail also gets per-character
        gaps. */
     .post-title-vhs {
+      position: relative;
       letter-spacing: 1px;
-      /* Three-stage trail tuned to look like a shooting-star streak:
-           HEAD  (1–5px)  — every pixel, bright. The dense leading edge
-                            close to the letter gives the trail
-                            something solid to read against.
-           MID   (7–12px) — every other pixel, dimming. Gaps start
-                            appearing between offset positions; the
-                            "halftone" feeling kicks in here.
-           TAIL  (16+px)  — increasingly large gaps + sharp opacity
-                            falloff. By 38px the shadow is at 2% alpha
-                            and barely there. The big spacing toward
-                            the end is what makes it read as scattered
-                            pixels rather than a continuous fade.
-         All at integer pixel offsets with no blur so each step
-         remains a sharp single-pixel duplicate. Trail stays on the
-         down-right diagonal so the "drag direction" reads cleanly. */
+      isolation: isolate; /* own stacking context for the ::before z-index */
+    }
+
+    /* The letter on top stays crisp/white. The shadow trail lives on a
+       ::before pseudo: same text via `content: attr(data-title)`, made
+       invisible (color: transparent) so only its text-shadow paints,
+       then a radial-gradient halftone mask punches dots through the
+       whole shadow stack at once.
+
+       How to tune the tone:
+         dot radius < gap radius → quarter tone   (sparser, lighter)
+         dot radius = gap radius → halftone       (50%)
+         dot radius > gap radius → three-quarter tone (denser, fuller)
+       Below: 1.2px dot vs 1.7px gap on a 3px grid = roughly 50% halftone.
+       For a coarser print look, bump --halftone-grid to 4–5px.
+       For a denser/finer look, drop to 2px. */
+    .post-title-vhs::before {
+      content: attr(data-title);
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      letter-spacing: inherit;
+      font: inherit;
+      color: transparent;          /* hide the pseudo's own text — we only want its shadow */
+      pointer-events: none;
+      z-index: -1;                 /* behind the real H1 letters */
+      /* Same shooting-star trail as before — head dense, mid gappy,
+         tail disintegrating. */
       text-shadow:
-        /* HEAD — dense, every pixel */
         1px 1px 0 rgba(220, 38, 38, 1.00),
         2px 2px 0 rgba(220, 38, 38, 0.92),
         3px 3px 0 rgba(220, 38, 38, 0.82),
         4px 4px 0 rgba(220, 38, 38, 0.70),
         5px 5px 0 rgba(220, 38, 38, 0.58),
-        /* MID — every-other-pixel spacing, dimming */
         7px 7px 0 rgba(220, 38, 38, 0.46),
         9px 9px 0 rgba(220, 38, 38, 0.36),
         11px 11px 0 rgba(220, 38, 38, 0.27),
-        /* TAIL — gaps widen 3 → 4 → 5 → 6px, opacity falls hard */
         14px 14px 0 rgba(220, 38, 38, 0.20),
         17px 17px 0 rgba(220, 38, 38, 0.15),
         20px 20px 0 rgba(220, 38, 38, 0.11),
@@ -68,6 +80,15 @@ const formatter = new Intl.DateTimeFormat('en', {
         28px 28px 0 rgba(220, 38, 38, 0.05),
         33px 33px 0 rgba(220, 38, 38, 0.03),
         38px 38px 0 rgba(220, 38, 38, 0.02);
+      /* The halftone mask — black dots = "show this area", transparent
+         gaps = "hide this area". Tiles infinitely across the painted
+         output, including the whole text-shadow trail. */
+      mask-image:         radial-gradient(circle, #000 1.2px, transparent 1.7px);
+      mask-size:          3px 3px;
+      mask-repeat:        repeat;
+      -webkit-mask-image: radial-gradient(circle, #000 1.2px, transparent 1.7px);
+      -webkit-mask-size:  3px 3px;
+      -webkit-mask-repeat: repeat;
     }
   </style>
 
@@ -80,7 +101,7 @@ const formatter = new Intl.DateTimeFormat('en', {
         post.data.template === 'guide' ? 'border-[#dc2626]/30' : '',
       ]}>
         <p class="text-white/40 text-xs uppercase tracking-widest mb-4">{formatter.format(post.data.pubDate)}</p>
-        <h1 class="post-title-vhs text-4xl sm:text-6xl text-pretty mb-5">{post.data.title}</h1>
+        <h1 class="post-title-vhs text-4xl sm:text-6xl text-pretty mb-5" data-title={post.data.title}>{post.data.title}</h1>
         <p class="text-gray-300 text-base sm:text-lg leading-8">{post.data.description}</p>
       </header>
 
