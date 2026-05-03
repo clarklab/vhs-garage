@@ -45,36 +45,33 @@ const cardId = `place-card-${slug || Math.random().toString(36).slice(2)}`;
   class="place-card my-8 border border-white/15 bg-black p-4 sm:p-5"
   data-slug={slug}
 >
-  <div class="flex gap-4">
-    <div class="shrink-0">
+  <div class="flex gap-4 items-stretch">
+    <div class="shrink-0 self-stretch">
       {image ? (
         <img src={image} alt={name} loading="lazy"
-          class="size-24 sm:size-28 object-cover border border-white/10 bg-white/5" />
+          class="place-card-img w-32 sm:w-36 h-full object-cover border border-white/10 bg-white/5" />
       ) : (
-        <div aria-hidden="true" class="flex size-24 sm:size-28 items-center justify-center border border-white/10 bg-white/5 text-white/35 text-2xl">
+        <div aria-hidden="true" class="flex w-32 sm:w-36 h-full items-center justify-center border border-white/10 bg-white/5 text-white/35 text-2xl">
           ▣
         </div>
       )}
     </div>
 
-    <div class="min-w-0 flex-1">
+    <div class="min-w-0 flex-1 flex flex-col justify-center">
       {certified && (
-        // Inline pill above the name. Self-start so it shrink-wraps to
-        // the badge text rather than stretching across the column.
-        <span class="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 bg-[#dc2626] text-white text-[9px] font-bold uppercase tracking-widest">
+        <span class="place-card-pill inline-flex items-center self-start gap-1 px-2 py-0.5 bg-[#dc2626] text-white text-[9px] font-bold uppercase tracking-widest">
           ✓ Garage Certified
         </span>
       )}
-      <h3 class="text-white text-xl leading-7 mb-1">{name}</h3>
+      <h3 class="place-card-name text-white text-xl">{name}</h3>
 
       {(address || city) && (
-        // Address line — small, dim, sits between title and the action button.
-        <p class="text-white/40 text-xs mb-3">
+        <p class="place-card-addr text-white/40 text-xs">
           {address}{address && city && ' · '}{city}
         </p>
       )}
 
-      <div class="flex flex-wrap items-center gap-2">
+      <div class="place-card-actions flex flex-wrap items-center gap-2">
         <a href={resolvedMapsUrl} target="_blank" rel="noopener" class="place-card-cta inline-flex h-10 items-center justify-center gap-1.5 bg-[#dc2626] px-3 text-white text-sm font-medium no-underline hover:bg-[#ef4444] transition-colors">
           <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
             <path d="m19,6v-2h-1v-1h-1v-1h-2v-1h-6v1h-2v1h-1v1h-1v2h-1v6h1v2h1v1h1v2h1v1h1v2h1v1h1v2h2v-2h1v-1h1v-2h1v-1h1v-2h1v-1h1v-2h1v-6h-1Zm-5,5h-1v1h-2v-1h-1v-1h-1v-2h1v-1h1v-1h2v1h1v1h1v2h-1v1Z"/>
@@ -106,7 +103,38 @@ const cardId = `place-card-${slug || Math.random().toString(36).slice(2)}`;
   </div>
 </aside>
 
-<style>
+<style is:global>
+  /* The PlaceCard often appears INSIDE .vhs-prose (blog post bodies),
+     where rules like `.vhs-prose h3 { margin-top: 2rem }` and
+     `.vhs-prose > * + * { margin-top: 1.25rem }` injected huge gaps
+     between elements inside the card. Reset every margin inside a
+     .place-card here so the layout is consistent on /places (no prose
+     wrapper) and inside posts (prose wrapper). is:global so the
+     selectors aren't Astro-scoped (the prose rules they're fighting
+     are global too — same specificity battle, last-rule-wins). */
+  .place-card,
+  .place-card * {
+    margin: 0;
+  }
+  /* Per-element spacing — explicit so prose can't override it. */
+  .place-card-pill {
+    margin-bottom: 0.5rem;
+  }
+  .place-card-name {
+    line-height: 1.2;
+    margin-bottom: 0.25rem;
+  }
+  .place-card-addr {
+    margin-bottom: 0.875rem;
+  }
+  /* Image fills the height of the content column so the card has no
+     dead space above or below the photo regardless of how much text
+     sits to its right. */
+  .place-card-img {
+    display: block;
+    min-height: 100%;
+  }
+
   .place-card-cta,
   .place-card-cta:hover,
   .place-card-cta-secondary,
