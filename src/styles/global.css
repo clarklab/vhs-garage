@@ -45,7 +45,7 @@ html {
 }
 
 .vhs-prose a {
-  color: #39ff14;
+  color: #dc2626;
   text-decoration-line: underline;
   text-underline-offset: 3px;
 }
@@ -73,7 +73,7 @@ html {
 }
 
 .vhs-prose blockquote {
-  border-left: 2px solid color-mix(in oklab, #39ff14 55%, transparent);
+  border-left: 2px solid color-mix(in oklab, #dc2626 55%, transparent);
   padding-left: --spacing(4);
   color: var(--color-white);
 }

@@ -87,11 +87,11 @@ const cardId = `amazon-card-${cleanAsin || Math.random().toString(36).slice(2)}`
   data-certified={certified ? 'true' : 'false'}
 >
   {certified && (
-    // Floats top-right of the card. Green pill matches our accent palette;
+    // Floats top-right of the card. Red pill matches our accent palette;
     // the checkmark + "GARAGE CERTIFIED" reads at a glance even at small
     // sizes. The card content uses pr-32 on the right column so the
     // badge doesn't overlap the title text on narrow widths.
-    <span class="absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 bg-[#39ff14] text-black text-[9px] font-bold uppercase tracking-widest">
+    <span class="absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 bg-[#dc2626] text-white text-[9px] font-bold uppercase tracking-widest">
       ✓ Garage Certified
     </span>
   )}
@@ -114,7 +114,7 @@ const cardId = `amazon-card-${cleanAsin || Math.random().toString(36).slice(2)}`
       {description && <p class="text-gray-400 text-base sm:text-sm leading-7 mb-4">{description}</p>}
 
       <div class="flex flex-wrap items-center gap-3">
-        <a href={href} target="_blank" rel="nofollow sponsored noopener" class="amazon-card-cta inline-flex h-11 items-center justify-center bg-[#39ff14] px-4 text-black text-sm font-medium no-underline hover:bg-[#66ff47] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#39ff14]">
+        <a href={href} target="_blank" rel="nofollow sponsored noopener" class="amazon-card-cta inline-flex h-11 items-center justify-center bg-[#dc2626] px-4 text-white text-sm font-medium no-underline hover:bg-[#ef4444] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#dc2626]">
           {cta}
         </a>
         <span class="text-white/30 text-xs">Amazon link</span>
@@ -127,7 +127,7 @@ const cardId = `amazon-card-${cleanAsin || Math.random().toString(36).slice(2)}`
 <style>
   .amazon-card-cta,
   .amazon-card-cta:hover {
-    color: #000;
+    color: #fff;
     text-decoration: none;
   }
 </style>
