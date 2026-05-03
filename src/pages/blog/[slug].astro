@@ -23,43 +23,26 @@ const formatter = new Intl.DateTimeFormat('en', {
 
 <Base title={post.data.title} description={post.data.description}>
   <style>
-    /* Post title — VHS halftone drop-shadow.
-       Three layers, front-to-back:
-         1. Letter (white, on top)
-         2. Gap (the 6px offset between letter and shadow shows the
-            page background through — the "nothing in between" the
-            user asked for)
-         3. Halftone red drop-shadow (the ::before pseudo-element)
-       The pseudo duplicates the text via `content: attr(data-title)`
-       and uses background-clip: text to clip a radial-gradient dot
-       pattern (#dc2626 dots on a transparent grid) to the text shape.
-       Result reads as a chunky halftone-print red shadow rather than
-       a flat color shadow. letter-spacing keeps the per-character gaps
-       from the previous version. */
+    /* Post title — pixelated motion-blur drop trail.
+       Stacked single-pixel offset shadows with progressively-decreasing
+       opacity create a "pixel ghost" trail extending down + right from
+       the letter, like the text was dragged diagonally across the page
+       and left a fading pixel afterimage behind it. Each shadow is at
+       an integer pixel step (1px, 2px, 3px…) with no blur, so the
+       falloff reads as discrete pixels rather than a smooth gradient.
+       letter-spacing kept at 1px so the trail also gets per-character
+       gaps. */
     .post-title-vhs {
-      position: relative;
       letter-spacing: 1px;
-      isolation: isolate;            /* own stacking context so z-index works locally */
-    }
-    .post-title-vhs::before {
-      content: attr(data-title);
-      position: absolute;
-      top: 6px;                      /* offset puts visible "gap" between letter and shadow */
-      left: 6px;
-      width: 100%;
-      letter-spacing: inherit;
-      font: inherit;
-      /* Radial-gradient halftone: 1.4px red dots on a 4px grid. The
-         gap-to-dot ratio + size determines how "dotty" it reads — bump
-         dot size for more saturated, shrink for more sparse. */
-      background-image: radial-gradient(circle, #dc2626 1.4px, transparent 1.8px);
-      background-size: 4px 4px;
-      -webkit-background-clip: text;
-      background-clip: text;
-      -webkit-text-fill-color: transparent;
-      color: transparent;
-      z-index: -1;                   /* behind the actual H1 text */
-      pointer-events: none;
+      text-shadow:
+        1px 1px 0 rgba(220, 38, 38, 1.00),
+        2px 2px 0 rgba(220, 38, 38, 0.85),
+        3px 3px 0 rgba(220, 38, 38, 0.70),
+        4px 4px 0 rgba(220, 38, 38, 0.55),
+        5px 5px 0 rgba(220, 38, 38, 0.40),
+        6px 6px 0 rgba(220, 38, 38, 0.28),
+        7px 7px 0 rgba(220, 38, 38, 0.18),
+        8px 8px 0 rgba(220, 38, 38, 0.10);
     }
   </style>
 
@@ -72,7 +55,7 @@ const formatter = new Intl.DateTimeFormat('en', {
         post.data.template === 'guide' ? 'border-[#dc2626]/30' : '',
       ]}>
         <p class="text-white/40 text-xs uppercase tracking-widest mb-4">{formatter.format(post.data.pubDate)}</p>
-        <h1 class="post-title-vhs text-4xl sm:text-6xl text-pretty mb-5" data-title={post.data.title}>{post.data.title}</h1>
+        <h1 class="post-title-vhs text-4xl sm:text-6xl text-pretty mb-5">{post.data.title}</h1>
         <p class="text-gray-300 text-base sm:text-lg leading-8">{post.data.description}</p>
       </header>
 
