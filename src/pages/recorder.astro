@@ -1,0 +1,164 @@
+---
+import Base from '../layouts/Base.astro';
+const updated = 'May 1, 2026';
+---
+
+<!--
+  Application home page for the OAuth verification submission to Google.
+  This URL ("https://vhsgarage.com/recorder") is what we list as the
+  "Application home page" in the Google Cloud OAuth consent screen.
+
+  Two verification rejection reasons we're addressing here:
+    1. "Your home page does not explain the purpose of your app."
+       → Sections below spell out exactly what the app does.
+    2. "App name 'VHS Garage' configured for your OAuth consent screen
+        does not match the app name on your home page."
+       → The H1 below is the literal string "VHS Garage" so reviewers
+         see a 1:1 name match.
+
+  Reviewer checklist this page is built around:
+    • App name visible at the top (matches OAuth consent screen)
+    • One-sentence purpose
+    • Plain-English description
+    • Explicit list of OAuth scopes + why each is needed
+    • What the app does NOT access
+    • Where data lives
+    • Links to Privacy + Terms
+    • Visible link to start using the app
+-->
+
+<Base
+  title="VHS Garage Recorder"
+  description="A free browser-based VHS digitizer that records your tapes and uploads them to your own YouTube channel."
+>
+  <div class="min-h-screen px-6 py-12 max-w-2xl mx-auto">
+    <a href="/" class="text-white/30 text-xs hover:text-white/50 transition-colors">← vhsgarage.com</a>
+
+    <!-- App name MUST match the OAuth consent screen's "App name" field
+         exactly — currently "VHS Garage". Don't change without also
+         updating the consent screen. -->
+    <h1 class="text-4xl mt-8 mb-2">VHS Garage</h1>
+    <p class="text-white/50 text-xs mb-2">A free browser-based VHS digitizer.</p>
+    <p class="text-white/40 text-xs mb-10">Last updated: {updated}</p>
+
+    <div class="space-y-8 text-gray-300 leading-relaxed">
+
+      <section>
+        <h2 class="text-xl text-white mb-3">What this app does</h2>
+        <p class="mb-3">
+          VHS Garage is a free, browser-based tool that helps you digitize old VHS
+          tapes and (optionally) publish them to your own YouTube channel. You plug
+          a USB capture card into your computer, connect your VCR to the capture
+          card, and use this app to record the playback to a video file.
+        </p>
+        <p>
+          Once a clip is recorded you can fill out title, description, year,
+          distributor, tape format, and other metadata, optionally let an AI
+          rewrite the copy from a photo of the VHS sleeve, pick a thumbnail
+          frame, and upload the final video to your own YouTube channel.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Get started</h2>
+        <p class="mb-4">
+          Open the app in Chrome (the only browser that supports the local-file
+          and capture APIs we rely on). Pick a save folder on your computer,
+          choose your capture card and microphone, and hit Record.
+        </p>
+        <a href="/capture" class="inline-block px-4 py-2 border border-[#39ff14] text-[#39ff14] hover:bg-[#39ff14]/10 text-sm uppercase tracking-wider transition-colors">
+          Open the recorder →
+        </a>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">YouTube permissions we request</h2>
+        <p class="mb-4">
+          When you choose to publish a recorded clip to YouTube, the app uses
+          Google OAuth so the upload goes to <strong class="text-white">your own
+          YouTube channel</strong>, not ours. We request the minimum scopes
+          required to do that.
+        </p>
+        <ul class="list-disc pl-5 space-y-3">
+          <li>
+            <strong class="text-white">youtube.upload</strong>
+            <span class="block text-white/60 text-sm">
+              To upload the video file you recorded to your YouTube channel,
+              along with its title, description, tags, and chosen thumbnail.
+              We never upload anything you didn't explicitly click "Upload" on.
+            </span>
+          </li>
+          <li>
+            <strong class="text-white">youtube.readonly</strong>
+            <span class="block text-white/60 text-sm">
+              To display your channel name and handle in the publish panel so
+              you can confirm which channel you're about to upload to before
+              clicking Upload. Used purely to label the UI; we do not read,
+              list, or store any of your existing videos, playlists,
+              subscriptions, or watch history.
+            </span>
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">What we do not access</h2>
+        <ul class="list-disc pl-5 space-y-2">
+          <li>Your existing YouTube videos, playlists, or watch history</li>
+          <li>Your subscriptions, comments, or community posts</li>
+          <li>Your YouTube analytics or revenue data</li>
+          <li>Your Gmail, Google Drive, Calendar, Contacts, or any other Google service</li>
+          <li>Any video you record that you don't explicitly click Upload on</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Where your data lives</h2>
+        <ul class="list-disc pl-5 space-y-2">
+          <li>
+            <strong class="text-white">Your recordings</strong> are saved
+            directly to a folder on your own computer that you choose. They
+            never touch our servers.
+          </li>
+          <li>
+            <strong class="text-white">Your clip metadata</strong> (titles,
+            descriptions, year, etc.) is stored in your browser's local
+            storage and as plain-text JSON files alongside the videos in your
+            chosen folder.
+          </li>
+          <li>
+            <strong class="text-white">Your YouTube OAuth token</strong> is
+            stored in your browser only. We do not have access to it.
+          </li>
+          <li>
+            <strong class="text-white">AI rewrites</strong> are performed by
+            sending the sleeve photo and clip metadata to Google's Gemini API
+            for that single request. We do not store the photos or the
+            generated text on any server.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Privacy &amp; Terms</h2>
+        <p class="mb-2">
+          For the full details on data handling and your rights, see our
+          <a href="/privacy" class="text-[#39ff14] hover:underline">Privacy Policy</a>
+          and
+          <a href="/terms" class="text-[#39ff14] hover:underline">Terms of Use</a>.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-xl text-white mb-3">Contact</h2>
+        <p>
+          Questions, bug reports, or YouTube verification follow-ups:
+          <a href="mailto:hello@vhsgarage.com" class="text-[#39ff14] hover:underline">hello@vhsgarage.com</a>
+        </p>
+      </section>
+
+    </div>
+
+    <p class="text-white/30 text-xs mt-16">&copy; 2026 VHS Garage</p>
+  </div>
+</Base>
