@@ -21,6 +21,47 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
       content: '░░░';
       animation: vhs-dots 0.9s steps(1) infinite;
     }
+
+    /* Hosts pair — Matt + Clark side-by-side avatars, looking at each
+       other (Matt's portrait faces right, Clark's faces left). Each card
+       fades up on load with a small stagger; on hover the avatar rocks
+       back and forth like a head bob.
+
+       Two transforms in play:
+         1. .host-card runs the entry fade/translate (one-shot, forwards)
+         2. .host-avatar runs the hover head-rock (infinite while hovered)
+       Splitting onto two elements keeps the transforms from clobbering
+       each other. */
+    .host-card {
+      opacity: 0;
+      animation: host-fade-in 0.7s ease-out forwards;
+    }
+    .host-card:nth-of-type(1) { animation-delay: 0.15s; }
+    .host-card:nth-of-type(2) { animation-delay: 0.35s; }
+
+    .host-avatar {
+      transition: transform 0.3s ease, border-color 0.3s ease;
+      transform-origin: center bottom;
+    }
+    .host-card:hover .host-avatar {
+      animation: head-rock 0.7s ease-in-out infinite;
+    }
+
+    @keyframes host-fade-in {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes head-rock {
+      0%, 100% { transform: rotate(-5deg); }
+      50%      { transform: rotate(5deg); }
+    }
+
+    /* Honor users with reduced-motion preferences — drop the head-rock,
+       just keep the entry fade. */
+    @media (prefers-reduced-motion: reduce) {
+      .host-card { animation: none; opacity: 1; }
+      .host-card:hover .host-avatar { animation: none; }
+    }
   </style>
 
   <!-- Top bar -->
@@ -55,12 +96,26 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
   <!-- Content -->
   <section class="max-w-5xl mx-auto px-6 py-24 text-left">
     <h2 class="text-7xl mb-6 tracking-tight">Welcome to the Garage</h2>
-    <p class="text-lg text-gray-300 mb-4 leading-relaxed">
+    <p class="text-lg text-gray-300 mb-10 leading-relaxed">
       VHS Garage is a lo-fi love letter to the golden age of video. Two dudes on a mission to rewind the clock and bring analog vibes back to a digital world.
     </p>
-    <p class="text-lg text-gray-300 mb-12 leading-relaxed">
-      Hosted by <a href="https://x.com/oracrest" target="_blank" class="text-white underline hover:text-gray-300">Matt Manchester</a>. Co-hosted by <a href="https://x.com/clarklab" target="_blank" class="text-white underline hover:text-gray-300">Clark Wimberly</a>.
-    </p>
+
+    <!-- Hosts pair — Matt left, Clark right, facing each other. Each
+         avatar links to its host's Twitter. Names + role under each. -->
+    <div class="flex justify-start items-end gap-8 sm:gap-12 mb-14">
+      <a href="https://x.com/oracrest" target="_blank" rel="noopener" class="host-card flex flex-col items-center text-center">
+        <img src="/images/avatar-matt.webp" alt="Matt Manchester"
+          class="host-avatar w-24 h-24 sm:w-28 sm:h-28 rounded-full border-2 border-white/20 hover:border-white/60 object-cover bg-[#141214]" />
+        <p class="text-white text-sm mt-3">Matt Manchester</p>
+        <p class="text-white/40 text-[10px] uppercase tracking-widest mt-0.5">Host</p>
+      </a>
+      <a href="https://x.com/clarklab" target="_blank" rel="noopener" class="host-card flex flex-col items-center text-center">
+        <img src="/images/avatar-clark.webp" alt="Clark Wimberly"
+          class="host-avatar w-24 h-24 sm:w-28 sm:h-28 rounded-full border-2 border-white/20 hover:border-white/60 object-cover bg-[#141214]" />
+        <p class="text-white text-sm mt-3">Clark Wimberly</p>
+        <p class="text-white/40 text-[10px] uppercase tracking-widest mt-0.5">Co-Host</p>
+      </a>
+    </div>
 
     <!-- What We're Into.
          Cards now lead with a pixel icon (from @hackernoon/pixel-icon-library),
