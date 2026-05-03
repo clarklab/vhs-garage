@@ -22,6 +22,21 @@ const formatter = new Intl.DateTimeFormat('en', {
 ---
 
 <Base title={post.data.title} description={post.data.description}>
+  <style>
+    /* Post title — VHS sub-pixel offset shadow.
+       letter-spacing: 1px adds a 1px gap between every character; the
+       text-shadow lays a single red copy 1px down + 1px right, with no
+       blur (sharp pixel edges). The result reads as a "dotted" red
+       drop shadow because the shadow gets the same character gaps the
+       letters do — gaps show through, leaving the shadow as discrete
+       per-letter chunks rather than a continuous bar. Kind of a CRT
+       chromatic-aberration vibe matched to our pixel/VHS aesthetic. */
+    .post-title-vhs {
+      letter-spacing: 1px;
+      text-shadow: 1px 1px 0 #dc2626;
+    }
+  </style>
+
   <BlogHeader />
 
   <main class="min-h-svh bg-black text-white antialiased isolate">
@@ -31,7 +46,7 @@ const formatter = new Intl.DateTimeFormat('en', {
         post.data.template === 'guide' ? 'border-[#dc2626]/30' : '',
       ]}>
         <p class="text-white/40 text-xs uppercase tracking-widest mb-4">{formatter.format(post.data.pubDate)}</p>
-        <h1 class="text-4xl sm:text-6xl text-pretty mb-5">{post.data.title}</h1>
+        <h1 class="post-title-vhs text-4xl sm:text-6xl text-pretty mb-5">{post.data.title}</h1>
         <p class="text-gray-300 text-base sm:text-lg leading-8">{post.data.description}</p>
       </header>
 
