@@ -37,19 +37,37 @@
 // the /places page.
 
 export const PLACES = [
-  // Add entries here as places come up. Example:
-  //
-  // {
-  //   slug: 'antones-record-shop',
-  //   name: "Antone's Record Shop",
-  //   description: 'Vinyl, cassettes, the occasional VHS. Run by music nerds since 1987.',
-  //   eyebrow: 'Record store',
-  //   image: '/images/places/antones-record-shop.webp',
-  //   certified: true,
-  //   address: '2928 Guadalupe St',
-  //   city: 'Austin, TX',
-  //   website: 'https://antonesrecordshop.com',
-  // },
+  {
+    slug: 'bessemer-book-and-resale',
+    name: 'Bessemer Book and Resale',
+    description: "Used books, weird VHS, DVDs, comics, magazines, sports cards, the occasional Beanie Baby. The kind of shop where you go in for one thing and leave with seven.",
+    eyebrow: 'Book + media shop',
+    image: '/images/blog/llano-bessemer.webp',
+    certified: true,
+    address: '602 Bessemer Ave',
+    city: 'Llano, TX 78643',
+  },
+  {
+    slug: 'records-and-things-strange',
+    name: 'Records and Things Strange (RATS)',
+    description: "A few doors down from Bessemer — vinyl, tapes, oddities. Same family of shops. Plan to spend an hour digging here even if you only meant to drop in.",
+    eyebrow: 'Record store',
+    image: '/images/blog/llano-rat.webp',
+    certified: true,
+    address: '608 Public Square',
+    city: 'Llano, TX 78643',
+  },
+  {
+    slug: 'video-station-taylor',
+    name: 'Video Station Superstore',
+    description: "An actual functioning video rental store in 2026. Wall-to-wall VHS + DVD, the smell of old plastic cases, and the kind of organized-chaos you forgot was a thing. Open late on Fridays.",
+    eyebrow: 'Video rental store',
+    image: '/images/blog/taylor-video-station.webp',
+    certified: true,
+    address: '800 Mallard Ln',
+    city: 'Taylor, TX 76574',
+    website: 'https://www.videostationsuperstore.com/',
+  },
 ];
 
 // Lookup helper used by PlaceCard.astro. Slug match is case-insensitive
