@@ -96,25 +96,30 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
   <!-- Content -->
   <section class="max-w-5xl mx-auto px-6 py-24 text-left">
     <h2 class="text-7xl mb-6 tracking-tight">Welcome to the Garage</h2>
-    <p class="text-lg text-gray-300 mb-10 leading-relaxed">
-      VHS Garage is a lo-fi love letter to the golden age of video. Two dudes on a mission to rewind the clock and bring analog vibes back to a digital world.
-    </p>
-
-    <!-- Hosts pair — Matt left, Clark right, facing each other. Each
-         avatar links to its host's Twitter. Names + role under each. -->
-    <div class="flex justify-start items-end gap-8 sm:gap-12 mb-14">
-      <a href="https://x.com/oracrest" target="_blank" rel="noopener" class="host-card flex flex-col items-center text-center">
-        <img src="/images/avatar-matt.webp" alt="Matt Manchester"
-          class="host-avatar w-24 h-24 sm:w-28 sm:h-28 rounded-full border-2 border-white/20 hover:border-white/60 object-cover bg-[#141214]" />
-        <p class="text-white text-sm mt-3">Matt Manchester</p>
-        <p class="text-white/40 text-[10px] uppercase tracking-widest mt-0.5">Host</p>
-      </a>
-      <a href="https://x.com/clarklab" target="_blank" rel="noopener" class="host-card flex flex-col items-center text-center">
-        <img src="/images/avatar-clark.webp" alt="Clark Wimberly"
-          class="host-avatar w-24 h-24 sm:w-28 sm:h-28 rounded-full border-2 border-white/20 hover:border-white/60 object-cover bg-[#141214]" />
-        <p class="text-white text-sm mt-3">Clark Wimberly</p>
-        <p class="text-white/40 text-[10px] uppercase tracking-widest mt-0.5">Co-Host</p>
-      </a>
+    <!-- Two-column intro on desktop: big paragraph on the left, hosts on
+         the right. Stacks vertically on mobile (the default flex-col of
+         a grid with one column). Removed the circle crop and the
+         HOST / CO-HOST role tags per the latest spec — just the
+         portraits + names with a "Hosted by" label above them. -->
+    <div class="grid md:grid-cols-2 gap-8 md:gap-12 mb-14 items-start">
+      <p class="text-lg text-gray-300 leading-relaxed">
+        VHS Garage is a lo-fi love letter to the golden age of video. Two dudes on a mission to rewind the clock and bring analog vibes back to a digital world.
+      </p>
+      <div class="md:text-right">
+        <p class="text-white/40 text-[10px] uppercase tracking-widest mb-3 md:mr-1">Hosted by</p>
+        <div class="flex md:justify-end items-end gap-4 sm:gap-6">
+          <a href="https://x.com/oracrest" target="_blank" rel="noopener" class="host-card flex flex-col items-center text-center">
+            <img src="/images/avatar-matt.webp" alt="Matt Manchester"
+              class="host-avatar w-36 h-36 sm:w-44 sm:h-44 object-cover bg-[#141214]" />
+            <p class="text-white text-sm mt-3">Matt Manchester</p>
+          </a>
+          <a href="https://x.com/clarklab" target="_blank" rel="noopener" class="host-card flex flex-col items-center text-center">
+            <img src="/images/avatar-clark.webp" alt="Clark Wimberly"
+              class="host-avatar w-36 h-36 sm:w-44 sm:h-44 object-cover bg-[#141214]" />
+            <p class="text-white text-sm mt-3">Clark Wimberly</p>
+          </a>
+        </div>
+      </div>
     </div>
 
     <!-- What We're Into.
@@ -206,6 +211,20 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
             Get notified →
           </a>
         </div>
+
+        <!-- Submit Your Garage -->
+        <div class="flex flex-col border border-white/20 hover:border-white/40 transition-colors p-5">
+          <div class="flex items-center gap-2 mb-3">
+            <svg class="w-5 h-5 text-[#39ff14] fill-current" viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="23 11 23 12 20 12 20 22 19 22 19 23 15 23 15 16 9 16 9 23 5 23 5 22 4 22 4 12 1 12 1 11 2 11 2 10 3 10 3 9 4 9 4 8 5 8 5 7 6 7 6 6 7 6 7 5 8 5 8 4 9 4 9 3 10 3 10 2 11 2 11 1 13 1 13 2 14 2 14 3 15 3 15 4 16 4 16 5 17 5 17 6 18 6 18 7 19 7 19 8 20 8 20 9 21 9 21 10 22 10 22 11 23 11"/>
+            </svg>
+            <p class="text-white text-xs uppercase tracking-[0.18em]">Your Garage</p>
+          </div>
+          <p class="mb-5 flex-1">Got a VHS setup worth showing off? Send us a photo of your space — we'll feature it on the site.</p>
+          <a href="/submit" class="self-start inline-block px-4 py-2 border border-white/30 text-white text-xs uppercase tracking-wider hover:border-white hover:bg-white/5 transition-colors">
+            Submit yours →
+          </a>
+        </div>
       </div>
     </div>
 
@@ -288,14 +307,14 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
       </div>
     </div>
 
-    <!-- Signup — VHS static backdrop with a white card on top.
-         The static effect lives in /public/scripts/vhs-static.js (a tiny
-         vanilla module that auto-inits any <canvas data-vhs-static>). The
-         canvas fills the section absolutely; the white card is z-10 on
-         top. Section uses negative horizontal margins so the static
-         visually breaks out of the max-w-5xl content column for landing-
-         page weight. -->
-    <section id="signup" class="relative -mx-6 my-16 overflow-hidden border-y border-white/10">
+    <!-- Signup — VHS static backdrop spans the FULL viewport width, with
+         the white card centered inside. The classic "full-bleed inside a
+         constrained parent" trick: width: 100vw + margin-left of
+         calc(-50vw + 50%) makes the section span the viewport regardless
+         of the max-w-5xl wrapper, while staying horizontally centered.
+         The static canvas auto-inits via /public/scripts/vhs-static.js. -->
+    <section id="signup" class="relative my-16 overflow-hidden border-y border-white/10"
+             style="width: 100vw; margin-left: calc(-50vw + 50%);">
       <canvas data-vhs-static
               class="absolute inset-0 w-full h-full pointer-events-none"
               style="image-rendering: pixelated; opacity: 0.45;"
@@ -337,12 +356,7 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
       </div>
     </section>
 
-    <!-- Submit Your Garage -->
-    <div class="mb-12" style="margin-top:3rem;">
-      <h3 class="text-2xl mb-6">#Submit Your Garage</h3>
-      <p class="text-gray-300 mb-4">Got a VHS setup worth showing off? Send us a photo of your space and we might feature it on the site — your garage becomes a place where people come to watch tapes.</p>
-      <a href="/submit" class="text-[#39ff14] text-xs hover:underline">Submit your garage →</a>
-    </div>
+    <!-- (Submit Your Garage moved up into the #What We're Into card grid.) -->
   </section>
 
   <footer class="text-left text-gray-600 text-sm pb-8 max-w-2xl mx-auto px-6 flex flex-wrap items-center gap-x-4 gap-y-2">
