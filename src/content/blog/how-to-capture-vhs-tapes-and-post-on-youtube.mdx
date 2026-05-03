@@ -1,6 +1,6 @@
 ---
 title: "How to Capture VHS Tapes and Post on YouTube"
-description: "A simple workflow for digitizing VHS tapes with a USB capture device, recording clips in VHS Garage, and publishing them to YouTube with stronger titles and thumbnails."
+description: "VCR → cheap USB capture card → your computer → YouTube. The whole chain in four steps, no soldering required."
 pubDate: 2026-05-01T12:00:00-05:00
 template: guide
 image: "/images/blog/how-to-capture-vhs-tapes-and-post-on-youtube.webp"
@@ -10,62 +10,73 @@ categories: ["Guides", "Hardware"]
 import SignupForm from '../../components/SignupForm.astro';
 import AmazonCard from '../../components/AmazonCard.astro';
 
-Capturing VHS tapes does not need to be complicated. You need a working VCR, a simple USB capture device, the right cable, and a place to record the signal. From there, the real work is choosing the moments worth preserving and giving them enough context that people can actually find them.
+So you've got a stack of VHS tapes you want to live on the internet forever. Cool. Here's how to do that without a $400 setup or learning to solder.
 
-Here is the basic VHS-to-YouTube workflow.
+## The whole chain
 
-## 1. Get a USB capture device
+It's dumb-simple: **VCR → cheap USB capture card → your computer → YouTube.** That's it. The capture card is the magic. Once it's plugged in, your VCR shows up to your computer as just another video input — like a webcam. Anything that records from a webcam can record from your VCR. Including [our recorder](/capture), but also OBS, QuickTime, whatever you already use.
 
-Start with a USB video capture device that accepts analog video. Most people use a small USB dongle with RCA inputs. You do not need a studio rig to get started, but do get something your computer recognizes reliably.
+![VCR plugged into a USB capture card plugged into a laptop](/images/blog/capture-flow.webp)
 
-If your VCR has cleaner outputs or you have a time base corrector, great. If not, do not let that stop you. The best capture setup is the one you will actually use.
+That little dongle works on a desktop, a laptop, even an iPad in some cases. Mac, Windows, Linux — all good.
 
-<AmazonCard
-  url="https://www.amazon.com/dp/B0BVDVZGR2"
-  title="USB Video Capture Device"
-  eyebrow="Starter capture gear"
-  description="A simple USB capture dongle is enough to start testing a VCR-to-computer workflow before you invest in a bigger setup."
-/>
+There are people out there cracking open VCRs and soldering directly to the chroma decoder for cleaner color and bypassing all the analog noise. We see you. We respect you. We are not those people. We are trying to dump some bowling commercials and a 1996 little league championship onto YouTube before the tape eats itself. A $15 USB stick is plenty.
 
-## 2. Plug your VCR into the capture device
+## 1. Have a working VCR
 
-Connect the VCR to the USB capture device with RCA cables:
+If yours is in a drawer, get it out. Check the belt isn't a sticky brown blob (this happens — search "VCR belt rot" if you want to ruin your afternoon). Plug it in, eject button works, fast-forward sounds like a small jet engine — green light.
 
-- Yellow for video
-- White for left audio
-- Red for right audio
+Don't have one? Goodwill, eBay, the Facebook Marketplace listing where someone is selling their dad's whole entertainment center. Working JVC and Panasonic 4-heads from the late '90s are everywhere for $20–40. Look for "hi-fi" on the label if you care about audio (you should).
 
-Then plug the capture device into your computer. Open your system camera or video settings if you want to confirm the signal is coming through before recording.
+## 2. Use a USB capture card
 
-## 3. Record clips at VHS Garage
+This is the only purchase that actually matters. You want a USB-A or USB-C dongle with **RCA inputs** — the yellow / red / white jacks on the back of every VCR ever made. The cheap ones work fine.
 
-Go to [vhsgarage.com/capture](/capture) in Chrome and use the VHS Garage capture station to record clips from your tape. The capture tool is built for quick sessions: preview the signal, record the good stuff, and add information while the tape is fresh in your head.
+<AmazonCard asin="0IYXKQIS" />
 
-Short clips are often easier to publish than giant full-tape rips. Think commercials, local news segments, strange bumpers, home-recorded oddities, trailers, station IDs, and anything with a specific story attached.
+Hook it up:
 
-## 4. Add useful details
+- VCR's yellow RCA out → capture card's yellow RCA in
+- VCR's red + white audio outs → capture card's red + white audio ins
+- Capture card USB → your computer
 
-Before you publish, add the context you know:
+That's the whole hardware setup. The minute your computer recognizes the capture card as a video device, you're done with the gear-buying part of this hobby.
 
-- Tape title or label
-- Approximate year
-- Source or location
-- Show, movie, commercial, or station name
-- Anything unusual about the clip
+A couple of notes:
 
-Those details help viewers, and they help search engines understand what the clip is. A video called "old tape part 4" is hard to discover. A video called "1993 Austin Local Commercial Break from VHS Recording" has a fighting chance.
+- **It really does just look like a webcam.** Open your system's camera settings or any browser-based recording tool and you'll see the capture card as an input option, sitting next to "FaceTime HD Camera" like it belongs there. Press play on the VCR and you'll see the tape playing in the preview.
+- **S-Video** (the round black connector) is sharper than RCA composite if your VCR has it. The capture card we link above takes both. Use whichever you've got — composite is fine.
+- **Don't overthink the dongle.** They're all basically the same chip in a slightly different plastic shell. A $15 one and a $35 one will give you indistinguishable results for our purposes. If you ever upgrade to time-base correctors or rack-mount production gear, you'll know. Today is not that day.
 
-## 5. Publish to YouTube with a strong title and thumbnail
+## 3. Record with VHS Garage Recorder
 
-When you are ready, publish the clip to YouTube. Use a clear SEO title that says what the footage actually is. VHS Garage Capture can help you shape that title and create a more useful thumbnail direction, so you are not starting from a blank box.
+Open [the recorder](/capture) in Chrome. (Yes, Chrome only — we use the File System Access API to write recordings straight to disk and Safari / Firefox don't support it yet. Sorry.)
 
-Good YouTube titles usually include the year, subject, format, and location when you know them. Good thumbnails should show the actual footage, not a generic tape graphic. If the frame is weird, local, specific, or nostalgic, let that be the hook.
+Pick a save folder on your computer, pick your capture card from the device list, hit record, press play on the VCR. Record what you want, hit stop. The video file lands directly on your disk — no upload-to-cloud middleman, nothing held hostage on someone else's server.
+
+While you've got the tape in front of you, the recorder will let you:
+
+- Snap a photo of the front + back of the VHS sleeve (with your webcam, the same way you'd take a passport photo) — these get saved alongside the video
+- Run those sleeve photos through AI to auto-fill year / distributor / tape format / cassette notes
+- Pick a thumbnail frame from the recording
+- Write or edit the title and description (or let the AI take a swing)
+
+Skip any of that if you just want raw footage on disk. The recorder works fine as a dumb capture tool too.
+
+## 4. Post to YouTube
+
+Sign in with Google, click Upload to YouTube. The recorder pushes the video file straight from your disk to your channel. Done.
+
+Two things worth knowing:
+
+- **Uploads stack and run in the background.** Hit upload, the video starts uploading in a toast notification in the corner, and you can immediately start recording the next clip. No staring at a progress bar.
+- **The AI rewrite button** (red sparkle icon at the top of the Clip Info column) generates a title + description from your sleeve photos and any notes you typed. Tweak whatever it gets wrong before publishing. We are not going to lecture you about SEO. The internet has enough of that. Just put your weird home-recorded "Reading Rainbow" episode online and let the algorithm figure it out.
 
 <SignupForm
   id="capture-guide-blog-signup"
   compact={true}
-  title="Want More VHS Capture Tips?"
-  description="Get notes on capture workflows, YouTube publishing, events, and new VHS Garage tools."
+  title="Want more VHS capture tips?"
+  description="Notes on capture workflows, weird gear we've used, events, and new VHS Garage tools."
 />
 
-The goal is not to make VHS feel slick. The goal is to preserve the signal, label it well, and help the right people find it.
+That's the whole thing. Plug the dongle in, press play, hit record, click upload. The hardest part is finding the tapes.

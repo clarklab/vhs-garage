@@ -10,6 +10,11 @@ interface Props {
   cta?: string;
   image?: string;
   certified?: boolean;
+  // Free-text "what we've seen this go for" range (e.g. "$10–20").
+  // Rendered as a small pill so it doesn't get mistaken for the
+  // current-now-on-Amazon price (which we don't track and which
+  // changes constantly).
+  priceRange?: string;
 }
 
 // Pull defaults from src/data/gear.js when an ASIN matches an entry there.
@@ -30,6 +35,7 @@ const {
   cta       = 'View on Amazon',
   image     = gear?.image,
   certified = gear?.certified ?? false,
+  priceRange = gear?.priceRange,
 } = Astro.props;
 
 function extractAsinFromUrl(rawUrl: string): string {
@@ -109,7 +115,17 @@ const cardId = `amazon-card-${cleanAsin || Math.random().toString(36).slice(2)}`
     </div>
 
     <div class:list={["min-w-0", certified && "pr-28 sm:pr-32"]}>
-      <p class="text-white/40 text-xs uppercase tracking-widest mb-2">{eyebrow}</p>
+      <div class="flex items-center gap-2 mb-2 flex-wrap">
+        <p class="text-white/40 text-xs uppercase tracking-widest">{eyebrow}</p>
+        {priceRange && (
+          // Historical / typical price band — NOT the current Amazon price.
+          // Rendered as a low-saturation outlined pill so it reads as
+          // "we've seen this go for" rather than a hard quote.
+          <span class="inline-flex items-center px-1.5 py-0.5 border border-white/20 text-white/60 text-[9px] uppercase tracking-widest">
+            Usually {priceRange}
+          </span>
+        )}
+      </div>
       <h3 class="text-white text-xl leading-7 mb-2">{displayTitle}</h3>
       {description && <p class="text-gray-400 text-base sm:text-sm leading-7 mb-4">{description}</p>}
 

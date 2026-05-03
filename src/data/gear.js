@@ -26,23 +26,34 @@
 //               card gets a green "✓ Garage Certified" badge.
 //   url         Optional override. By default we link to
 //               https://www.amazon.com/dp/{asin}; pass `url` to use an
-//               affiliate-tagged URL or a different storefront.
+//               affiliate-tagged URL, an a.co short URL, or a different
+//               storefront. When passed, this URL is used directly and
+//               the asin field becomes a synthetic key for lookups.
+//   priceRange  Optional historical/typical price band (e.g. "$10–20").
+//               Rendered as a "Usually $10–20" pill on the card so it
+//               reads as "we've seen this go for" — NOT a quote of the
+//               current Amazon price (which changes constantly and
+//               which we don't track).
 //
 // Cards in posts that don't reference a gear.js entry (i.e. just pass
 // `url`/`title` directly to AmazonCard) still work — they just won't
 // appear on the /gear page.
 
 export const GEAR = [
-  // Add entries here as products come up. Example:
-  //
-  // {
-  //   asin: 'B07XYZ1234',
-  //   title: 'Panasonic PV-V4520 VHS VCR',
-  //   description: 'A solid 4-head hi-fi machine with the EP-mode tracking that keeps long-play tapes from looking blurry.',
-  //   eyebrow: 'Recommended VCR',
-  //   image: '/images/gear/panasonic-pv-v4520.webp',
-  //   certified: true,
-  // },
+  {
+    // a.co short URLs don't expose a real ASIN to scrape; we use the
+    // short URL's path fragment as a synthetic key. Lookup happens
+    // by exact string match against the `asin` field — works the same
+    // either way.
+    asin: '0IYXKQIS',
+    url: 'https://a.co/d/0iyxKQiS',
+    title: 'USB Video Capture Card (RCA + S-Video)',
+    description: "The cheap dongle that turns your VCR into a webcam. Plug in RCA cables, plug in USB, your computer sees it as a video device. Works with VHS Garage, OBS, QuickTime, anything that records. Don't overthink this — they're all basically the same.",
+    eyebrow: 'Recommended hardware',
+    image: '/images/gear/usb-capture-device.webp',
+    certified: true,
+    priceRange: '$10–20',
+  },
 ];
 
 // Helper used by AmazonCard.astro to do an ASIN lookup. Case-insensitive.
