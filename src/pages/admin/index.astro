@@ -1,0 +1,70 @@
+---
+import Base from '../../layouts/Base.astro';
+
+// Admin landing page — quick at-a-glance dashboard for the bridge.
+// Shows: token status (set / age / who set it), upload stats (count,
+// total runtime, last upload), and per-uploader breakdown.
+//
+// Anyone can hit this URL (it's not linked from anywhere), but the
+// stats only render for callers whose verified Google email is in
+// YOUTUBE_BRIDGE_ADMIN_EMAILS. Same auth model as the bridge function.
+---
+
+<Base
+  title="Admin"
+  description="VHS Garage admin dashboard."
+>
+  <main class="min-h-svh bg-black text-white antialiased px-6 py-12 max-w-2xl mx-auto" style="font-family: 'VCR', monospace;">
+    <a href="/" class="text-white/30 text-xs hover:text-white/60 transition-colors">← vhsgarage.com</a>
+
+    <h1 class="text-3xl mt-8 mb-2">VHS Garage Admin</h1>
+    <p class="text-white/50 text-xs uppercase tracking-widest mb-10">Internal · Bridge dashboard</p>
+
+    <!-- Top-level status: token state -->
+    <section class="border border-white/15 p-5 mb-4">
+      <div class="flex items-baseline justify-between gap-4 mb-3">
+        <h2 class="text-lg">YouTube bridge token</h2>
+        <a href="/admin/connect-youtube" class="text-[#dc2626] text-xs hover:underline">Manage →</a>
+      </div>
+      <div id="admin-token-status" class="text-white/60 text-sm">Checking…</div>
+    </section>
+
+    <!-- Aggregate upload stats -->
+    <section class="border border-white/15 p-5 mb-4">
+      <h2 class="text-lg mb-4">Upload stats <span class="text-white/30 text-xs">via bridge</span></h2>
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-4">
+        <div>
+          <p class="text-white/40 text-[10px] uppercase tracking-widest mb-1">Total uploads</p>
+          <p id="stat-total-uploads" class="text-2xl text-white">—</p>
+        </div>
+        <div>
+          <p class="text-white/40 text-[10px] uppercase tracking-widest mb-1">Total runtime</p>
+          <p id="stat-total-runtime" class="text-2xl text-white">—</p>
+        </div>
+        <div>
+          <p class="text-white/40 text-[10px] uppercase tracking-widest mb-1">Total bytes</p>
+          <p id="stat-total-bytes" class="text-2xl text-white">—</p>
+        </div>
+      </div>
+      <p id="stat-last-upload" class="text-white/40 text-xs"></p>
+    </section>
+
+    <!-- Per-uploader breakdown -->
+    <section class="border border-white/15 p-5 mb-4">
+      <h2 class="text-lg mb-3">By uploader</h2>
+      <div id="admin-by-uploader" class="text-white/60 text-sm">—</div>
+    </section>
+
+    <!-- Allowed-uploaders list -->
+    <section class="border border-white/15 p-5 mb-4">
+      <h2 class="text-lg mb-3">Allowed bridge uploaders</h2>
+      <p class="text-white/40 text-xs mb-3 leading-6">
+        From <code class="text-white/60">YOUTUBE_BRIDGE_ALLOWED_EMAILS</code> env var.
+        Edit in the Netlify dashboard, redeploy to take effect.
+      </p>
+      <ul id="admin-allowed-list" class="text-white/70 text-sm space-y-1"></ul>
+    </section>
+  </main>
+
+  <script type="module" src="/scripts/admin-dashboard.js"></script>
+</Base>

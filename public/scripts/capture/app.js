@@ -3219,7 +3219,32 @@ async function extractThumbnailsFromBlob(blobUrl, count = 6) {
 // channel to have custom-thumbnail privileges (post-verification); a 403
 // from an unverified channel surfaces as an error the caller should treat
 // as a soft failure (the video upload itself stays good).
-async function uploadYouTubeThumbnail(videoId, accessToken, dataUrl) {
+// `useBridge: true` routes the thumbnail through /api/youtube-bridge so it
+// hits the bridge account's videoId. Always pair this flag with the same
+// flag on the video upload — the videoId+token pair has to match the
+// account that owns the video.
+async function uploadYouTubeThumbnail(videoId, accessToken, dataUrl, { useBridge = false } = {}) {
+  if (useBridge) {
+    const res = await fetch('/api/youtube-bridge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'upload-thumbnail',
+        accessToken,
+        videoId,
+        dataUrl,
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      const err = new Error(detail.error || `bridge thumbnail failed (${res.status})`);
+      err.status = detail.ytStatus || res.status;
+      throw err;
+    }
+    return res.json();
+  }
+
+  // Direct path — uploads to the user's own channel using their own token.
   const commaIdx = dataUrl.indexOf(',');
   if (commaIdx < 0) throw new Error('Invalid data URL');
   const meta = dataUrl.slice(0, commaIdx);
@@ -3441,7 +3466,15 @@ const YT_REFRESH_KEY = 'yt_refresh_token';
 const YT_CHANNEL_KEY = 'yt_channel';
 const YT_PKCE_KEY = 'yt_pkce_verifier';
 const YT_PENDING_PUBLISH_KEY = 'yt_pending_publish_clip_id';
+// `openid email` added so the upload-bridge edge function can verify a
+// user's identity via Google's tokeninfo endpoint and check it against
+// the bridge allowlist. Without these scopes tokeninfo doesn't return
+// the `email` field. One-time consent re-prompt for existing users —
+// they'll see "wants to know your email address" the next time they
+// sign in.
 const YT_SCOPES = [
+  'openid',
+  'email',
   'https://www.googleapis.com/auth/youtube.upload',
   'https://www.googleapis.com/auth/youtube.readonly',
 ].join(' ');
@@ -3740,27 +3773,71 @@ async function runUploadItem(item) {
       },
     };
 
-    // Resumable init — uploadLimitExceeded comes back here, not from the PUT.
-    const initRes = await fetch(
-      'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
-      {
+    // Resumable init — try the bridge first (uploads to VHS Garage if the
+    // user is on YOUTUBE_BRIDGE_ALLOWED_EMAILS). On 403 (not whitelisted),
+    // fall back to a direct YouTube call using the user's own token (which
+    // uploads to their own channel — current behavior for non-allowed
+    // accounts). On other errors, surface them. uploadLimitExceeded
+    // comes back at this stage either way.
+    let uploadUrl;
+    let uploadedViaBridge = false;
+    try {
+      const bridgeRes = await fetch('/api/youtube-bridge', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${item.token}`,
-          'Content-Type': 'application/json',
-          'X-Upload-Content-Type': contentType,
-          'X-Upload-Content-Length': String(file.size),
-        },
-        body: JSON.stringify(uploadMeta),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'init-upload',
+          accessToken: item.token,
+          contentType,
+          fileSize: file.size,
+          snippet: uploadMeta.snippet,
+          status: uploadMeta.status,
+        }),
+      });
+      if (bridgeRes.ok) {
+        const bridgeData = await bridgeRes.json();
+        uploadUrl = bridgeData.uploadUrl;
+        uploadedViaBridge = true;
+      } else if (bridgeRes.status !== 403) {
+        // Real bridge failure (5xx, missing config, etc.) — surface it.
+        // 503 specifically indicates the bridge token isn't set or expired,
+        // which is an admin issue, not a user issue.
+        const detail = await bridgeRes.json().catch(() => ({}));
+        const msg = detail.error || `Bridge error (${bridgeRes.status})`;
+        console.warn('[upload] bridge non-403 error:', msg, detail);
+        throw new Error(msg);
       }
-    );
-    if (!initRes.ok) {
-      const errBody = await initRes.text();
-      const parsed = parseYouTubeError(errBody, initRes.status);
-      console.warn('[upload] init failed:', parsed.reason || initRes.status, parsed.apiMessage);
-      throw new Error(parsed.display);
+      // 403 → user not whitelisted, fall through to direct upload below
+    } catch (e) {
+      // Network failures hitting the bridge fall through to direct upload too
+      if (e.message?.startsWith('Bridge error') || e.message?.startsWith('Bridge token')) throw e;
+      console.warn('[upload] bridge fetch failed, falling back to direct:', e.message);
     }
-    const uploadUrl = initRes.headers.get('location');
+
+    if (!uploadUrl) {
+      // Direct upload to the user's own channel (existing behavior).
+      const initRes = await fetch(
+        'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${item.token}`,
+            'Content-Type': 'application/json',
+            'X-Upload-Content-Type': contentType,
+            'X-Upload-Content-Length': String(file.size),
+          },
+          body: JSON.stringify(uploadMeta),
+        }
+      );
+      if (!initRes.ok) {
+        const errBody = await initRes.text();
+        const parsed = parseYouTubeError(errBody, initRes.status);
+        console.warn('[upload] direct init failed:', parsed.reason || initRes.status, parsed.apiMessage);
+        throw new Error(parsed.display);
+      }
+      uploadUrl = initRes.headers.get('location');
+    }
+    item.uploadedViaBridge = uploadedViaBridge;
 
     // PUT the file with progress events feeding the toast.
     await new Promise((resolve, reject) => {
@@ -3779,12 +3856,32 @@ async function runUploadItem(item) {
             const result = JSON.parse(xhr.responseText);
             item.ytUrl = 'https://youtube.com/watch?v=' + result.id;
             updateClip(item.clipId, { youtubeUrl: item.ytUrl, youtubeId: result.id });
-            // Fire-and-forget thumbnail upload (same pattern as before).
+            // Fire-and-forget thumbnail upload. If the video went via the
+            // bridge, the thumbnail must too — otherwise it'd attempt a
+            // thumbnails.set on a videoId that belongs to the bridge
+            // account using the user's own token, which 403s.
             const clipsAfter = getClips();
             const clipAfter = clipsAfter.find(c => c.id === item.clipId);
             if (clipAfter && clipAfter.ytThumbnailDataUrl) {
-              uploadYouTubeThumbnail(result.id, item.token, clipAfter.ytThumbnailDataUrl)
+              uploadYouTubeThumbnail(result.id, item.token, clipAfter.ytThumbnailDataUrl, { useBridge: item.uploadedViaBridge })
                 .catch((e) => console.warn('[upload] thumbnail failed:', e.message));
+            }
+            // If the video went through the bridge, record stats (count +
+            // duration + size) so the admin dashboard has something to show.
+            // Fire-and-forget — failure to record stats never affects the
+            // user-facing success state.
+            if (item.uploadedViaBridge && clipAfter) {
+              fetch('/api/youtube-bridge', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'record-upload',
+                  accessToken: item.token,
+                  durationSeconds: clipAfter.duration || 0,
+                  byteSize: clipAfter.fileSize || 0,
+                  videoId: result.id,
+                }),
+              }).catch(() => {});
             }
             resolve();
           } catch (e) {
