@@ -1,41 +1,52 @@
 ---
 import { getCollection } from 'astro:content';
-import Base from '../../layouts/Base.astro';
-import BlogHeader from '../../components/BlogHeader.astro';
+import Base from '../../../layouts/Base.astro';
+import BlogHeader from '../../../components/BlogHeader.astro';
 
-const posts = (await getCollection('blog'))
-  .filter((post) => !post.data.draft)
+// One static page per category. Categories are an enum on the blog
+// schema (Tapes / Hardware / Guides / Collections); we slugify to
+// lowercase for URLs and look back up to title-case for the heading.
+const CATEGORIES = ['Tapes', 'Hardware', 'Guides', 'Collections'] as const;
+
+export async function getStaticPaths() {
+  const cats = ['Tapes', 'Hardware', 'Guides', 'Collections'] as const;
+  return cats.map((c) => ({ params: { category: c.toLowerCase() }, props: { canonical: c } }));
+}
+
+const { canonical } = Astro.props as { canonical: typeof CATEGORIES[number] };
+
+const allPosts = (await getCollection('blog'))
+  .filter((p) => !p.data.draft)
   .sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
 
-const formatter = new Intl.DateTimeFormat('en', {
-  month: 'long',
-  day: 'numeric',
-  year: 'numeric',
-});
+const posts = allPosts.filter((p) => (p.data.categories || []).includes(canonical));
 
+const formatter = new Intl.DateTimeFormat('en', {
+  month: 'long', day: 'numeric', year: 'numeric',
+});
 const getSlug = (id: string) => id.replace(/\.(md|mdx)$/, '');
 ---
 
 <Base
-  title="Blog"
-  description="Dispatches from VHS Garage: analog video, real-life events, capture guides, and garage updates."
+  title={`${canonical} — VHS Garage Blog`}
+  description={`Posts in the ${canonical} category on VHS Garage.`}
 >
   <BlogHeader />
 
   <main class="min-h-svh bg-black text-white antialiased isolate">
     <section class="max-w-5xl mx-auto px-6 py-16 sm:py-24">
       <div class="max-w-3xl">
-        <p class="text-white/40 text-xs uppercase tracking-widest mb-4">Garage Dispatches</p>
-        <h1 class="text-4xl sm:text-6xl text-pretty mb-5">The VHS Garage Blog</h1>
+        <p class="text-white/40 text-xs uppercase tracking-widest mb-4">Category</p>
+        <h1 class="text-4xl sm:text-6xl text-pretty mb-5">{canonical}</h1>
         <p class="text-gray-300 text-base sm:text-lg leading-8 max-w-2xl">
-          Notes from the workbench: VHS events, capture workflows, YouTube posting tips, merch drops, and whatever else crawls out of the tape stack.
+          Every post tagged <strong class="text-white">{canonical}</strong>, newest first.
         </p>
       </div>
 
-      <!-- Index list — each post is a horizontal row: 16:9 thumbnail on
-           the left, title/description on the right. Posts without an
-           image render a hatched placeholder so rows stay aligned. The
-           whole row is a single link target so click-anywhere works. -->
+      {posts.length === 0 && (
+        <p class="mt-14 text-white/40 text-sm">No posts in this category yet.</p>
+      )}
+
       <div class="mt-14 grid gap-5">
         {posts.map((post) => (
           <a href={`/blog/${getSlug(post.id)}`} class="group flex flex-col sm:flex-row gap-5 border border-white/15 p-5 hover:border-white/35 transition-colors">

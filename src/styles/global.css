@@ -109,3 +109,82 @@ html {
   71% { content: '▓▓▒'; }
   85% { content: '▓▒░'; }
 }
+
+/* Shared toolbar drop-down menu — System 7 / Win 3.1 chiseled-bevel
+   style. Originally lived inline in capture.astro; moved here so any
+   page (blog header, future toolbars) can use the same look. The JS
+   that opens/closes these menus lives in /public/scripts/toolbar-menu.js
+   (also pulled out of capture/app.js for reuse). */
+.toolbar-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 220px;
+  max-width: 360px;
+  background: #1a181a;
+  color: rgba(255, 255, 255, 0.85);
+  font-family: 'VCR', monospace;
+  font-size: 11px;
+  line-height: 1.2;
+  padding: 4px 0;
+  user-select: none;
+  box-shadow:
+    inset 1px 1px 0 0 rgba(255, 255, 255, 0.18),
+    inset -1px -1px 0 0 rgba(0, 0, 0, 0.85),
+    2px 2px 0 0 rgba(0, 0, 0, 0.6);
+  border: 1px solid #000;
+  box-sizing: border-box;
+}
+.toolbar-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 14px 7px 26px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: none;
+}
+.toolbar-menu-item:hover {
+  background: #dc2626;
+  color: #fff;
+}
+.toolbar-menu-item.is-checked::before {
+  content: '✓';
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 10px;
+}
+.toolbar-menu-item.is-checked:hover::before { color: #fff; }
+.toolbar-menu-item.is-disabled {
+  color: rgba(255, 255, 255, 0.3);
+  cursor: default;
+  pointer-events: none;
+}
+.toolbar-menu-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(0, 0, 0, 0.7);
+  box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.08);
+}
+.toolbar-menu-header {
+  padding: 5px 14px 4px 14px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.35);
+  text-transform: uppercase;
+}
+.toolbar-trigger.is-active {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.95);
+}

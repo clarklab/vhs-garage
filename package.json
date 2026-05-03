@@ -17,6 +17,7 @@
     "@netlify/blobs": "^10.7.4",
     "@tailwindcss/vite": "^4.2.2",
     "astro": "^6.1.2",
+    "fuse.js": "^7.3.0",
     "jscanify": "^1.4.2",
     "overlayscrollbars": "^2.15.1",
     "tailwindcss": "^4.2.2"
