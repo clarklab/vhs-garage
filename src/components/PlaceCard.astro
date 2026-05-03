@@ -135,10 +135,16 @@ const cardId = `place-card-${slug || Math.random().toString(36).slice(2)}`;
     min-height: 100%;
   }
 
-  .place-card-cta,
-  .place-card-cta:hover,
-  .place-card-cta-secondary,
-  .place-card-cta-secondary:hover {
+  /* Bumped from .place-card-cta to a.place-card-cta so the selector
+     specificity (0,1,1) ties or beats `.vhs-prose a` (0,1,1) and wins
+     on cascade order — Astro injects component styles after global.css.
+     Without this, prose's `.vhs-prose a { color: #dc2626 }` made the
+     button text + the fill-current icon red-on-red (invisible against
+     the red bg) and the underline rule snuck back in. */
+  a.place-card-cta,
+  a.place-card-cta:hover,
+  a.place-card-cta-secondary,
+  a.place-card-cta-secondary:hover {
     color: #fff;
     text-decoration: none;
   }
