@@ -1,0 +1,62 @@
+---
+import Base from '../layouts/Base.astro';
+import AmazonCard from '../components/AmazonCard.astro';
+import { GEAR } from '../data/gear.js';
+
+// Certified items float to the top — these are products we've actually
+// used and stand behind. Within each tier we keep the order from gear.js
+// (the user's editorial order) instead of re-sorting alphabetically.
+const certified = GEAR.filter((g) => g.certified);
+const others = GEAR.filter((g) => !g.certified);
+---
+
+<Base
+  title="Gear"
+  description="The VHS capture cards, VCRs, cables, and adapters we've used and recommend. Garage-certified picks first."
+>
+  <main class="min-h-svh bg-black text-white antialiased isolate">
+    <section class="max-w-3xl mx-auto px-6 py-16 sm:py-24">
+      <a href="/" class="text-[#39ff14] text-xs hover:underline">← VHS Garage</a>
+
+      <div class="mt-8 max-w-2xl">
+        <p class="text-white/40 text-xs uppercase tracking-widest mb-4">Gear</p>
+        <h1 class="text-4xl sm:text-6xl text-pretty mb-5">The Garage Toolbox</h1>
+        <p class="text-gray-300 text-base sm:text-lg leading-8">
+          Every Amazon product we mention across the site, in one place. Items we've personally used and stand behind get a
+          <span class="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[#39ff14] text-black text-[9px] font-bold uppercase tracking-widest align-middle">✓ Garage Certified</span>
+          badge and float to the top.
+        </p>
+      </div>
+
+      {GEAR.length === 0 && (
+        <p class="mt-14 text-white/40 text-sm">
+          No gear listed yet — products will appear here as we add them to <code class="text-white/60">src/data/gear.js</code>.
+        </p>
+      )}
+
+      {certified.length > 0 && (
+        <section class="mt-14">
+          <h2 class="text-2xl mb-2">#Garage Certified</h2>
+          <p class="text-gray-400 text-sm mb-2">Stuff we've actually used. Tested in our own setups.</p>
+          <div>
+            {certified.map((item) => (
+              <AmazonCard asin={item.asin} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {others.length > 0 && (
+        <section class="mt-14">
+          <h2 class="text-2xl mb-2">#Other Picks</h2>
+          <p class="text-gray-400 text-sm mb-2">Cards we've referenced in posts. Not yet personally tested by us.</p>
+          <div>
+            {others.map((item) => (
+              <AmazonCard asin={item.asin} />
+            ))}
+          </div>
+        </section>
+      )}
+    </section>
+  </main>
+</Base>
