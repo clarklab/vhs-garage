@@ -76,9 +76,19 @@ export function deleteClip(id) {
   saveClips(clips);
 }
 
+// 6-char random suffix on top of Date.now() ensures two clips created
+// inside the same millisecond (common with bulk-duplicate, "make 3
+// trailers in a row") get distinct IDs. Collision odds at this scale
+// are effectively zero. Time prefix is preserved so IDs remain
+// roughly sortable by creation time when debugging.
+function generateClipId() {
+  const rand = Math.random().toString(36).slice(2, 8);
+  return 'clip_' + Date.now() + '_' + rand;
+}
+
 export function createClipEntry(title, filename, duration, fileSize, bitrate) {
   return {
-    id: 'clip_' + Date.now(),
+    id: generateClipId(),
     title: title || 'Untitled',
     filename,
     date: new Date().toISOString(),
@@ -176,7 +186,7 @@ function clipToJSON(clip) {
 // instead of opening the clip. Uploaded tiles dim out and ignore clicks.
 // Selection cap is enforced by the caller's onToggleSelect — if it
 // returns false (cap hit on a new selection), we don't visually toggle.
-export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUpload, onMarkUnuploaded, selection) {
+export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUpload, onMarkUnuploaded, onDuplicate, selection) {
   if (!clips.length) {
     container.innerHTML = '';
     emptyMsg.classList.remove('hidden');
@@ -256,7 +266,7 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
       e.preventDefault();
       if (selectionMode) return; // suppress in selection mode
       const isUploaded = el.dataset.uploaded === '1';
-      showLibraryContextMenu(e.clientX, e.clientY, el.dataset.id, el.dataset.filename, onOpen, onDelete, isUploaded ? onMarkUnuploaded : null);
+      showLibraryContextMenu(e.clientX, e.clientY, el.dataset.id, el.dataset.filename, onOpen, onDelete, isUploaded ? onMarkUnuploaded : null, onDuplicate);
     });
   });
 }
@@ -264,18 +274,34 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
 // Position the shared context menu at the click point and bind one-shot
 // handlers for Open Clip + Delete. Clamps to viewport so right-clicking
 // near the edge doesn't push the menu off-screen.
-function showLibraryContextMenu(x, y, clipId, filename, onOpen, onDelete, onMarkUnuploaded) {
+function showLibraryContextMenu(x, y, clipId, filename, onOpen, onDelete, onMarkUnuploaded, onDuplicate) {
   const menu = document.getElementById('library-context-menu');
   if (!menu) return;
   const openBtn = document.getElementById('lib-ctx-open');
   const deleteBtn = document.getElementById('lib-ctx-delete');
   const markUnuploadedBtn = document.getElementById('lib-ctx-mark-unuploaded');
+  const duplicateBtn = document.getElementById('lib-ctx-duplicate');
 
   if (openBtn) {
     openBtn.disabled = !onOpen;
     openBtn.classList.toggle('opacity-30', !onOpen);
     openBtn.classList.toggle('cursor-not-allowed', !onOpen);
     openBtn.onclick = onOpen ? () => { hideLibraryContextMenu(); onOpen(clipId, filename); } : null;
+  }
+  // Duplicate — always available when a duplicator is wired (which it
+  // is whenever a save folder is mounted). Greys out otherwise.
+  if (duplicateBtn) {
+    const enabled = !!onDuplicate;
+    duplicateBtn.disabled = !enabled;
+    duplicateBtn.classList.toggle('opacity-30', !enabled);
+    duplicateBtn.classList.toggle('cursor-not-allowed', !enabled);
+    duplicateBtn.title = enabled
+      ? 'Copy this clip to a new entry with the same metadata, ready to trim or edit independently'
+      : 'Pick a save folder to enable Duplicate';
+    duplicateBtn.onclick = enabled ? () => {
+      hideLibraryContextMenu();
+      onDuplicate(clipId);
+    } : null;
   }
   // Mark not uploaded — only meaningful when the clip currently HAS a
   // youtubeUrl. Caller passes null when the clip isn't uploaded so we
