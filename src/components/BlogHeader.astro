@@ -11,6 +11,7 @@
 //
 // Pages that mount this header should add `pt-10` to their first
 // content section so the page body doesn't slide under the fixed bar.
+import { BUILD_ID } from '../utils/build-id.js';
 ---
 
 <header
@@ -126,5 +127,5 @@
   body { padding-top: 40px; }
 </style>
 
-<script src="/scripts/toolbar-menu.js" is:inline></script>
-<script type="module" src="/scripts/blog-header.js"></script>
+<script src={`/scripts/toolbar-menu.js?v=${BUILD_ID}`} is:inline></script>
+<script type="module" src={`/scripts/blog-header.js?v=${BUILD_ID}`}></script>

@@ -2,6 +2,7 @@
 import Base from '../layouts/Base.astro';
 import Flicker from '../components/Flicker.astro';
 import { GARAGES } from '../data/garages.js';
+import { BUILD_ID } from '../utils/build-id.js';
 import { getCollection } from 'astro:content';
 const g = GARAGES[0];
 
@@ -494,7 +495,7 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
   <!-- VHS static effect — auto-inits any <canvas data-vhs-static> on the
        page. Lives at /public/scripts/vhs-static.js so any other page can
        drop in the same canvas + script tag pattern. -->
-  <script is:inline src="/scripts/vhs-static.js" defer></script>
+  <script is:inline src={`/scripts/vhs-static.js?v=${BUILD_ID}`} defer></script>
 
   <script is:inline>
     fetch('/.netlify/functions/signup-count')

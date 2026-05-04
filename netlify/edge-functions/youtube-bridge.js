@@ -16,8 +16,11 @@
 //        upload URL back to the browser.
 //      - The browser PUTs the video bytes directly to that URL — we
 //        never proxy the file (no Netlify timeout / bandwidth issue).
-//   3. Non-whitelisted users get a 403, and the client falls back to the
-//      existing direct OAuth flow (which uploads to their own channel).
+//   3. The client decides up-front (via the `whoami` action) which path
+//      to take: allowlisted → bridge ONLY (no fallback); not allowlisted
+//      → direct YouTube call to the user's own channel (never touches
+//      the bridge). This is a HARD binary so a transient bridge failure
+//      can never silently route a brand upload onto a personal channel.
 //
 // REQUIRED ENV VARS (Netlify dashboard → Site settings → Environment)
 //   YOUTUBE_OAUTH_CLIENT_ID       — already set, used everywhere else

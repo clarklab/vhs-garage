@@ -1,5 +1,6 @@
 ---
 import Base from '../../layouts/Base.astro';
+import { BUILD_ID } from '../../utils/build-id.js';
 
 // Admin landing page — quick at-a-glance dashboard for the bridge.
 // Shows: token status (set / age / who set it), upload stats (count,
@@ -66,5 +67,5 @@ import Base from '../../layouts/Base.astro';
     </section>
   </main>
 
-  <script type="module" src="/scripts/admin-dashboard.js"></script>
+  <script type="module" src={`/scripts/admin-dashboard.js?v=${BUILD_ID}`}></script>
 </Base>

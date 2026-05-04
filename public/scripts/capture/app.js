@@ -3726,20 +3726,53 @@ function ytUpdateAccountUI() {
   }
 }
 
-// "Uploading to" destination banner. Shown above the publish form so the
-// user can SEE which channel is about to receive the upload — critical
-// after the silent-fallback bug where allowlisted users' uploads were
-// landing on their personal channels.
+// "Uploading to" destination banner + upload-routing decision.
 //
-// For allowlisted users: shows the brand channel (VHS Garage) with the
-// "Bridge" badge so it's visually distinct from personal-channel uploads.
+// whoami is the SOURCE OF TRUTH for which channel a given user's upload
+// will land on. The publish UI shows it as a banner before they click
+// Upload, and runUploadItem reads the same cached value to make a HARD
+// BINARY decision: allowlisted → bridge only, no fallback ever; not
+// allowlisted → direct only, never even calls the bridge. This is the
+// architecture that prevents the silent-fallback bug where a transient
+// bridge failure could route an allowlisted user's upload to their
+// personal channel.
 //
-// For non-allowlisted users: shows their own channel.
-//
-// Cached in module scope so we don't pelt /api/youtube-bridge with a
-// whoami request on every clip switch (call once per token).
+// Cached in module scope — first call hits the network, subsequent
+// calls (per token) return immediately.
 let cachedWhoami = null;          // { email, isAllowlisted, bridgeChannel }
-let cachedWhoamiToken = null;     // the access token cachedWhoami was fetched with
+let cachedWhoamiToken = null;     // access token cachedWhoami was fetched with
+let inflightWhoami = null;        // dedupe concurrent fetches
+
+// Get the whoami result for the current access token. Returns the cached
+// payload when possible. Throws on error — the caller (upload code) MUST
+// know which channel it's targeting; uploading "blind" is what caused
+// the original wrong-channel bug.
+async function getWhoami() {
+  const token = currentToken || await fetchAccessTokenInBackground();
+  if (!token) throw new Error('Not signed in to YouTube.');
+  if (cachedWhoami && cachedWhoamiToken === token) return cachedWhoami;
+  if (inflightWhoami) return inflightWhoami;
+  inflightWhoami = (async () => {
+    const res = await fetch('/api/youtube-bridge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'whoami', accessToken: token }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(`Could not check upload destination (whoami ${res.status}: ${detail.error || 'unknown'}). Try again or sign in again.`);
+    }
+    const data = await res.json();
+    cachedWhoami = data;
+    cachedWhoamiToken = token;
+    return data;
+  })();
+  try {
+    return await inflightWhoami;
+  } finally {
+    inflightWhoami = null;
+  }
+}
 
 async function refreshDestinationBanner() {
   const destEl = document.getElementById('yt-pub-destination');
@@ -3749,44 +3782,28 @@ async function refreshDestinationBanner() {
   const thumbEl = document.getElementById('yt-pub-destination-thumb');
   const badgeEl = document.getElementById('yt-pub-destination-badge');
 
-  // No token yet → hide. ytUpdateAccountUI handles the "logged in as" line
-  // separately; the destination banner only makes sense once we know
-  // where the upload would actually go.
-  const token = currentToken;
-  if (!token) {
+  // No token yet → hide. The banner only makes sense once we know which
+  // channel the upload would actually go to.
+  if (!currentToken) {
     destEl.classList.add('hidden');
     return;
   }
 
-  // Re-query whoami if the token has rotated (so a freshly-refreshed
-  // token doesn't keep showing stale whitelist state).
-  if (!cachedWhoami || cachedWhoamiToken !== token) {
-    try {
-      const res = await fetch('/api/youtube-bridge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'whoami', accessToken: token }),
-      });
-      if (!res.ok) {
-        // Bridge endpoint missing / misconfigured / 401 → just hide the
-        // banner. We'd rather show nothing than misleading info.
-        destEl.classList.add('hidden');
-        return;
-      }
-      cachedWhoami = await res.json();
-      cachedWhoamiToken = token;
-    } catch (e) {
-      console.warn('[whoami] failed:', e.message);
-      destEl.classList.add('hidden');
-      return;
-    }
+  let whoami;
+  try {
+    whoami = await getWhoami();
+  } catch (e) {
+    // Failed to determine destination → hide rather than mislead.
+    console.warn('[whoami] banner refresh failed:', e.message);
+    destEl.classList.add('hidden');
+    return;
   }
 
   const personal = ytGetChannel();
 
-  if (cachedWhoami.isAllowlisted && cachedWhoami.bridgeChannel) {
+  if (whoami.isAllowlisted && whoami.bridgeChannel) {
     // Bridge upload — show brand channel + Bridge badge.
-    const ch = cachedWhoami.bridgeChannel;
+    const ch = whoami.bridgeChannel;
     if (nameEl) nameEl.textContent = ch.name || 'VHS Garage';
     if (handleEl) handleEl.textContent = ch.handle ? ' ' + (ch.handle.startsWith('@') ? ch.handle : '@' + ch.handle) : '';
     if (thumbEl) {
@@ -3815,6 +3832,7 @@ async function refreshDestinationBanner() {
 function clearWhoamiCache() {
   cachedWhoami = null;
   cachedWhoamiToken = null;
+  inflightWhoami = null;
 }
 
 // --- Upload queue + toast notifications ---
@@ -3941,15 +3959,31 @@ async function runUploadItem(item) {
       },
     };
 
-    // Resumable init — try the bridge first (uploads to VHS Garage if the
-    // user is on YOUTUBE_BRIDGE_ALLOWED_EMAILS). On 403 (not whitelisted),
-    // fall back to a direct YouTube call using the user's own token (which
-    // uploads to their own channel — current behavior for non-allowed
-    // accounts). On other errors, surface them. uploadLimitExceeded
-    // comes back at this stage either way.
+    // CHANNEL ROUTING — hard binary, NO fallback path.
+    //
+    // The end-goal contract:
+    //   - Allowlisted users upload ONLY to the bridge (VHS Garage). If
+    //     the bridge fails for ANY reason — quota, network, missing
+    //     token — the upload fails loudly. We do NOT silently route to
+    //     their personal channel. That bug burned us before.
+    //   - Non-allowlisted users upload ONLY to their own OAuth-selected
+    //     channel. We never even ping the bridge for them.
+    //
+    // whoami is the single source of truth for which path to take. It's
+    // cached at module scope (per access token) so this is usually a
+    // pointer read, not a network round-trip.
+    let whoami;
+    try {
+      whoami = await getWhoami();
+    } catch (e) {
+      throw new Error('Could not verify YouTube destination: ' + e.message);
+    }
+
     let uploadUrl;
     let uploadedViaBridge = false;
-    try {
+
+    if (whoami.isAllowlisted) {
+      // BRIDGE ONLY — no fallback. Bridge failure = upload failure.
       const bridgeRes = await fetch('/api/youtube-bridge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3962,28 +3996,22 @@ async function runUploadItem(item) {
           status: uploadMeta.status,
         }),
       });
-      if (bridgeRes.ok) {
-        const bridgeData = await bridgeRes.json();
-        uploadUrl = bridgeData.uploadUrl;
-        uploadedViaBridge = true;
-      } else if (bridgeRes.status !== 403) {
-        // Real bridge failure (5xx, missing config, etc.) — surface it.
-        // 503 specifically indicates the bridge token isn't set or expired,
-        // which is an admin issue, not a user issue.
+      if (!bridgeRes.ok) {
         const detail = await bridgeRes.json().catch(() => ({}));
-        const msg = detail.error || `Bridge error (${bridgeRes.status})`;
-        console.warn('[upload] bridge non-403 error:', msg, detail);
-        throw new Error(msg);
+        const ytStatus = detail.ytStatus ? ` (YT ${detail.ytStatus})` : '';
+        const reason = detail.error || `HTTP ${bridgeRes.status}`;
+        // Surface a clear, user-facing error. NO fall-through to direct
+        // upload. The destination banner already told them this would
+        // go to VHS Garage; if we can't reach it, we say so plainly.
+        const channelName = whoami.bridgeChannel?.name || 'VHS Garage';
+        throw new Error(`Upload to ${channelName} failed: ${reason}${ytStatus}. The video was NOT uploaded. Try again in a few minutes.`);
       }
-      // 403 → user not whitelisted, fall through to direct upload below
-    } catch (e) {
-      // Network failures hitting the bridge fall through to direct upload too
-      if (e.message?.startsWith('Bridge error') || e.message?.startsWith('Bridge token')) throw e;
-      console.warn('[upload] bridge fetch failed, falling back to direct:', e.message);
-    }
-
-    if (!uploadUrl) {
-      // Direct upload to the user's own channel (existing behavior).
+      const bridgeData = await bridgeRes.json();
+      uploadUrl = bridgeData.uploadUrl;
+      uploadedViaBridge = true;
+    } else {
+      // DIRECT UPLOAD ONLY — to the user's own OAuth-selected channel.
+      // Never call the bridge for non-allowlisted users.
       const initRes = await fetch(
         'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
         {

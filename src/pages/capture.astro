@@ -1,5 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
+import { BUILD_ID } from '../utils/build-id.js';
 ---
 
 <Base title="Capture" description="A browser-based VHS digitization station.">
@@ -1443,6 +1444,6 @@ import Base from '../layouts/Base.astro';
   <!-- Hidden canvas for thumbnails and sleeve captures -->
   <canvas id="capture-canvas" class="hidden"></canvas>
 
-  <script type="module" src="/scripts/capture/app.js"></script>
+  <script type="module" src={`/scripts/capture/app.js?v=${BUILD_ID}`}></script>
 
 </Base>

@@ -1,5 +1,6 @@
 ---
 import Base from '../../layouts/Base.astro';
+import { BUILD_ID } from '../../utils/build-id.js';
 
 // Admin-only page for managing the YouTube upload bridge.
 //
@@ -90,5 +91,5 @@ import Base from '../../layouts/Base.astro';
     </div>
   </main>
 
-  <script type="module" src="/scripts/admin-connect-youtube.js"></script>
+  <script type="module" src={`/scripts/admin-connect-youtube.js?v=${BUILD_ID}`}></script>
 </Base>
