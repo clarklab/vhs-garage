@@ -1,0 +1,80 @@
+---
+// Shared site footer. Mirrors the site's "old OS / chunky-pixel
+// terminal" aesthetic — VCR mono, hard borders, no rounded corners,
+// red accent matching the brand pill.
+//
+// Mounts on:
+//   - Homepage  (src/pages/index.astro)
+//   - Blog index (src/pages/blog/index.astro)
+//   - Single blog posts (src/pages/blog/[slug].astro)
+//
+// Anything else can opt in by importing + dropping <Footer />.
+//
+// The tagline + the made-by attribution are the small "personal" bits;
+// keep them in sync with the homepage hero copy if it changes.
+
+const year = new Date().getFullYear();
+
+// Top-level site sections. Updating this list updates the footer
+// everywhere that renders <Footer />.
+const SECTIONS = [
+  { href: '/capture',     label: 'Capture',  hint: 'Digitize a tape' },
+  { href: '/watch',       label: 'Watch',    hint: 'Curated videos' },
+  { href: '/blog',        label: 'Blog',     hint: 'Garage dispatches' },
+  { href: '/gear',        label: 'Gear',     hint: 'What we use' },
+  { href: '/places',      label: 'Places',   hint: 'IRL VHS spots' },
+  { href: '/submit',      label: 'Submit',   hint: 'Send us yours' },
+  { href: '/join',        label: 'Join',     hint: 'Mailing list' },
+];
+---
+
+<footer class="border-t border-white/15 bg-[#0a090a] text-white/70 mt-20" style="font-family: 'VCR', monospace;">
+  <div class="max-w-5xl mx-auto px-6 py-12 sm:py-16">
+    <!-- Top: brand + tagline. Same red dot used in the blog header
+         so the footer reads as a sibling component, not a different
+         design language. -->
+    <div class="flex items-start gap-3 mb-10">
+      <span class="inline-block w-2 h-2 mt-1.5 bg-red-500 shrink-0" style="box-shadow: 0 0 6px rgba(229,57,53,0.6);"></span>
+      <div>
+        <p class="text-white text-base sm:text-lg uppercase tracking-[0.15em] font-bold leading-none">VHS Garage</p>
+        <p class="text-white/40 text-xs mt-2 max-w-md leading-relaxed">A lo-fi love letter to the golden age of video. Capture your tapes, post them, keep the format alive.</p>
+      </div>
+    </div>
+
+    <!-- Site sections grid. 2 cols on phone, 4 on desktop. Each link
+         is two lines: bold label + dim hint, like a System 7 file
+         info panel. -->
+    <nav aria-label="Site sections" class="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-5 mb-12 pb-12 border-b border-white/10">
+      {SECTIONS.map((s) => (
+        <a href={s.href} class="block group">
+          <p class="text-white/85 text-[11px] uppercase tracking-wider group-hover:text-[#dc2626] transition-colors">{s.label}</p>
+          <p class="text-white/35 text-[10px] mt-1 leading-tight">{s.hint}</p>
+        </a>
+      ))}
+    </nav>
+
+    <!-- Bottom row. On desktop: copyright/legal on the left, made-by
+         attribution + Twitter handles on the right. On mobile they
+         stack with a gap so the eye can follow. -->
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-6 text-[10px]">
+      <div class="space-y-1">
+        <p class="text-white/45">&copy; {year} VHS Garage. All tapes welcome.</p>
+        <p class="space-x-3">
+          <a href="/terms" class="text-white/50 hover:text-white transition-colors">Terms</a>
+          <span class="text-white/20" aria-hidden="true">·</span>
+          <a href="/privacy" class="text-white/50 hover:text-white transition-colors">Privacy</a>
+        </p>
+      </div>
+
+      <!-- Made-by attribution. Twitter handles are X.com profiles —
+           opening in new tab so the user doesn't lose their reading
+           position. rel=me lets crawlers connect us as authors. -->
+      <p class="text-white/35 sm:text-right">
+        Built by
+        <a href="https://x.com/clarklab" target="_blank" rel="me noopener" class="text-white/70 hover:text-[#dc2626] transition-colors">@clarklab</a>
+        and
+        <a href="https://x.com/oracrest" target="_blank" rel="me noopener" class="text-white/70 hover:text-[#dc2626] transition-colors">@oracrest</a>
+      </p>
+    </div>
+  </div>
+</footer>

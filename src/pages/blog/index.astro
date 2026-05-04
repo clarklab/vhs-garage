@@ -2,6 +2,7 @@
 import { getCollection } from 'astro:content';
 import Base from '../../layouts/Base.astro';
 import BlogHeader from '../../components/BlogHeader.astro';
+import Footer from '../../components/Footer.astro';
 
 const posts = (await getCollection('blog'))
   .filter((post) => !post.data.draft)
@@ -57,4 +58,5 @@ const getSlug = (id: string) => id.replace(/\.(md|mdx)$/, '');
       </div>
     </section>
   </main>
+  <Footer />
 </Base>

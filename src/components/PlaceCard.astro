@@ -42,16 +42,23 @@ const cardId = `place-card-${slug || Math.random().toString(36).slice(2)}`;
 
 <aside
   id={cardId}
-  class="place-card my-8 border border-white/15 bg-black p-4 sm:p-5"
+  class="place-card mt-12 mb-8 border border-white/15 bg-black p-4 sm:p-5"
   data-slug={slug}
 >
-  <div class="flex gap-4 items-stretch">
-    <div class="shrink-0 self-stretch">
+  <!-- items-center so the text column vertically centers next to the
+       fixed-aspect 4:3 image rather than the previous items-stretch
+       approach (which forced the image to fill whatever height the
+       text column happened to be — meaning the image's aspect ratio
+       wasn't predictable). Now the IMAGE dictates the row height. -->
+  <div class="flex gap-4 items-center">
+    <!-- 4:3 image crop. object-cover so a portrait-orientation source
+         crops cleanly to a clean rectangle without distortion. -->
+    <div class="shrink-0 w-32 sm:w-36 aspect-[4/3]">
       {image ? (
         <img src={image} alt={name} loading="lazy"
-          class="place-card-img w-32 sm:w-36 h-full object-cover border border-white/10 bg-white/5" />
+          class="place-card-img w-full h-full object-cover border border-white/10 bg-white/5" />
       ) : (
-        <div aria-hidden="true" class="flex w-32 sm:w-36 h-full items-center justify-center border border-white/10 bg-white/5 text-white/35 text-2xl">
+        <div aria-hidden="true" class="flex w-full h-full items-center justify-center border border-white/10 bg-white/5 text-white/35 text-2xl">
           ▣
         </div>
       )}
@@ -127,12 +134,11 @@ const cardId = `place-card-${slug || Math.random().toString(36).slice(2)}`;
   .place-card-addr {
     margin-bottom: 0.875rem;
   }
-  /* Image fills the height of the content column so the card has no
-     dead space above or below the photo regardless of how much text
-     sits to its right. */
+  /* Image is locked to its 4:3 box (set by the wrapper's
+     aspect-[4/3]). Block display kills any baseline-from-inline
+     leftover. The wrapper sets the aspect ratio; the img just fills it. */
   .place-card-img {
     display: block;
-    min-height: 100%;
   }
 
   /* Bumped from .place-card-cta to a.place-card-cta so the selector

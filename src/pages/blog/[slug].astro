@@ -2,6 +2,7 @@
 import { getCollection, render } from 'astro:content';
 import Base from '../../layouts/Base.astro';
 import BlogHeader from '../../components/BlogHeader.astro';
+import Footer from '../../components/Footer.astro';
 
 export async function getStaticPaths() {
   const posts = (await getCollection('blog')).filter((post) => !post.data.draft);
@@ -26,10 +27,7 @@ const formatter = new Intl.DateTimeFormat('en', {
 
   <main class="min-h-svh bg-black text-white antialiased isolate">
     <article class="max-w-5xl mx-auto px-6 py-12 sm:py-20">
-      <header class:list={[
-        'max-w-3xl pb-10 border-b border-white/10',
-        post.data.template === 'guide' ? 'border-[#dc2626]/30' : '',
-      ]}>
+      <header class="max-w-3xl pb-10">
         <p class="text-white/40 text-xs uppercase tracking-widest mb-4">{formatter.format(post.data.pubDate)}</p>
         <h1 class="text-4xl sm:text-6xl text-pretty mb-5">{post.data.title}</h1>
         <p class="text-gray-300 text-base sm:text-lg leading-8">{post.data.description}</p>
@@ -50,4 +48,5 @@ const formatter = new Intl.DateTimeFormat('en', {
       </div>
     </article>
   </main>
+  <Footer />
 </Base>

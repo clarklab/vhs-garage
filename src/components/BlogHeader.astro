@@ -36,15 +36,24 @@ import { BUILD_ID } from '../utils/build-id.js';
     <span class="uppercase tracking-wider">Categories</span>
     <span class="text-white/30 text-[8px]" aria-hidden="true">▾</span>
   </button>
+  <!-- Home link — bounces to the marketing site root, not /blog (the
+       brand link on the left already covers Blog → /blog). Sits as a
+       plain link, no dropdown chevron, since there's nothing to drop. -->
+  <a href="/"
+     class="hidden md:flex items-center px-3 py-2 border-r border-white/10 uppercase tracking-wider text-white/60 hover:text-white/80 transition-colors">
+    Home
+  </a>
 
   <span class="flex-1"></span>
 
   <!-- Search input — desktop. Magnifying-glass prefix, ⌘K hint suffix.
        The dropdown of results is rendered into #bh-search-results
-       (a sibling absolute element) by blog-header.js. -->
+       (a sibling absolute element) by blog-header.js. The magnifying
+       glass is search.svg from @hackernoon/pixel-icon-library so it
+       matches the rest of the site's chunky-pixel iconography. -->
   <div class="relative hidden md:flex items-center px-2 border-l border-white/10">
-    <svg class="w-3 h-3 text-white/30 mr-1.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M15.5 14h-.79l-.28-.27A6.5 6.5 0 105.5 16.5a6.47 6.47 0 004.23-1.57l.27.28v.79l5 5L16.5 19l-5-5zm-6 0A4.5 4.5 0 119.5 5a4.5 4.5 0 010 9z"/>
+    <svg class="w-3.5 h-3.5 text-white/40 mr-1.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="m22,20v-1h-1v-1h-1v-1h-1v-1h-2v-1h1v-2h1v-6h-1v-2h-1v-1h-1v-1h-1v-1h-2v-1h-6v1h-2v1h-1v1h-1v1h-1v2h-1v6h1v2h1v1h1v1h1v1h2v1h6v-1h2v-1h1v2h1v1h1v1h1v1h1v1h2v-1h1v-2h-1Zm-10-5v1h-4v-1h-2v-1h-1v-2h-1v-4h1v-2h1v-1h2v-1h4v1h2v1h1v2h1v4h-1v2h-1v1h-2Z"/>
     </svg>
     <input
       id="bh-search-input"
@@ -75,8 +84,8 @@ import { BUILD_ID } from '../utils/build-id.js';
      style="font-family: 'VCR', monospace;">
   <!-- Search input — mobile -->
   <div class="flex items-center gap-2 px-2 py-2 border border-white/15">
-    <svg class="w-3 h-3 text-white/40 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M15.5 14h-.79l-.28-.27A6.5 6.5 0 105.5 16.5a6.47 6.47 0 004.23-1.57l.27.28v.79l5 5L16.5 19l-5-5zm-6 0A4.5 4.5 0 119.5 5a4.5 4.5 0 010 9z"/>
+    <svg class="w-3.5 h-3.5 text-white/40 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="m22,20v-1h-1v-1h-1v-1h-1v-1h-2v-1h1v-2h1v-6h-1v-2h-1v-1h-1v-1h-1v-1h-2v-1h-6v1h-2v1h-1v1h-1v1h-1v2h-1v6h1v2h1v1h1v1h1v1h2v1h6v-1h2v-1h1v2h1v1h1v1h1v1h1v1h2v-1h1v-2h-1Zm-10-5v1h-4v-1h-2v-1h-1v-2h-1v-4h1v-2h1v-1h2v-1h4v1h2v1h1v2h1v4h-1v2h-1v1h-2Z"/>
     </svg>
     <input
       id="bh-search-input-mobile"
@@ -88,9 +97,12 @@ import { BUILD_ID } from '../utils/build-id.js';
     />
   </div>
 
-  <!-- "Open" group — flat list since we don't want nested dropdowns -->
+  <!-- "Open" group — flat list since we don't want nested dropdowns.
+       Home is added at the top so the mobile drawer mirrors the
+       desktop bar's "Open / Categories / Home" ordering. -->
   <div class="border border-white/15 divide-y divide-white/10">
     <p class="px-3 py-1.5 text-[9px] uppercase tracking-widest text-white/30">Open</p>
+    <a href="/"            class="block px-3 py-2 text-white/80 hover:bg-red-600 hover:text-white text-xs uppercase tracking-wider transition-colors">Home</a>
     <a href="/blog"        class="block px-3 py-2 text-white/80 hover:bg-red-600 hover:text-white text-xs uppercase tracking-wider transition-colors">All Posts</a>
     <a href="/gear"        class="block px-3 py-2 text-white/80 hover:bg-red-600 hover:text-white text-xs uppercase tracking-wider transition-colors">VHS Garage Gear</a>
     <a href="/places"      class="block px-3 py-2 text-white/80 hover:bg-red-600 hover:text-white text-xs uppercase tracking-wider transition-colors">Places</a>
