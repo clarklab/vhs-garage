@@ -53,6 +53,7 @@ async function fetchAccessTokenInBackground() {
       // call so guard them.
       if (typeof ytClearCredentials === 'function') ytClearCredentials();
       if (typeof ytUpdateAccountUI === 'function') ytUpdateAccountUI();
+      if (typeof clearWhoamiCache === 'function') clearWhoamiCache();
       return null;
     }
     if (!res.ok || !data.accessToken) {
@@ -2376,6 +2377,32 @@ function refreshLibrary() {
     ? (id) => publishClip(id)
     : null;
 
+  // Right-click → "Mark not uploaded". Clears youtubeUrl + youtubeId from
+  // the catalog so the YouTube pill on the tile disappears and the clip
+  // becomes re-queueable. Also wipes any saved YT thumbnail metadata so
+  // the next upload can pick a fresh one. Does NOT touch the actual
+  // YouTube video — the user can delete it from Studio separately if
+  // they need to. This is a "let me redo the upload from VHS Garage's
+  // side" shortcut, not a YouTube content moderation action.
+  const onMarkUnuploaded = (id) => {
+    updateClip(id, {
+      youtubeUrl: null,
+      youtubeId: null,
+      ytThumbnailDataUrl: null,
+      ytThumbnailTime: null,
+    });
+    // If the cleared clip is the one currently in the editor, refresh
+    // the publish panel so it flips back from "Uploaded" to the form.
+    if (lastClipId === id) {
+      const allClips = getClips();
+      const refreshed = allClips.find(c => c.id === id);
+      if (typeof publishStateForClip_external === 'function' && refreshed) {
+        publishStateForClip_external(id, refreshed);
+      }
+    }
+    refreshLibrary();
+  };
+
   renderLibrary(grid, empty, clips, async (id) => {
     // 1. Snapshot the filename BEFORE removing from catalog (deleteClip wipes
     //    the entry from localStorage so we lose the filename otherwise).
@@ -2428,7 +2455,7 @@ function refreshLibrary() {
     }
 
     refreshLibrary();
-  }, onOpen, onUpload, {
+  }, onOpen, onUpload, onMarkUnuploaded, {
     mode: batchSelection.mode,
     selectedIds: batchSelection.ids,
     onToggleSelect: toggleBatchSelection,
@@ -3665,6 +3692,15 @@ async function ytSignOut() {
   const token = ytGetRefreshToken();
   ytClearCredentials();
   ytUpdateAccountUI();
+  // Drop the cached whoami response too — otherwise the next user signing
+  // in on this browser would briefly see the previous user's destination
+  // banner (allowlisted vs not).
+  clearWhoamiCache();
+  currentToken = null;
+  // Hide the destination banner immediately so the empty state doesn't
+  // briefly show stale info.
+  const destEl = document.getElementById('yt-pub-destination');
+  if (destEl) destEl.classList.add('hidden');
   if (token) {
     fetch('/api/youtube-auth', {
       method: 'POST',
@@ -3688,6 +3724,97 @@ function ytUpdateAccountUI() {
   } else {
     accountEl.classList.add('hidden');
   }
+}
+
+// "Uploading to" destination banner. Shown above the publish form so the
+// user can SEE which channel is about to receive the upload — critical
+// after the silent-fallback bug where allowlisted users' uploads were
+// landing on their personal channels.
+//
+// For allowlisted users: shows the brand channel (VHS Garage) with the
+// "Bridge" badge so it's visually distinct from personal-channel uploads.
+//
+// For non-allowlisted users: shows their own channel.
+//
+// Cached in module scope so we don't pelt /api/youtube-bridge with a
+// whoami request on every clip switch (call once per token).
+let cachedWhoami = null;          // { email, isAllowlisted, bridgeChannel }
+let cachedWhoamiToken = null;     // the access token cachedWhoami was fetched with
+
+async function refreshDestinationBanner() {
+  const destEl = document.getElementById('yt-pub-destination');
+  if (!destEl) return;
+  const nameEl = document.getElementById('yt-pub-destination-name');
+  const handleEl = document.getElementById('yt-pub-destination-handle');
+  const thumbEl = document.getElementById('yt-pub-destination-thumb');
+  const badgeEl = document.getElementById('yt-pub-destination-badge');
+
+  // No token yet → hide. ytUpdateAccountUI handles the "logged in as" line
+  // separately; the destination banner only makes sense once we know
+  // where the upload would actually go.
+  const token = currentToken;
+  if (!token) {
+    destEl.classList.add('hidden');
+    return;
+  }
+
+  // Re-query whoami if the token has rotated (so a freshly-refreshed
+  // token doesn't keep showing stale whitelist state).
+  if (!cachedWhoami || cachedWhoamiToken !== token) {
+    try {
+      const res = await fetch('/api/youtube-bridge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'whoami', accessToken: token }),
+      });
+      if (!res.ok) {
+        // Bridge endpoint missing / misconfigured / 401 → just hide the
+        // banner. We'd rather show nothing than misleading info.
+        destEl.classList.add('hidden');
+        return;
+      }
+      cachedWhoami = await res.json();
+      cachedWhoamiToken = token;
+    } catch (e) {
+      console.warn('[whoami] failed:', e.message);
+      destEl.classList.add('hidden');
+      return;
+    }
+  }
+
+  const personal = ytGetChannel();
+
+  if (cachedWhoami.isAllowlisted && cachedWhoami.bridgeChannel) {
+    // Bridge upload — show brand channel + Bridge badge.
+    const ch = cachedWhoami.bridgeChannel;
+    if (nameEl) nameEl.textContent = ch.name || 'VHS Garage';
+    if (handleEl) handleEl.textContent = ch.handle ? ' ' + (ch.handle.startsWith('@') ? ch.handle : '@' + ch.handle) : '';
+    if (thumbEl) {
+      thumbEl.src = ch.thumbnail || '';
+      thumbEl.alt = ch.name || 'VHS Garage';
+    }
+    if (badgeEl) badgeEl.classList.remove('hidden');
+    destEl.classList.remove('hidden');
+  } else if (personal) {
+    // Personal upload — show user's own channel.
+    if (nameEl) nameEl.textContent = personal.title || 'Your channel';
+    if (handleEl) handleEl.textContent = personal.handle ? ' ' + (personal.handle.startsWith('@') ? personal.handle : '@' + personal.handle) : '';
+    if (thumbEl) {
+      thumbEl.src = personal.thumbnail || '';
+      thumbEl.alt = personal.title || 'Your channel';
+    }
+    if (badgeEl) badgeEl.classList.add('hidden');
+    destEl.classList.remove('hidden');
+  } else {
+    destEl.classList.add('hidden');
+  }
+}
+
+// Sign-out / token-clear paths call this so the next session starts
+// without stale whitelist state from a previous user.
+function clearWhoamiCache() {
+  cachedWhoami = null;
+  cachedWhoamiToken = null;
 }
 
 // --- Upload queue + toast notifications ---
@@ -4410,7 +4537,14 @@ function wireYouTubePublish() {
     } else {
       showForm();
     }
-    fetchAccessTokenInBackground();
+    // Pre-warm the access token, then refresh the destination banner once
+    // it's ready. resetUploadUI just nulled currentToken, so this is the
+    // only path that can populate the banner — the whoami fetch needs a
+    // token. Result is cached at module scope, so subsequent clip
+    // switches typically resolve from cache without a network round-trip.
+    fetchAccessTokenInBackground().then(() => {
+      refreshDestinationBanner();
+    });
   }
   publishStateForClip_external = publishStateForClip;
 

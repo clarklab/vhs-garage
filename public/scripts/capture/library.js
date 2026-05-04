@@ -176,7 +176,7 @@ function clipToJSON(clip) {
 // instead of opening the clip. Uploaded tiles dim out and ignore clicks.
 // Selection cap is enforced by the caller's onToggleSelect — if it
 // returns false (cap hit on a new selection), we don't visually toggle.
-export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUpload, selection) {
+export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUpload, onMarkUnuploaded, selection) {
   if (!clips.length) {
     container.innerHTML = '';
     emptyMsg.classList.remove('hidden');
@@ -255,7 +255,8 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       if (selectionMode) return; // suppress in selection mode
-      showLibraryContextMenu(e.clientX, e.clientY, el.dataset.id, el.dataset.filename, onOpen, onDelete);
+      const isUploaded = el.dataset.uploaded === '1';
+      showLibraryContextMenu(e.clientX, e.clientY, el.dataset.id, el.dataset.filename, onOpen, onDelete, isUploaded ? onMarkUnuploaded : null);
     });
   });
 }
@@ -263,17 +264,35 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
 // Position the shared context menu at the click point and bind one-shot
 // handlers for Open Clip + Delete. Clamps to viewport so right-clicking
 // near the edge doesn't push the menu off-screen.
-function showLibraryContextMenu(x, y, clipId, filename, onOpen, onDelete) {
+function showLibraryContextMenu(x, y, clipId, filename, onOpen, onDelete, onMarkUnuploaded) {
   const menu = document.getElementById('library-context-menu');
   if (!menu) return;
   const openBtn = document.getElementById('lib-ctx-open');
   const deleteBtn = document.getElementById('lib-ctx-delete');
+  const markUnuploadedBtn = document.getElementById('lib-ctx-mark-unuploaded');
 
   if (openBtn) {
     openBtn.disabled = !onOpen;
     openBtn.classList.toggle('opacity-30', !onOpen);
     openBtn.classList.toggle('cursor-not-allowed', !onOpen);
     openBtn.onclick = onOpen ? () => { hideLibraryContextMenu(); onOpen(clipId, filename); } : null;
+  }
+  // Mark not uploaded — only meaningful when the clip currently HAS a
+  // youtubeUrl. Caller passes null when the clip isn't uploaded so we
+  // dim the option (with an explanatory tooltip) rather than hide it
+  // entirely; that way the menu shape is stable across right-clicks.
+  if (markUnuploadedBtn) {
+    const enabled = !!onMarkUnuploaded;
+    markUnuploadedBtn.disabled = !enabled;
+    markUnuploadedBtn.classList.toggle('opacity-30', !enabled);
+    markUnuploadedBtn.classList.toggle('cursor-not-allowed', !enabled);
+    markUnuploadedBtn.title = enabled
+      ? 'Clear the YouTube link so this clip can be re-queued for upload'
+      : 'This clip has no YouTube link to clear';
+    markUnuploadedBtn.onclick = enabled ? () => {
+      hideLibraryContextMenu();
+      onMarkUnuploaded(clipId);
+    } : null;
   }
   if (deleteBtn) {
     deleteBtn.onclick = () => {

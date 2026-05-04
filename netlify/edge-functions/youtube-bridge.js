@@ -64,6 +64,29 @@ export default async (req) => {
   }
   const userEmail = user.email.toLowerCase();
 
+  // ------------ USER: am I on the allowlist? what channel will my upload land on? ------------
+  // Client calls this on publish-panel mount so the UI can show
+  // "Uploading to: VHS Garage" (whitelisted users) vs the user's own
+  // channel (non-allowlisted). Cheap — just an allowlist check + channel-
+  // info read. Doesn't burn the bridge token unless the channel info
+  // hasn't been cached yet.
+  if (action === 'whoami') {
+    const isAllowed = ALLOWED_EMAILS.includes(userEmail);
+    const result = {
+      email: userEmail,
+      isAllowlisted: isAllowed,
+      bridgeChannel: null,
+    };
+    if (isAllowed) {
+      // Read cached channel info (set whenever the admin saves the token).
+      // Falls back to a minimal {name} shape if the cache is empty.
+      const store = getStore('youtube-bridge');
+      const cached = await store.get('bridge-channel-info', { type: 'json' }).catch(() => null);
+      result.bridgeChannel = cached || { name: 'VHS Garage', handle: null };
+    }
+    return json(result);
+  }
+
   // ------------ ADMIN: read-only status ------------
   if (action === 'admin-status') {
     if (!ADMIN_EMAILS.includes(userEmail)) {
@@ -96,6 +119,43 @@ export default async (req) => {
       storedAt,
       storedBy: userEmail,
     }));
+    // Also fetch + cache the channel info that this token represents,
+    // so whoami can tell allowlisted users "you're uploading to VHS
+    // Garage @vhsgaragevideo" without making them look it up
+    // separately. Best-effort; failure here doesn't block the token save.
+    try {
+      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: YOUTUBE_CLIENT_ID,
+          client_secret: YOUTUBE_CLIENT_SECRET,
+          refresh_token: refreshToken,
+          grant_type: 'refresh_token',
+        }),
+      });
+      if (tokenRes.ok) {
+        const tokenData = await tokenRes.json();
+        const channelRes = await fetch(
+          'https://www.googleapis.com/youtube/v3/channels?mine=true&part=snippet',
+          { headers: { Authorization: `Bearer ${tokenData.access_token}` } }
+        );
+        if (channelRes.ok) {
+          const channelData = await channelRes.json();
+          const ch = channelData?.items?.[0]?.snippet;
+          if (ch) {
+            await store.set('bridge-channel-info', JSON.stringify({
+              name: ch.title,
+              handle: ch.customUrl || null,  // e.g. "@vhsgaragevideo"
+              thumbnail: ch.thumbnails?.default?.url || null,
+              capturedAt: storedAt,
+            }));
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[bridge] channel-info fetch on token save failed:', e.message);
+    }
     return json({ ok: true, storedAt, storedBy: userEmail });
   }
 
@@ -153,11 +213,17 @@ export default async (req) => {
 
     if (!initRes.ok) {
       const detail = await initRes.text();
+      // CRITICAL: do NOT pass through YouTube's status code as our own.
+      // The client's fallback rule "on 403, fall through to direct upload"
+      // would otherwise mistake a YouTube uploadLimitExceeded (403) for
+      // a "user not on allowlist" (also 403) and silently route the
+      // upload to the user's personal channel. Using 502 (Bad Gateway —
+      // upstream error) keeps that signal clean.
       return json({
         error: 'YouTube init failed',
         detail,
         ytStatus: initRes.status,
-      }, initRes.status);
+      }, 502);
     }
 
     const uploadUrl = initRes.headers.get('location');
@@ -203,7 +269,8 @@ export default async (req) => {
 
     if (!res.ok) {
       const detail = await res.text();
-      return json({ error: 'Thumbnail upload failed', detail, ytStatus: res.status }, res.status);
+      // Same disambiguation as init-upload: use 502 for upstream errors.
+      return json({ error: 'Thumbnail upload failed', detail, ytStatus: res.status }, 502);
     }
     return json({ ok: true });
   }

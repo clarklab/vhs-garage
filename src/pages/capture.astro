@@ -946,11 +946,29 @@ import Base from '../layouts/Base.astro';
             </div>
 
             <!-- Signed-in account banner (visible when signed in) -->
-            <div id="yt-pub-account" class="hidden flex items-center gap-2 mb-3 text-[11px] text-white/50">
+            <div id="yt-pub-account" class="hidden flex items-center gap-2 mb-2 text-[11px] text-white/50">
               <img id="yt-pub-account-avatar" src="" alt="" class="w-5 h-5 rounded-full object-cover bg-white/10" />
               <span>Logged in as <span id="yt-pub-account-name" class="text-white/80"></span></span>
               <span class="flex-1"></span>
               <button id="yt-pub-signout" class="text-white/40 hover:text-white/70 underline-offset-2 hover:underline transition-colors">Sign out</button>
+            </div>
+
+            <!-- Upload destination banner — set by client whenever the
+                 publish panel opens. For bridge-allowlisted users this
+                 becomes "Uploading to: VHS Garage @vhsgaragevideo" with
+                 the brand thumbnail so there's zero ambiguity about
+                 which channel the upload will land on. For non-allowlisted
+                 users it shows "Uploading to your channel @handle". -->
+            <div id="yt-pub-destination" class="hidden flex items-center gap-2 mb-3 px-2 py-1.5 border border-white/15 text-[11px]">
+              <img id="yt-pub-destination-thumb" src="" alt="" class="w-5 h-5 object-cover bg-white/10" />
+              <div class="min-w-0 flex-1">
+                <p class="text-white/40 text-[9px] uppercase tracking-widest leading-tight">Uploading to</p>
+                <p class="text-white text-[12px] leading-tight truncate">
+                  <span id="yt-pub-destination-name"></span>
+                  <span id="yt-pub-destination-handle" class="text-white/50"></span>
+                </p>
+              </div>
+              <span id="yt-pub-destination-badge" class="hidden text-[8px] uppercase tracking-widest px-1.5 py-0.5 bg-[#dc2626] text-white font-bold">Bridge</span>
             </div>
 
             <!-- Sign-in panel (visible when not signed in) -->
@@ -1104,6 +1122,11 @@ import Base from '../layouts/Base.astro';
        right-click so we're not generating one menu per tile. -->
   <div id="library-context-menu" class="hidden fixed z-40 bg-black border border-white/30 text-xs select-none py-1" style="min-width:140px; box-shadow: 2px 2px 0 0 rgba(0,0,0,0.7), inset 1px 1px 0 0 rgba(255,255,255,0.06); font-family: 'VCR', monospace;">
     <button id="lib-ctx-open" class="block w-full text-left px-3 py-1.5 text-white/80 hover:bg-white/10 transition-colors">Open Clip</button>
+    <!-- Only enabled for clips that already have a youtubeUrl. Clears the
+         catalog's youtubeUrl + youtubeId so the YouTube pill disappears
+         and the clip becomes re-queueable for upload. Useful when an
+         upload landed on the wrong channel and the user wants to redo it. -->
+    <button id="lib-ctx-mark-unuploaded" class="block w-full text-left px-3 py-1.5 text-white/80 hover:bg-white/10 transition-colors">Mark not uploaded</button>
     <div class="border-t border-white/10 my-1"></div>
     <button id="lib-ctx-delete" class="block w-full text-left px-3 py-1.5 text-red-400/80 hover:bg-white/5 hover:text-red-400 transition-colors">Delete</button>
   </div>
