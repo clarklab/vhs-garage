@@ -669,6 +669,21 @@ import { BUILD_ID } from '../utils/build-id.js';
               </svg>
               Delete
             </button>
+            <!-- Trim button — same hidden-until-playback pattern as Delete.
+                 Icon is page-break.svg from @hackernoon/pixel-icon-library
+                 (icons/SVG/regular/page-break.svg) rotated 90deg so the
+                 horizontal page-break lines become vertical "cut here / cut
+                 here" brackets — visually reads as trim handles. -->
+            <button id="trim-recording-btn" class="lib-btn pixel-btn shrink-0 hidden" title="Trim this recording">
+              <svg viewBox="0 0 24 24" aria-hidden="true" style="transform: rotate(90deg);">
+                <polygon points="3 8 3 1 5 1 5 6 19 6 19 1 21 1 21 8 3 8"/>
+                <rect x="1" y="11" width="5" height="2"/>
+                <rect x="10" y="11" width="4" height="2"/>
+                <polygon points="21 16 21 23 19 23 19 18 5 18 5 23 3 23 3 16 21 16"/>
+                <rect x="18" y="11" width="5" height="2"/>
+              </svg>
+              Trim
+            </button>
             <button id="to-library-btn" class="lib-btn pixel-btn shrink-0" title="Library">
               <!-- Folder Open icon from @hackernoon/pixel-icon-library
                    (icons/SVG/regular/folder-open.svg) -->
@@ -678,6 +693,124 @@ import { BUILD_ID } from '../utils/build-id.js';
               </svg>
               Library
             </button>
+          </div>
+
+          <!-- Trim mode panel — hidden by default, revealed by the Trim
+               button. Native `controls` on #playback are removed while
+               this panel is open; the timeline + handles + play button
+               here take over. ESC exits, Cancel reverts. The IN/OUT
+               handles drive the time inputs (and vice versa); playback
+               clamps to [in, out]. Save opens a modal where the user
+               picks "Create new clip" (default) or "Trim original
+               permanently"; the actual encode is real-time MediaRecorder
+               (5-min clip = ~5-min encode) with a progress toast. -->
+          <div id="trim-panel" class="hidden mt-2 px-2 py-2 border border-white/15 bg-[#0a090a]" style="font-family: 'VCR', monospace;">
+            <!-- Custom timeline track. Position is %-based so it scales
+                 with whatever width the column renders at. The dimmed
+                 cross-hatched bands on either side show what's getting
+                 cut — visual confirmation that beats the time numbers
+                 alone. -->
+            <div class="relative h-10 select-none mb-2" id="trim-timeline">
+              <!-- Background track -->
+              <div class="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 bg-white/10"></div>
+
+              <!-- Trimmed-OUT region: left of IN handle (left dim band) -->
+              <div id="trim-band-left"
+                   class="absolute top-0 bottom-0 left-0 bg-black/50 pointer-events-none"
+                   style="background-image: repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(220,38,38,0.15) 4px, rgba(220,38,38,0.15) 8px); width: 0%;"></div>
+
+              <!-- Trimmed-OUT region: right of OUT handle -->
+              <div id="trim-band-right"
+                   class="absolute top-0 bottom-0 right-0 bg-black/50 pointer-events-none"
+                   style="background-image: repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(220,38,38,0.15) 4px, rgba(220,38,38,0.15) 8px); width: 0%;"></div>
+
+              <!-- KEPT region (between IN and OUT) — subtle red highlight
+                   on the track so the kept range reads as the "active" band -->
+              <div id="trim-band-kept"
+                   class="absolute top-1/2 -translate-y-1/2 h-2 bg-[#dc2626]/40 pointer-events-none"
+                   style="left: 0%; right: 0%;"></div>
+
+              <!-- IN handle. The chunky vertical bar with a top/bottom
+                   anchor block reads as a "grab handle" without needing
+                   a label. cursor-ew-resize signals draggability. -->
+              <div id="trim-handle-in"
+                   class="absolute top-0 bottom-0 w-3 -translate-x-1/2 bg-[#dc2626] cursor-ew-resize hover:bg-[#ef4444] transition-colors"
+                   style="left: 0%;"
+                   role="slider" aria-label="Trim start" tabindex="0"></div>
+
+              <!-- OUT handle -->
+              <div id="trim-handle-out"
+                   class="absolute top-0 bottom-0 w-3 -translate-x-1/2 bg-[#dc2626] cursor-ew-resize hover:bg-[#ef4444] transition-colors"
+                   style="left: 100%;"
+                   role="slider" aria-label="Trim end" tabindex="0"></div>
+
+              <!-- Playhead — slim white line, no pointer events so the
+                   handles + timeline scrub clicks can fire underneath. -->
+              <div id="trim-playhead"
+                   class="absolute top-0 bottom-0 w-px bg-white pointer-events-none"
+                   style="left: 0%; box-shadow: 0 0 4px rgba(255,255,255,0.6);"></div>
+            </div>
+
+            <!-- Time inputs row. IN on the left, OUT on the right, the
+                 current playhead position centered. Inputs accept loose
+                 syntax: "90", "1:30", "0:01:30", "0:01:30.5" all parse. -->
+            <div class="flex items-center justify-between gap-3 text-[11px] mb-2">
+              <div class="flex items-center gap-2">
+                <span class="text-white/40 uppercase tracking-wider text-[9px]">In</span>
+                <input id="trim-in-input"
+                       type="text"
+                       value="0:00:00.0"
+                       autocomplete="off"
+                       spellcheck="false"
+                       class="w-20 bg-transparent border border-white/20 px-2 py-1 text-white tabular-nums text-center focus:outline-none focus:border-[#dc2626]" />
+              </div>
+
+              <div class="flex items-center gap-2">
+                <button id="trim-play-btn"
+                        type="button"
+                        class="inline-flex items-center gap-1.5 px-2.5 py-1 border border-white/30 text-white/80 hover:text-white hover:border-white/60 transition-colors">
+                  <svg id="trim-play-icon" class="w-3 h-3 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                    <polygon points="5 3 5 21 7 21 7 19 9 19 9 17 11 17 11 15 13 15 13 13 15 13 15 11 17 11 17 9 15 9 15 7 13 7 13 5 11 5 11 3 9 3 9 1 7 1 7 3 5 3"/>
+                  </svg>
+                  <svg id="trim-pause-icon" class="hidden w-3 h-3 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="6" y="4" width="4" height="16"/>
+                    <rect x="14" y="4" width="4" height="16"/>
+                  </svg>
+                  <span id="trim-play-label">Play</span>
+                </button>
+                <span id="trim-position" class="text-white/40 tabular-nums">0:00:00.0 / 0:00:00.0</span>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <span class="text-white/40 uppercase tracking-wider text-[9px]">Out</span>
+                <input id="trim-out-input"
+                       type="text"
+                       value="0:00:00.0"
+                       autocomplete="off"
+                       spellcheck="false"
+                       class="w-20 bg-transparent border border-white/20 px-2 py-1 text-white tabular-nums text-center focus:outline-none focus:border-[#dc2626]" />
+              </div>
+            </div>
+
+            <!-- Action row -->
+            <div class="flex items-center justify-between gap-3 pt-2 border-t border-white/10">
+              <p class="text-white/40 text-[10px] uppercase tracking-wider">
+                <kbd class="border border-white/15 px-1.5 py-0.5 text-white/60">Esc</kbd>
+                <span class="ml-1">to cancel</span>
+              </p>
+              <div class="flex items-center gap-2">
+                <button id="trim-cancel-btn"
+                        type="button"
+                        class="px-3 py-1.5 border border-white/30 text-white/70 hover:text-white text-[11px] uppercase tracking-wider transition-colors">
+                  Cancel
+                </button>
+                <button id="trim-save-btn"
+                        type="button"
+                        class="px-3 py-1.5 bg-[#dc2626] hover:bg-[#ef4444] text-white text-[11px] uppercase tracking-wider transition-colors">
+                  Save Trim
+                </button>
+              </div>
+            </div>
           </div>
       </div>
 
@@ -1138,6 +1271,94 @@ import { BUILD_ID } from '../utils/build-id.js';
        Style is the chiseled-bevel "raised" look from System 7 / Win 3.1
        (defined as .toolbar-menu in the <style> block above). -->
   <div id="toolbar-menu" class="toolbar-menu hidden"></div>
+
+  <!-- Trim "Save Trim" confirmation modal — opens from the Save Trim
+       button inside the trim panel. Two radio choices:
+         · Create new clip (DEFAULT, recommended) — encodes a separate
+           file, original untouched, new entry in library
+         · Trim original permanently — overwrites the source file on
+           disk; if the clip is already on YouTube, a note explains
+           that won't change the YouTube version
+       Confirm kicks off the MediaRecorder pipeline; progress is shown
+       via a toast (see #trim-progress-toast below). -->
+  <div id="trim-save-modal"
+       class="hidden fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+       style="font-family: 'VCR', monospace;">
+    <div class="bg-[#0a090a] border border-white/30 max-w-md w-full p-5"
+         style="box-shadow: 4px 4px 0 0 rgba(0,0,0,0.8);">
+      <h3 class="text-white text-base uppercase tracking-wider mb-3">Save Trim</h3>
+      <p class="text-white/50 text-[11px] mb-5 tabular-nums">
+        From <span id="trim-modal-in" class="text-white/80">0:00:00.0</span>
+        to <span id="trim-modal-out" class="text-white/80">0:00:00.0</span>
+        · <span id="trim-modal-kept" class="text-white/80">0:00:00.0</span> kept
+      </p>
+
+      <!-- Already-uploaded note. Hidden unless the active clip has a
+           youtubeUrl — in that case "Trim original permanently" is still
+           ALLOWED (per spec) but the user gets this warning so they know
+           the YouTube video won't auto-update. -->
+      <p id="trim-modal-uploaded-note"
+         class="hidden mb-4 px-3 py-2 border border-yellow-500/40 bg-yellow-500/5 text-yellow-200/80 text-[11px] leading-relaxed">
+        ⚠ This clip is already on YouTube. Trimming the original here won't
+        change the video that's already up — you'd need to delete it on
+        YouTube + right-click → Mark not uploaded in the library + re-upload.
+      </p>
+
+      <div class="space-y-2 mb-5">
+        <label class="trim-modal-choice block border border-white/20 hover:border-white/50 transition-colors cursor-pointer p-3"
+               data-trim-mode="new">
+          <div class="flex items-start gap-2">
+            <input type="radio" name="trim-mode" value="new" checked class="mt-1" />
+            <div class="flex-1 min-w-0">
+              <p class="text-white text-sm flex items-center gap-2">
+                Create new clip
+                <span class="text-[8px] uppercase tracking-widest bg-[#dc2626] text-white px-1.5 py-0.5">Recommended</span>
+              </p>
+              <p class="text-white/40 text-[11px] mt-1">Saves the trim as a separate clip. Original file stays untouched.</p>
+            </div>
+          </div>
+        </label>
+
+        <label class="trim-modal-choice block border border-white/20 hover:border-white/50 transition-colors cursor-pointer p-3"
+               data-trim-mode="replace">
+          <div class="flex items-start gap-2">
+            <input type="radio" name="trim-mode" value="replace" class="mt-1" />
+            <div class="flex-1 min-w-0">
+              <p class="text-white text-sm">Trim original permanently</p>
+              <p class="text-white/40 text-[11px] mt-1">Replaces the original file on disk. Cannot be undone.</p>
+            </div>
+          </div>
+        </label>
+      </div>
+
+      <div class="flex items-center justify-end gap-2">
+        <button id="trim-modal-cancel"
+                type="button"
+                class="px-3 py-2 text-white/60 hover:text-white text-[11px] uppercase tracking-wider transition-colors">
+          Cancel
+        </button>
+        <button id="trim-modal-confirm"
+                type="button"
+                class="px-4 py-2 bg-[#dc2626] hover:bg-[#ef4444] text-white text-[11px] uppercase tracking-wider transition-colors">
+          Confirm
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trim progress toast — fixed bottom-right, shown during the
+       MediaRecorder encode (which is real-time, so a 5-min trim takes
+       ~5 min). Position values + size are wired by trim code in app.js. -->
+  <div id="trim-progress-toast"
+       class="hidden fixed bottom-4 right-4 z-50 bg-[#0a090a] border border-white/30 px-4 py-3 min-w-[280px]"
+       style="font-family: 'VCR', monospace; box-shadow: 4px 4px 0 0 rgba(0,0,0,0.8);">
+    <p class="text-white text-[11px] uppercase tracking-wider mb-2">Trimming…</p>
+    <p id="trim-progress-position" class="text-white/60 text-[10px] tabular-nums mb-2">0:00:00 of 0:00:00</p>
+    <div class="h-1 bg-white/10 overflow-hidden">
+      <div id="trim-progress-bar" class="h-full bg-[#dc2626] transition-all duration-150" style="width: 0%;"></div>
+    </div>
+    <p id="trim-progress-detail" class="text-white/30 text-[9px] mt-2">Real-time encode — leave this tab open.</p>
+  </div>
 
   <!-- Upload toast stack — bottom-right, vertical column, newest on top.
        Cards are dynamically appended by enqueueUpload() in app.js. The

@@ -183,6 +183,7 @@ async function startApp() {
   wirePlaybackTabs();
   wireMuteToggle();
   wireSaveData();
+  wireTrim();
   wireResetButtons();
   wireYouTubePublish();
   wireMainEditorAutosave();
@@ -4925,13 +4926,709 @@ function wirePlaybackTabs() {
     deleteBtn.classList.add('hidden');
     deleteBtn.textContent = 'Delete';
     deleteBtn.classList.remove('text-red-400');
+    // showLiveTab already hides + exits Trim, but be explicit here
+    // since showLiveTab might short-circuit if previewMode was already
+    // 'live'.
+    document.getElementById('trim-recording-btn')?.classList.add('hidden');
   });
+}
+
+// ---------------------------------------------------------------------------
+// TRIM MODE
+// ---------------------------------------------------------------------------
+//
+// Lets the user trim the start and/or end off a recorded clip. Triggered by
+// the Trim button in the controls row (under the playback preview). Opens an
+// in-page panel with:
+//   · A custom timeline + two draggable handles (IN, OUT)
+//   · Two text inputs (h:mm:ss.s) bidirectionally synced with the handles
+//   · A scoped Play button (only plays the [in, out] range)
+//   · Save/Cancel; ESC also cancels
+//
+// Save opens a confirm modal where the user picks:
+//   "Create new clip"           — encode trim to a NEW file, leave original
+//   "Trim original permanently" — overwrite the source file on disk
+//
+// Encoding pipeline = real-time MediaRecorder (clip duration ≈ encode wall-
+// clock time). A toast in the bottom-right shows progress so the wait isn't
+// silent. WebCodecs would be faster (~5–10× realtime) but adds complexity
+// and codec-config failure modes; if real users find this too slow we'll
+// revisit.
+
+// Module-scope so showLiveTab() can call exitTrimMode() during clip swaps.
+let trimMode = false;
+let trimIn = 0;          // seconds
+let trimOut = 0;         // seconds
+let trimDuration = 0;    // seconds (full clip)
+let trimEscHandlerRef = null;
+let trimTimeUpdateRef = null;
+let activeTrimRecorder = null;  // current MediaRecorder (so Cancel can stop it)
+
+function exitTrimMode() {
+  if (!trimMode) return;
+  trimMode = false;
+
+  const playback = document.getElementById('playback');
+  const panel = document.getElementById('trim-panel');
+  if (playback) {
+    playback.pause();
+    playback.setAttribute('controls', '');
+    if (trimTimeUpdateRef) playback.removeEventListener('timeupdate', trimTimeUpdateRef);
+    trimTimeUpdateRef = null;
+  }
+  if (panel) panel.classList.add('hidden');
+
+  if (trimEscHandlerRef) {
+    document.removeEventListener('keydown', trimEscHandlerRef);
+    trimEscHandlerRef = null;
+  }
+  // Reset Play label/icon to the "Play" state for the next entry.
+  document.getElementById('trim-play-icon')?.classList.remove('hidden');
+  document.getElementById('trim-pause-icon')?.classList.add('hidden');
+  const playLabel = document.getElementById('trim-play-label');
+  if (playLabel) playLabel.textContent = 'Play';
+}
+
+// Format seconds as h:mm:ss.s — chosen as the sweet spot between consumer-
+// friendly (everyone knows mm:ss) and editor-friendly (tenths give frame-
+// adjacent precision when dragging). Always includes the hours position
+// even for short clips so layout doesn't jump on long ones.
+function formatTrimTime(seconds) {
+  const t = Math.max(0, Number(seconds) || 0);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const s = Math.floor(t % 60);
+  // Use round() not floor() on the tenths so dragging "exactly to 1.0s"
+  // doesn't display "0.9" because of float underflow.
+  const tenths = Math.round((t - Math.floor(t)) * 10) % 10;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${tenths}`;
+}
+
+// Lenient parser: accepts "90", "1:30", "0:01:30", "0:01:30.5", "1:30.5".
+// Returns seconds (float) or null on parse failure.
+function parseTrimTime(str) {
+  const trimmed = String(str || '').trim();
+  if (!trimmed) return null;
+  if (!/^[\d:.]+$/.test(trimmed)) return null;
+  const parts = trimmed.split(':');
+  let seconds;
+  if (parts.length === 1) {
+    seconds = parseFloat(parts[0]);
+  } else if (parts.length === 2) {
+    seconds = (parseInt(parts[0], 10) || 0) * 60 + parseFloat(parts[1]);
+  } else if (parts.length === 3) {
+    seconds = (parseInt(parts[0], 10) || 0) * 3600
+            + (parseInt(parts[1], 10) || 0) * 60
+            + parseFloat(parts[2]);
+  } else {
+    return null;
+  }
+  return isFinite(seconds) ? seconds : null;
+}
+
+function wireTrim() {
+  const trimBtn = document.getElementById('trim-recording-btn');
+  if (!trimBtn) return;
+
+  trimBtn.addEventListener('click', () => {
+    if (trimMode) { exitTrimMode(); return; }
+    enterTrimMode();
+  });
+
+  // Wire all the panel internals once at startup (the panel itself is just
+  // hidden/shown — we don't recreate listeners on each open).
+  wireTrimPanel();
+  wireTrimSaveModal();
+}
+
+function enterTrimMode() {
+  if (!hasPlayback) return;
+  const playback = document.getElementById('playback');
+  if (!playback) return;
+
+  const startWith = (dur) => {
+    if (!isFinite(dur) || dur <= 0) return;
+    trimMode = true;
+    trimDuration = dur;
+    trimIn = 0;
+    trimOut = dur;
+
+    playback.removeAttribute('controls');
+    playback.pause();
+    playback.currentTime = 0;
+
+    document.getElementById('trim-panel').classList.remove('hidden');
+    updateTrimUI();
+    updateTrimPlayhead();
+
+    trimEscHandlerRef = (e) => {
+      if (e.key === 'Escape') {
+        // Don't bail if the user is mid-edit in one of the inputs.
+        if (e.target?.id === 'trim-in-input' || e.target?.id === 'trim-out-input') {
+          e.target.blur();
+          return;
+        }
+        exitTrimMode();
+      }
+    };
+    document.addEventListener('keydown', trimEscHandlerRef);
+
+    trimTimeUpdateRef = () => {
+      // Clamp playhead inside [in, out]; loop on reaching out.
+      if (playback.currentTime >= trimOut) {
+        playback.pause();
+        playback.currentTime = trimIn;
+        // Sync the Play button back to "Play"
+        document.getElementById('trim-play-icon')?.classList.remove('hidden');
+        document.getElementById('trim-pause-icon')?.classList.add('hidden');
+        const lbl = document.getElementById('trim-play-label');
+        if (lbl) lbl.textContent = 'Play';
+      } else if (playback.currentTime < trimIn) {
+        playback.currentTime = trimIn;
+      }
+      updateTrimPlayhead();
+    };
+    playback.addEventListener('timeupdate', trimTimeUpdateRef);
+  };
+
+  // Duration may not be loaded yet (especially right after the clip is
+  // first opened). Wait for loadedmetadata if needed.
+  if (isFinite(playback.duration) && playback.duration > 0) {
+    startWith(playback.duration);
+  } else {
+    const onMeta = () => { startWith(playback.duration); };
+    playback.addEventListener('loadedmetadata', onMeta, { once: true });
+  }
+}
+
+function updateTrimUI() {
+  if (!trimDuration) return;
+  const inPct = clampPct((trimIn / trimDuration) * 100);
+  const outPct = clampPct((trimOut / trimDuration) * 100);
+
+  const handleIn = document.getElementById('trim-handle-in');
+  const handleOut = document.getElementById('trim-handle-out');
+  const bandLeft = document.getElementById('trim-band-left');
+  const bandRight = document.getElementById('trim-band-right');
+  const bandKept = document.getElementById('trim-band-kept');
+  const inputIn = document.getElementById('trim-in-input');
+  const inputOut = document.getElementById('trim-out-input');
+
+  if (handleIn) handleIn.style.left = inPct + '%';
+  if (handleOut) handleOut.style.left = outPct + '%';
+  if (bandLeft) bandLeft.style.width = inPct + '%';
+  if (bandRight) bandRight.style.width = (100 - outPct) + '%';
+  if (bandKept) {
+    bandKept.style.left = inPct + '%';
+    bandKept.style.right = (100 - outPct) + '%';
+  }
+  // Don't clobber the input the user is currently typing into.
+  if (inputIn && document.activeElement !== inputIn) inputIn.value = formatTrimTime(trimIn);
+  if (inputOut && document.activeElement !== inputOut) inputOut.value = formatTrimTime(trimOut);
+}
+
+function updateTrimPlayhead() {
+  if (!trimDuration) return;
+  const playback = document.getElementById('playback');
+  const playhead = document.getElementById('trim-playhead');
+  const pos = document.getElementById('trim-position');
+  const t = playback?.currentTime || 0;
+  const pct = clampPct((t / trimDuration) * 100);
+  if (playhead) playhead.style.left = pct + '%';
+  if (pos) pos.textContent = `${formatTrimTime(t)} / ${formatTrimTime(trimDuration)}`;
+}
+
+function clampPct(p) { return Math.max(0, Math.min(100, p)); }
+
+function wireTrimPanel() {
+  const timeline = document.getElementById('trim-timeline');
+  const handleIn = document.getElementById('trim-handle-in');
+  const handleOut = document.getElementById('trim-handle-out');
+  const inputIn = document.getElementById('trim-in-input');
+  const inputOut = document.getElementById('trim-out-input');
+  const playBtn = document.getElementById('trim-play-btn');
+  const cancelBtn = document.getElementById('trim-cancel-btn');
+  const saveBtn = document.getElementById('trim-save-btn');
+  if (!timeline || !handleIn || !handleOut) return;
+
+  // Minimum gap between IN and OUT — 0.2s. Any tighter and the
+  // MediaRecorder pipeline can produce a zero-frame output on slow
+  // machines. Easy to relax later if needed.
+  const MIN_GAP_S = 0.2;
+
+  // Click-to-scrub on the timeline track. Ignored when the click lands
+  // on a handle (the handle gets its own pointerdown listener that
+  // stopPropagation's so this never fires for those clicks).
+  timeline.addEventListener('pointerdown', (e) => {
+    if (e.target === handleIn || e.target === handleOut) return;
+    if (!trimMode || !trimDuration) return;
+    const rect = timeline.getBoundingClientRect();
+    const pct = clampPct(((e.clientX - rect.left) / rect.width) * 100);
+    const t = (pct / 100) * trimDuration;
+    const clamped = Math.max(trimIn, Math.min(trimOut, t));
+    const playback = document.getElementById('playback');
+    if (playback) playback.currentTime = clamped;
+    updateTrimPlayhead();
+  });
+
+  // Generic handle drag — works for both IN and OUT. Uses pointer
+  // capture so a drag that exits the window-bounds still tracks until
+  // pointerup.
+  function attachHandleDrag(handle, isIn) {
+    handle.addEventListener('pointerdown', (e) => {
+      if (!trimMode || !trimDuration) return;
+      e.stopPropagation();
+      handle.setPointerCapture(e.pointerId);
+      const rect = timeline.getBoundingClientRect();
+
+      const onMove = (ev) => {
+        const pct = clampPct(((ev.clientX - rect.left) / rect.width) * 100);
+        let t = (pct / 100) * trimDuration;
+        if (isIn) {
+          // Don't let IN cross OUT (with the min gap).
+          t = Math.max(0, Math.min(trimOut - MIN_GAP_S, t));
+          trimIn = t;
+        } else {
+          t = Math.max(trimIn + MIN_GAP_S, Math.min(trimDuration, t));
+          trimOut = t;
+        }
+        updateTrimUI();
+        // Live-preview: jump the playhead to the handle being dragged
+        // so the user sees a frame at that timestamp.
+        const playback = document.getElementById('playback');
+        if (playback) {
+          playback.pause();
+          playback.currentTime = isIn ? trimIn : trimOut;
+        }
+      };
+
+      const onUp = (ev) => {
+        try { handle.releasePointerCapture(ev.pointerId); } catch {}
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+      };
+
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
+    });
+  }
+  attachHandleDrag(handleIn, true);
+  attachHandleDrag(handleOut, false);
+
+  // Text-input bidirectional binding. Commits on Enter or blur; live
+  // typing doesn't move the handle (would feel jumpy).
+  function commitInput(inputEl, isIn) {
+    if (!trimMode || !trimDuration) return;
+    const parsed = parseTrimTime(inputEl.value);
+    if (parsed === null) {
+      // Restore the previous value on bad input.
+      inputEl.value = formatTrimTime(isIn ? trimIn : trimOut);
+      return;
+    }
+    let t = parsed;
+    if (isIn) {
+      t = Math.max(0, Math.min(trimOut - MIN_GAP_S, t));
+      trimIn = t;
+    } else {
+      t = Math.max(trimIn + MIN_GAP_S, Math.min(trimDuration, t));
+      trimOut = t;
+    }
+    updateTrimUI();
+    const playback = document.getElementById('playback');
+    if (playback) playback.currentTime = isIn ? trimIn : trimOut;
+  }
+  inputIn?.addEventListener('blur', () => commitInput(inputIn, true));
+  inputIn?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); inputIn.blur(); }
+  });
+  inputOut?.addEventListener('blur', () => commitInput(inputOut, false));
+  inputOut?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); inputOut.blur(); }
+  });
+
+  // Play/pause toggle. Also toggles the icon + label.
+  playBtn?.addEventListener('click', () => {
+    const playback = document.getElementById('playback');
+    if (!playback) return;
+    if (playback.paused) {
+      // If the playhead's outside [in, out] (e.g. user just dragged
+      // a handle), snap to IN before playing.
+      if (playback.currentTime < trimIn || playback.currentTime >= trimOut) {
+        playback.currentTime = trimIn;
+      }
+      playback.play();
+      document.getElementById('trim-play-icon')?.classList.add('hidden');
+      document.getElementById('trim-pause-icon')?.classList.remove('hidden');
+      const lbl = document.getElementById('trim-play-label');
+      if (lbl) lbl.textContent = 'Pause';
+    } else {
+      playback.pause();
+      document.getElementById('trim-play-icon')?.classList.remove('hidden');
+      document.getElementById('trim-pause-icon')?.classList.add('hidden');
+      const lbl = document.getElementById('trim-play-label');
+      if (lbl) lbl.textContent = 'Play';
+    }
+  });
+
+  cancelBtn?.addEventListener('click', exitTrimMode);
+  saveBtn?.addEventListener('click', openTrimSaveModal);
+}
+
+// ---------------------------------------------------------------------------
+// Trim save modal — picks new-clip vs. permanent
+// ---------------------------------------------------------------------------
+
+function openTrimSaveModal() {
+  if (!trimMode || !trimDuration) return;
+  const modal = document.getElementById('trim-save-modal');
+  if (!modal) return;
+
+  // Update the from/to/kept summary line.
+  document.getElementById('trim-modal-in').textContent = formatTrimTime(trimIn);
+  document.getElementById('trim-modal-out').textContent = formatTrimTime(trimOut);
+  document.getElementById('trim-modal-kept').textContent = formatTrimTime(trimOut - trimIn);
+
+  // Show the "already on YouTube" warning only if applicable. The note
+  // doesn't BLOCK the action — user can still pick "Trim original
+  // permanently" — it just tells them what won't happen.
+  const clips = getClips();
+  const clip = clips.find(c => c.id === lastClipId);
+  const note = document.getElementById('trim-modal-uploaded-note');
+  if (note) {
+    if (clip && clip.youtubeUrl) note.classList.remove('hidden');
+    else note.classList.add('hidden');
+  }
+
+  // Default selection is always "Create new clip"
+  const newRadio = modal.querySelector('input[name="trim-mode"][value="new"]');
+  if (newRadio) newRadio.checked = true;
+
+  modal.classList.remove('hidden');
+}
+
+function closeTrimSaveModal() {
+  document.getElementById('trim-save-modal')?.classList.add('hidden');
+}
+
+function wireTrimSaveModal() {
+  const modal = document.getElementById('trim-save-modal');
+  if (!modal) return;
+  document.getElementById('trim-modal-cancel')?.addEventListener('click', closeTrimSaveModal);
+  document.getElementById('trim-modal-confirm')?.addEventListener('click', async () => {
+    const choice = modal.querySelector('input[name="trim-mode"]:checked')?.value || 'new';
+    closeTrimSaveModal();
+    await runTrimEncode(choice);
+  });
+  // Click-outside dismiss
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeTrimSaveModal();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Trim encode pipeline — MediaRecorder, real-time
+// ---------------------------------------------------------------------------
+//
+// Strategy: load the source file into a hidden <video>, captureStream()
+// from it, pipe into a MediaRecorder, then play() from `trimIn` to
+// `trimOut`. Stop recording on the natural end-of-range (timeupdate
+// >= trimOut) or a setTimeout fallback.
+//
+// Quirks worth knowing:
+//   · captureStream() requires the source to be playing for video frames
+//     to flow into the recorder. We mute the source and play it muted.
+//   · Some Chromiums need a fresh AudioContext to route the source's
+//     audio into the recorder's audio track. We use the source's own
+//     audio track via the captureStream — works on current Chrome.
+//   · MIME type must be supported by MediaRecorder for the codecs the
+//     source uses; we try a couple and fall back to whatever's
+//     available.
+
+async function runTrimEncode(choice) {
+  // Snapshot trim params + clip context BEFORE exiting trim mode, since
+  // exit clears the playback element's state.
+  const inSec = trimIn;
+  const outSec = trimOut;
+  const clipId = lastClipId;
+  const clips = getClips();
+  const clip = clips.find(c => c.id === clipId);
+  if (!clip || !clip.filename) {
+    alert('Trim failed: clip is missing from the catalog.');
+    return;
+  }
+  if (!directoryHandle) {
+    alert('Trim failed: no save folder selected.');
+    return;
+  }
+
+  // Read the source file from disk fresh — don't rely on the existing
+  // playbackBlobUrl, which may have been revoked.
+  let srcFile;
+  try {
+    const fh = await directoryHandle.getFileHandle(clip.filename);
+    srcFile = await fh.getFile();
+  } catch (e) {
+    alert(`Trim failed: could not read source file (${clip.filename}).`);
+    return;
+  }
+  const sourceContentType = clip.filename.endsWith('.webm') ? 'video/webm' : 'video/mp4';
+  const sourceUrl = URL.createObjectURL(srcFile);
+
+  // Exit the trim panel UI before starting the encode (the encode binds
+  // its own audio, and the user's done futzing with handles).
+  exitTrimMode();
+
+  // Spin up the hidden source video used to feed the recorder. We set
+  // volume=0 INSTEAD of muted=true — muted=true can cause Chrome to
+  // omit the audio track from captureStream() in some versions, which
+  // produces a silent trim. volume=0 keeps the audio flowing through
+  // the captureStream while silencing the local output the user hears
+  // during the encode wall-clock.
+  const srcVideo = document.createElement('video');
+  srcVideo.src = sourceUrl;
+  srcVideo.volume = 0;
+  srcVideo.playsInline = true;
+  srcVideo.style.position = 'fixed';
+  srcVideo.style.left = '-9999px'; // off-screen but still in the DOM (some
+  srcVideo.style.top = '0';        // browsers throttle non-rendered videos)
+  srcVideo.style.width = '320px';
+  srcVideo.style.height = '180px';
+  document.body.appendChild(srcVideo);
+
+  // Wait for metadata + capture so we know dimensions + can seek.
+  await new Promise((resolve) => {
+    if (isFinite(srcVideo.duration) && srcVideo.duration > 0) resolve();
+    else srcVideo.addEventListener('loadedmetadata', resolve, { once: true });
+  });
+
+  // Pull a stream from the source video. captureStream may produce
+  // 0fps until the video starts playing — we kick it after we set
+  // currentTime below.
+  let stream;
+  try {
+    stream = srcVideo.captureStream();
+  } catch (e) {
+    URL.revokeObjectURL(sourceUrl);
+    srcVideo.remove();
+    alert('Trim failed: this browser cannot capture the source video.');
+    return;
+  }
+
+  // Pick a MIME the recorder supports. Prefer the source codec for a
+  // closer round-trip; fall back to any available webm.
+  const mimeCandidates = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm',
+  ];
+  const mime = mimeCandidates.find(m => MediaRecorder.isTypeSupported(m));
+  if (!mime) {
+    URL.revokeObjectURL(sourceUrl);
+    srcVideo.remove();
+    alert('Trim failed: this browser cannot encode trimmed clips.');
+    return;
+  }
+
+  const recorder = new MediaRecorder(stream, { mimeType: mime });
+  activeTrimRecorder = recorder;
+  const chunks = [];
+  recorder.addEventListener('dataavailable', (e) => {
+    if (e.data && e.data.size > 0) chunks.push(e.data);
+  });
+
+  // Show the progress toast.
+  const toast = document.getElementById('trim-progress-toast');
+  const posEl = document.getElementById('trim-progress-position');
+  const barEl = document.getElementById('trim-progress-bar');
+  toast?.classList.remove('hidden');
+  if (barEl) barEl.style.width = '0%';
+  const wantSeconds = Math.max(0.1, outSec - inSec);
+
+  // Kick the source: seek to IN, then play(). MediaRecorder starts
+  // capturing as soon as frames flow.
+  await new Promise((resolve, reject) => {
+    const onSeeked = () => { srcVideo.removeEventListener('seeked', onSeeked); resolve(); };
+    srcVideo.addEventListener('seeked', onSeeked);
+    try { srcVideo.currentTime = inSec; }
+    catch (e) { reject(e); }
+  });
+
+  recorder.start(250); // emit chunks every 250ms — small enough for smooth progress
+  try { await srcVideo.play(); } catch {}
+
+  // Watcher: when the source playhead reaches OUT, stop everything.
+  const stopAt = outSec;
+  const startWall = performance.now();
+  let stopped = false;
+  const finalize = () => new Promise((resolve) => {
+    if (stopped) return resolve();
+    stopped = true;
+    recorder.addEventListener('stop', resolve, { once: true });
+    try { recorder.stop(); } catch {}
+    try { srcVideo.pause(); } catch {}
+  });
+
+  const onTime = async () => {
+    const now = srcVideo.currentTime;
+    const done = Math.max(0, now - inSec);
+    const pct = Math.min(100, (done / wantSeconds) * 100);
+    if (barEl) barEl.style.width = pct + '%';
+    if (posEl) posEl.textContent = `${formatTrimTime(done)} of ${formatTrimTime(wantSeconds)}`;
+    if (now >= stopAt) {
+      srcVideo.removeEventListener('timeupdate', onTime);
+      await finalize();
+    }
+  };
+  srcVideo.addEventListener('timeupdate', onTime);
+
+  // Failsafe: if timeupdate doesn't fire for some reason (rare on
+  // very short clips), bail after wantSeconds * 1.5 wall-clock.
+  const failsafeTimer = setTimeout(async () => {
+    if (!stopped) {
+      console.warn('[trim] failsafe timer fired — stopping encode');
+      srcVideo.removeEventListener('timeupdate', onTime);
+      await finalize();
+    }
+  }, Math.ceil(wantSeconds * 1.5 * 1000) + 5000);
+
+  // Wait for recorder to finish writing.
+  await new Promise((resolve) => {
+    const check = () => { if (stopped) resolve(); else setTimeout(check, 100); };
+    check();
+  });
+  clearTimeout(failsafeTimer);
+  activeTrimRecorder = null;
+
+  // Build the output blob.
+  const outBlob = new Blob(chunks, { type: mime });
+  const outBytes = outBlob.size;
+
+  // Clean up the hidden source video.
+  URL.revokeObjectURL(sourceUrl);
+  srcVideo.remove();
+
+  if (outBytes === 0) {
+    toast?.classList.add('hidden');
+    alert('Trim failed: encoder produced an empty file. Try a longer range.');
+    return;
+  }
+
+  // Persist + update catalog.
+  try {
+    if (choice === 'replace') {
+      await persistTrimReplace(clip, outBlob, outSec - inSec, outBytes);
+    } else {
+      await persistTrimNew(clip, outBlob, outSec - inSec, outBytes);
+    }
+  } catch (e) {
+    console.error('[trim] persist failed:', e);
+    alert('Trim encoded OK but saving failed: ' + e.message);
+  } finally {
+    toast?.classList.add('hidden');
+  }
+}
+
+// Pick a unique filename for the new-clip case. Tries `_trim`, then
+// `_trim2`, `_trim3`, etc.
+async function pickTrimFilename(srcFilename) {
+  const ext = srcFilename.endsWith('.webm') ? '.webm' : '.mp4';
+  const base = srcFilename.replace(/\.(webm|mp4)$/, '');
+  // Always emit .webm regardless of source ext (recorder output is webm)
+  const targetExt = '.webm';
+  let candidate = `${base}_trim${targetExt}`;
+  let i = 2;
+  while (true) {
+    try {
+      await directoryHandle.getFileHandle(candidate);
+      // existed — try next
+      candidate = `${base}_trim${i}${targetExt}`;
+      i++;
+    } catch {
+      // doesn't exist — use it
+      return candidate;
+    }
+    if (i > 999) break; // sanity
+  }
+  return candidate;
+}
+
+async function persistTrimNew(srcClip, blob, durationSec, bytes) {
+  const filename = await pickTrimFilename(srcClip.filename);
+  // Write the file.
+  const fh = await directoryHandle.getFileHandle(filename, { create: true });
+  const w = await fh.createWritable();
+  await w.write(blob);
+  await w.close();
+
+  // Build the catalog entry by cloning the source's metadata so the
+  // new clip starts with the same title/tags/sleeve refs and the user
+  // doesn't have to re-enter everything. The trimmed clip is a NEW
+  // clip from YouTube's perspective, so wipe youtube fields.
+  const entry = createClipEntry(
+    `${srcClip.title || 'Untitled'} (trim)`,
+    filename,
+    Math.round(durationSec),
+    bytes,
+    srcClip.bitrate || 0,
+  );
+  // Clone the user-entered metadata over.
+  for (const k of ['description', 'tags', 'year', 'tape', 'distributor',
+                   'tapeLength', 'recordingSpeed', 'condition', 'cassetteNotes',
+                   'thumbnail', 'sleeveFront', 'sleeveBack']) {
+    if (srcClip[k] != null) entry[k] = srcClip[k];
+  }
+  // Explicitly NOT copied: youtubeUrl, youtubeId, ytThumbnailDataUrl —
+  // the trimmed clip is a fresh artifact. saveSidecarFiles writes JSON
+  // + youtube.txt to the new basename so disk + library stay in sync.
+  addClip(entry);
+  const basename = filename.replace(/\.(webm|mp4)$/, '');
+  await saveSidecarFiles(directoryHandle, basename, entry);
+
+  refreshLibrary();
+  // Hop the editor to the new clip — feels more right than leaving
+  // the user staring at the old un-trimmed source.
+  await loadClipIntoEditor(entry.id);
+}
+
+async function persistTrimReplace(srcClip, blob, durationSec, bytes) {
+  // Overwrite the source file in place. We KEEP the same filename so
+  // the catalog entry, sidecars, and any youtubeUrl reference stay
+  // pointed at the right basename.
+  const fh = await directoryHandle.getFileHandle(srcClip.filename, { create: true });
+  const w = await fh.createWritable();
+  await w.write(blob);
+  await w.close();
+
+  // Update the catalog entry's duration + size. Title etc untouched.
+  updateClip(srcClip.id, {
+    duration: Math.round(durationSec),
+    fileSize: bytes,
+  });
+
+  // Re-write the JSON sidecar so the on-disk copy stays in sync with
+  // the catalog (otherwise re-import / re-sync would clobber the new
+  // duration with the stale one).
+  const basename = srcClip.filename.replace(/\.(webm|mp4)$/, '');
+  const updated = (getClips()).find(c => c.id === srcClip.id);
+  if (updated) {
+    await saveSidecarFiles(directoryHandle, basename, updated);
+  }
+
+  refreshLibrary();
+  // Reload the editor so the playback element picks up the new file
+  // bytes (otherwise the old blob URL still serves the un-trimmed video).
+  await loadClipIntoEditor(srcClip.id);
 }
 
 function showPlaybackTab() {
   const preview = document.getElementById('preview');
   const playback = document.getElementById('playback');
   const deleteBtn = document.getElementById('delete-recording-btn');
+  const trimBtn = document.getElementById('trim-recording-btn');
 
   previewMode = 'playback';
   hasPlayback = true;
@@ -4940,6 +5637,9 @@ function showPlaybackTab() {
   preview.muted = true;
   playback.classList.remove('hidden');
   deleteBtn.classList.remove('hidden');
+  // Trim button mirrors Delete's visibility — only meaningful when
+  // there's a playback loaded. Visibility flips back off in showLiveTab().
+  trimBtn?.classList.remove('hidden');
   // Save Data + Publish buttons used to live in the controls row alongside
   // Delete; they were retired (auto-save + inline publish in sidebar). Guard
   // the show/hide for any older HTML still floating around.
@@ -4963,12 +5663,19 @@ function showLiveTab() {
   const preview = document.getElementById('preview');
   const playback = document.getElementById('playback');
   const deleteBtn = document.getElementById('delete-recording-btn');
+  const trimBtn = document.getElementById('trim-recording-btn');
 
   previewMode = 'live';
+
+  // If we're switching to Live while inside Trim mode, bail out of
+  // trim cleanly first so the playback element gets its native
+  // controls back and the trim panel hides.
+  if (typeof exitTrimMode === 'function') exitTrimMode();
 
   playback.classList.add('hidden');
   preview.classList.remove('hidden');
   deleteBtn.classList.add('hidden');
+  trimBtn?.classList.add('hidden');
   document.getElementById('save-data-btn')?.classList.add('hidden');
   document.getElementById('publish-yt-btn')?.classList.add('hidden');
 
