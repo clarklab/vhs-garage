@@ -4009,13 +4009,33 @@ async function runUploadItem(item) {
       });
       if (!bridgeRes.ok) {
         const detail = await bridgeRes.json().catch(() => ({}));
-        const ytStatus = detail.ytStatus ? ` (YT ${detail.ytStatus})` : '';
-        const reason = detail.error || `HTTP ${bridgeRes.status}`;
-        // Surface a clear, user-facing error. NO fall-through to direct
-        // upload. The destination banner already told them this would
-        // go to VHS Garage; if we can't reach it, we say so plainly.
         const channelName = whoami.bridgeChannel?.name || 'VHS Garage';
-        throw new Error(`Upload to ${channelName} failed: ${reason}${ytStatus}. The video was NOT uploaded. Try again in a few minutes.`);
+        // The bridge wraps every upstream YouTube failure in
+        //   { error: 'YouTube init failed', detail: <raw YT body>, ytStatus: <code> }
+        // detail.detail is the actual YouTube error body — usually JSON like
+        //   {"error":{"code":403,"message":"...","errors":[{"reason":"uploadLimitExceeded"}]}}
+        // Run it through parseYouTubeError so the user sees the friendly
+        // mapped message (e.g. uploadLimitExceeded → "YouTube's daily upload
+        // limit hit. The cap is per-channel and resets at midnight Pacific…")
+        // instead of the opaque "YouTube init failed (YT 403)" wrapper.
+        let headline;
+        if (detail.detail) {
+          const parsed = parseYouTubeError(detail.detail, detail.ytStatus || bridgeRes.status);
+          headline = parsed.display || parsed.headline;
+        } else {
+          // Bridge failure that didn't come from YouTube (503 missing token,
+          // 401 verify failed, etc.) — surface the bridge's own error string.
+          headline = detail.error || `HTTP ${bridgeRes.status}`;
+        }
+        // Always log the full raw detail to console so power users (and us
+        // when a tester reports an issue) can dig in via DevTools.
+        console.warn('[bridge upload] failed:', {
+          status: bridgeRes.status,
+          ytStatus: detail.ytStatus,
+          bridgeError: detail.error,
+          ytDetail: detail.detail,
+        });
+        throw new Error(`Upload to ${channelName} failed.\n${headline}\nThe video was NOT uploaded.`);
       }
       const bridgeData = await bridgeRes.json();
       uploadUrl = bridgeData.uploadUrl;
