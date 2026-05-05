@@ -282,11 +282,16 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
            image render a hatched placeholder block in the same slot so
            the grid stays uniform. -->
       <div class="grid md:grid-cols-3 gap-4">
-        {latestPosts.map((post) => (
+        {latestPosts.map((post) => {
+          // Prefer the indexImage (typically a smaller B&W pixel-art
+          // teaser); fall back to the post's hero image so existing
+          // posts keep working without a frontmatter change.
+          const cardImage = post.data.indexImage || post.data.image;
+          return (
           <a href={`/blog/${postSlug(post.id)}`} class="group flex flex-col border border-white/15 hover:border-white/40 transition-colors overflow-hidden">
             <div class="aspect-video bg-[#141214] overflow-hidden">
-              {post.data.image ? (
-                <img src={post.data.image} alt="" loading="lazy"
+              {cardImage ? (
+                <img src={cardImage} alt="" loading="lazy"
                   class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
               ) : (
                 <div class="w-full h-full flex items-center justify-center text-white/15 text-2xl tracking-widest">░ ▓ ░</div>
@@ -300,7 +305,8 @@ const postSlug = (id) => id.replace(/\.(md|mdx)$/, '');
               <p class="text-gray-500 text-sm leading-6 flex-1">{post.data.description}</p>
             </div>
           </a>
-        ))}
+        );
+        })}
       </div>
 
       <div class="mt-6">

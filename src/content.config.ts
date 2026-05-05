@@ -12,10 +12,20 @@ const blog = defineCollection({
     tags: z.array(z.string()).default([]),
     lastUpdated: z.string().optional(),
     draft: z.boolean().default(false),
-    // Per-post hero image. Files live in /public/images/blog/{slug}.webp
-    // (or .jpg). Optional — posts without an image render with a small
-    // placeholder hatched block in card layouts.
+    // Per-post HERO image — used at the top of the single post page
+    // (large, full-bleed). Files live in /public/images/blog/{slug}.webp
+    // (or .jpg / .gif). Optional — posts without an image render with
+    // a small placeholder hatched block in card layouts.
     image: z.string().optional(),
+    // Per-post INDEX/CARD image — what shows in card lists (homepage,
+    // /blog index, category pages, videos archive). Falls back to
+    // `image` when not set, so old posts keep their current behavior.
+    // The motivation: hero shots are often big/animated/colorful (a
+    // 12MB looping GIF, say), while index lists feel calmer with a
+    // smaller B&W pixel-art teaser. Setting indexImage lets each post
+    // give two answers — "what should this look like as a thumbnail"
+    // and "what should this look like at the top of the page itself."
+    indexImage: z.string().optional(),
     // Categories the post belongs to. A post can be in multiple (e.g. a
     // hardware review that's also written as a guide). Drives the
     // /blog/category/{slug} archive pages and the Categories dropdown in

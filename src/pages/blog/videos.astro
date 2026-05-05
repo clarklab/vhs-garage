@@ -36,11 +36,13 @@ const getSlug = (id: string) => id.replace(/\.(md|mdx)$/, '');
       )}
 
       <div class="mt-14 grid gap-5">
-        {posts.map((post) => (
+        {posts.map((post) => {
+          const cardImage = post.data.indexImage || post.data.image;
+          return (
           <a href={`/blog/${getSlug(post.id)}`} class="group flex flex-col sm:flex-row gap-5 border border-white/15 p-5 hover:border-white/35 transition-colors">
             <div class="shrink-0 sm:w-56 aspect-video bg-[#141214] border border-white/10 overflow-hidden">
-              {post.data.image ? (
-                <img src={post.data.image} alt="" loading="lazy"
+              {cardImage ? (
+                <img src={cardImage} alt="" loading="lazy"
                   class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
               ) : (
                 <div class="w-full h-full flex items-center justify-center text-white/15 text-xl tracking-widest">░ ▓ ░</div>
@@ -52,7 +54,8 @@ const getSlug = (id: string) => id.replace(/\.(md|mdx)$/, '');
               <p class="text-gray-400 text-base leading-7">{post.data.description}</p>
             </div>
           </a>
-        ))}
+          );
+        })}
       </div>
     </section>
   </main>
