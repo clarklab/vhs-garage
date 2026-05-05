@@ -186,6 +186,11 @@ async function startApp() {
   wireTrim();
   wireResetButtons();
   wireYouTubePublish();
+  // Sync the "Uploaded today: N" indicators to whatever's in
+  // localStorage when the page first paints. Subsequent updates flow
+  // through setUploadCount → updateUploadCountUI on every increment
+  // and reset, but the very first paint needs a kick.
+  updateUploadCountUI();
   wireMainEditorAutosave();
   wireThumbnailPicker();
   wireLibraryDrag();
@@ -2715,6 +2720,55 @@ function updateLibraryFilterButton() {
   const f = getLibraryFilter();
   btn.textContent = f === 'unuploaded' ? 'Show: Un-uploaded' : 'Show: All';
 }
+
+// --- Upload counter (manual quota tracking) ---
+//
+// YouTube doesn't expose a per-channel daily upload count anywhere in
+// the Data API — the only way to learn you've hit the cap is to attempt
+// an upload and read the 403/uploadLimitExceeded response. Until they
+// add an endpoint, the workable substitute is a manual counter the user
+// resets when they hit the limit. Bridge or direct, every successful
+// upload from this browser bumps it. The persistent display (in the
+// publish panel) shows "Uploaded today: N" so users have a running
+// guess at where they stand vs. the 50/day cap. The "Reset count"
+// action only appears in the failure toast for uploadLimitExceeded —
+// no auto-reset on midnight Pacific (we don't know the user's timezone
+// and clock-watching is brittle), no reset on transient errors. The
+// user owns the calibration moment.
+const UPLOAD_COUNT_KEY = 'vhsg_upload_count_today';
+function getUploadCount() {
+  try { return Math.max(0, parseInt(localStorage.getItem(UPLOAD_COUNT_KEY) || '0', 10) || 0); }
+  catch { return 0; }
+}
+function setUploadCount(n) {
+  try { localStorage.setItem(UPLOAD_COUNT_KEY, String(Math.max(0, n))); } catch {}
+  updateUploadCountUI();
+}
+function incrementUploadCount() {
+  const next = getUploadCount() + 1;
+  setUploadCount(next);
+  return next;
+}
+function resetUploadCount() {
+  setUploadCount(0);
+}
+
+// Refresh every "Uploaded today: N" display on the page. Hidden when
+// the count is 0 (so brand-new users / freshly-reset states are blank
+// rather than reading "Uploaded today: 0" which is technically true
+// but visually noisy).
+function updateUploadCountUI() {
+  const n = getUploadCount();
+  document.querySelectorAll('[data-upload-count]').forEach((el) => {
+    if (n <= 0) {
+      el.classList.add('hidden');
+    } else {
+      el.classList.remove('hidden');
+      const numEl = el.querySelector('[data-upload-count-value]');
+      if (numEl) numEl.textContent = String(n);
+    }
+  });
+}
 function wireLibraryFilter() {
   const btn = document.getElementById('library-filter-btn');
   if (!btn) return;
@@ -4019,9 +4073,13 @@ async function runUploadItem(item) {
         // limit hit. The cap is per-channel and resets at midnight Pacific…")
         // instead of the opaque "YouTube init failed (YT 403)" wrapper.
         let headline;
+        let limitHit = false;
         if (detail.detail) {
           const parsed = parseYouTubeError(detail.detail, detail.ytStatus || bridgeRes.status);
           headline = parsed.display || parsed.headline;
+          // Tag the error so the toast knows to surface a "Reset count"
+          // action — only fires for the actual cap-hit, not other 403s.
+          if (parsed.reason === 'uploadLimitExceeded') limitHit = true;
         } else {
           // Bridge failure that didn't come from YouTube (503 missing token,
           // 401 verify failed, etc.) — surface the bridge's own error string.
@@ -4035,7 +4093,9 @@ async function runUploadItem(item) {
           bridgeError: detail.error,
           ytDetail: detail.detail,
         });
-        throw new Error(`Upload to ${channelName} failed.\n${headline}\nThe video was NOT uploaded.`);
+        const err = new Error(`Upload to ${channelName} failed.\n${headline}\nThe video was NOT uploaded.`);
+        err.uploadLimitExceeded = limitHit;
+        throw err;
       }
       const bridgeData = await bridgeRes.json();
       uploadUrl = bridgeData.uploadUrl;
@@ -4060,7 +4120,9 @@ async function runUploadItem(item) {
         const errBody = await initRes.text();
         const parsed = parseYouTubeError(errBody, initRes.status);
         console.warn('[upload] direct init failed:', parsed.reason || initRes.status, parsed.apiMessage);
-        throw new Error(parsed.display);
+        const err = new Error(parsed.display);
+        if (parsed.reason === 'uploadLimitExceeded') err.uploadLimitExceeded = true;
+        throw err;
       }
       uploadUrl = initRes.headers.get('location');
     }
@@ -4083,6 +4145,13 @@ async function runUploadItem(item) {
             const result = JSON.parse(xhr.responseText);
             item.ytUrl = 'https://youtube.com/watch?v=' + result.id;
             updateClip(item.clipId, { youtubeUrl: item.ytUrl, youtubeId: result.id });
+            // Bump the manual upload counter (see UPLOAD_COUNT_KEY).
+            // Counts both bridge AND direct uploads — for the typical
+            // single-channel user this is the right number; for someone
+            // straddling two channels the counter slightly over-counts
+            // either side, which is fine for a "rough where am I"
+            // indicator. User resets explicitly when they hit the cap.
+            incrementUploadCount();
             // Fire-and-forget thumbnail upload. If the video went via the
             // bridge, the thumbnail must too — otherwise it'd attempt a
             // thumbnails.set on a videoId that belongs to the bridge
@@ -4117,7 +4186,9 @@ async function runUploadItem(item) {
         } else {
           const parsed = parseYouTubeError(xhr.responseText, xhr.status);
           console.warn('[upload] PUT failed:', parsed.reason || xhr.status, parsed.apiMessage);
-          reject(new Error(parsed.display));
+          const err = new Error(parsed.display);
+          if (parsed.reason === 'uploadLimitExceeded') err.uploadLimitExceeded = true;
+          reject(err);
         }
       });
       xhr.addEventListener('error', () => {
@@ -4136,6 +4207,11 @@ async function runUploadItem(item) {
     console.warn('[upload] item failed:', e.message);
     item.state = 'error';
     item.errorMsg = e.message || 'Upload failed.';
+    // Propagate the limit-exceeded marker so the toast can surface a
+    // "Reset count" action — only fires when YouTube actually returned
+    // uploadLimitExceeded, not for other errors. The renderer reads
+    // item.uploadLimitExceeded and decides whether to draw the action.
+    item.uploadLimitExceeded = !!e.uploadLimitExceeded;
     item.xhr = null;
     renderToast(item);
     // Catalog stays untouched (no youtubeUrl set) so the clip remains
@@ -4269,6 +4345,12 @@ function renderToast(item) {
     ` : ''}
     ${showViewLink ? `<div class="toast-meta-row"><a class="toast-link" href="${item.ytUrl}" target="_blank" rel="noopener">View on YouTube →</a></div>` : ''}
     ${item.state === 'error' ? `<p class="toast-error-msg">${escapeHtml(item.errorMsg || '')}</p>` : ''}
+    ${item.state === 'error' && item.uploadLimitExceeded ? `
+      <div class="toast-meta-row">
+        <button class="toast-secondary-link" data-action="reset-count">Reset count</button>
+        <span class="text-white/30 text-[9px]">Mark this as your last upload — counter restarts at 0.</span>
+      </div>
+    ` : ''}
   `;
 
   card.querySelectorAll('[data-action]').forEach((el) => {
@@ -4277,6 +4359,13 @@ function renderToast(item) {
       if (action === 'retry') retryUpload(item.id);
       else if (action === 'close') dismissToast(item.id);
       else if (action === 'keep') endCountdownKeepingTape(item);
+      else if (action === 'reset-count') {
+        resetUploadCount();
+        // Visually confirm in-place. Swap the action row for an
+        // acknowledgement; user dismisses normally with the X.
+        const row = el.closest('.toast-meta-row');
+        if (row) row.innerHTML = '<span class="text-white/60 text-[10px]">✓ Counter reset to 0.</span>';
+      }
     };
   });
 }

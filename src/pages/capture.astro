@@ -1105,6 +1105,21 @@ import { BUILD_ID } from '../utils/build-id.js';
               <span id="yt-pub-destination-badge" class="hidden text-[8px] uppercase tracking-widest px-1.5 py-0.5 bg-[#dc2626] text-white font-bold">Bridge</span>
             </div>
 
+            <!-- Manual upload counter. Hidden when count is 0 (fresh
+                 install / just-reset state). Bumps on every successful
+                 upload from this browser. Reset by the "Reset count"
+                 action that appears in the failure toast specifically
+                 when YouTube returns uploadLimitExceeded — gives the
+                 user a calibration point against the per-channel 50/day
+                 cap that YouTube refuses to expose via API. The wrapper
+                 carries [data-upload-count]; updateUploadCountUI()
+                 shows/hides + writes the number. -->
+            <div data-upload-count class="hidden mb-3 px-2 py-1 text-[10px] text-white/40 flex items-center gap-1.5">
+              <span class="uppercase tracking-widest text-white/30 text-[9px]">Uploaded today</span>
+              <span class="text-white/70 tabular-nums" data-upload-count-value>0</span>
+              <span class="text-white/25 text-[9px]">· counted from last reset</span>
+            </div>
+
             <!-- Sign-in panel (visible when not signed in) -->
             <div id="yt-pub-signin" class="hidden text-center py-4">
               <p class="text-white/70 text-sm mb-1">Sign in to publish</p>
