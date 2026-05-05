@@ -3847,27 +3847,55 @@ async function refreshDestinationBanner() {
   const thumbEl = document.getElementById('yt-pub-destination-thumb');
   const badgeEl = document.getElementById('yt-pub-destination-badge');
 
-  // No token yet → hide. The banner only makes sense once we know which
-  // channel the upload would actually go to.
-  if (!currentToken) {
-    destEl.classList.add('hidden');
-    return;
-  }
-
-  let whoami;
-  try {
-    whoami = await getWhoami();
-  } catch (e) {
-    // Failed to determine destination → hide rather than mislead.
-    console.warn('[whoami] banner refresh failed:', e.message);
+  // No refresh token at all → user isn't signed in, hide the banner
+  // (the sign-in panel is taking over). All other cases keep the
+  // banner visible so the Sign out button (which now lives inside
+  // it) is always reachable when the user IS signed in — even if
+  // whoami fails or the token isn't yet exchanged.
+  if (!ytGetRefreshToken()) {
     destEl.classList.add('hidden');
     return;
   }
 
   const personal = ytGetChannel();
 
+  // Optimistic first paint from the cached personal channel info,
+  // BEFORE whoami resolves. Avoids a "flash of nothing" if whoami is
+  // slow or down. Bridge users will get overwritten with brand info
+  // once whoami returns.
+  const renderPersonal = () => {
+    if (personal) {
+      if (nameEl) nameEl.textContent = personal.title || 'Your channel';
+      if (handleEl) handleEl.textContent = personal.handle ? ' ' + (personal.handle.startsWith('@') ? personal.handle : '@' + personal.handle) : '';
+      if (thumbEl) { thumbEl.src = personal.thumbnail || ''; thumbEl.alt = personal.title || 'Your channel'; }
+    } else {
+      if (nameEl) nameEl.textContent = 'Your channel';
+      if (handleEl) handleEl.textContent = '';
+      if (thumbEl) { thumbEl.src = ''; thumbEl.alt = ''; }
+    }
+    if (badgeEl) badgeEl.classList.add('hidden');
+  };
+  renderPersonal();
+  destEl.classList.remove('hidden');
+
+  // No token-exchanged-yet → can't whoami. Personal-channel preview
+  // above is already showing; we'll re-render on the next call once
+  // a token's available.
+  if (!currentToken) return;
+
+  let whoami;
+  try {
+    whoami = await getWhoami();
+  } catch (e) {
+    // whoami failed (server hiccup, expired token, etc). Keep the
+    // personal-channel preview visible — better than a hidden banner
+    // that swallows the Sign out button.
+    console.warn('[whoami] banner refresh failed, keeping personal preview:', e.message);
+    return;
+  }
+
   if (whoami.isAllowlisted && whoami.bridgeChannel) {
-    // Bridge upload — show brand channel + Bridge badge.
+    // Bridge upload — overwrite the personal preview with brand info.
     const ch = whoami.bridgeChannel;
     if (nameEl) nameEl.textContent = ch.name || 'VHS Garage';
     if (handleEl) handleEl.textContent = ch.handle ? ' ' + (ch.handle.startsWith('@') ? ch.handle : '@' + ch.handle) : '';
@@ -3876,20 +3904,8 @@ async function refreshDestinationBanner() {
       thumbEl.alt = ch.name || 'VHS Garage';
     }
     if (badgeEl) badgeEl.classList.remove('hidden');
-    destEl.classList.remove('hidden');
-  } else if (personal) {
-    // Personal upload — show user's own channel.
-    if (nameEl) nameEl.textContent = personal.title || 'Your channel';
-    if (handleEl) handleEl.textContent = personal.handle ? ' ' + (personal.handle.startsWith('@') ? personal.handle : '@' + personal.handle) : '';
-    if (thumbEl) {
-      thumbEl.src = personal.thumbnail || '';
-      thumbEl.alt = personal.title || 'Your channel';
-    }
-    if (badgeEl) badgeEl.classList.add('hidden');
-    destEl.classList.remove('hidden');
-  } else {
-    destEl.classList.add('hidden');
   }
+  // Non-allowlisted: personal preview is already correct, leave it.
 }
 
 // Sign-out / token-clear paths call this so the next session starts
@@ -4207,12 +4223,14 @@ async function runUploadItem(item) {
     console.warn('[upload] item failed:', e.message);
     item.state = 'error';
     item.errorMsg = e.message || 'Upload failed.';
-    // Propagate the limit-exceeded marker so the toast can surface a
-    // "Reset count" action — only fires when YouTube actually returned
-    // uploadLimitExceeded, not for other errors. The renderer reads
-    // item.uploadLimitExceeded and decides whether to draw the action.
-    item.uploadLimitExceeded = !!e.uploadLimitExceeded;
     item.xhr = null;
+    // Auto-reset the manual upload counter when YouTube refuses with
+    // uploadLimitExceeded. The error itself IS the calibration moment
+    // — surfacing a button to ask "did you really hit the limit?" was
+    // redundant, since YouTube already told us so. Counter starts
+    // back at 0; the next successful upload bumps it to 1, giving
+    // the user a fresh "Uploaded today" running total against the cap.
+    if (e.uploadLimitExceeded) resetUploadCount();
     renderToast(item);
     // Catalog stays untouched (no youtubeUrl set) so the clip remains
     // "not uploaded" in the library and is re-queueable.
@@ -4345,12 +4363,6 @@ function renderToast(item) {
     ` : ''}
     ${showViewLink ? `<div class="toast-meta-row"><a class="toast-link" href="${item.ytUrl}" target="_blank" rel="noopener">View on YouTube →</a></div>` : ''}
     ${item.state === 'error' ? `<p class="toast-error-msg">${escapeHtml(item.errorMsg || '')}</p>` : ''}
-    ${item.state === 'error' && item.uploadLimitExceeded ? `
-      <div class="toast-meta-row">
-        <button class="toast-secondary-link" data-action="reset-count">Reset count</button>
-        <span class="text-white/30 text-[9px]">Mark this as your last upload — counter restarts at 0.</span>
-      </div>
-    ` : ''}
   `;
 
   card.querySelectorAll('[data-action]').forEach((el) => {
@@ -4359,13 +4371,6 @@ function renderToast(item) {
       if (action === 'retry') retryUpload(item.id);
       else if (action === 'close') dismissToast(item.id);
       else if (action === 'keep') endCountdownKeepingTape(item);
-      else if (action === 'reset-count') {
-        resetUploadCount();
-        // Visually confirm in-place. Swap the action row for an
-        // acknowledgement; user dismisses normally with the X.
-        const row = el.closest('.toast-meta-row');
-        if (row) row.innerHTML = '<span class="text-white/60 text-[10px]">✓ Counter reset to 0.</span>';
-      }
     };
   });
 }

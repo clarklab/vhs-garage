@@ -1079,20 +1079,16 @@ import { BUILD_ID } from '../utils/build-id.js';
               <p id="yt-pub-status" class="text-white/40 text-[10px] mt-1"></p>
             </div>
 
-            <!-- Signed-in account banner (visible when signed in) -->
-            <div id="yt-pub-account" class="hidden flex items-center gap-2 mb-2 text-[11px] text-white/50">
-              <img id="yt-pub-account-avatar" src="" alt="" class="w-5 h-5 rounded-full object-cover bg-white/10" />
-              <span>Logged in as <span id="yt-pub-account-name" class="text-white/80"></span></span>
-              <span class="flex-1"></span>
-              <button id="yt-pub-signout" class="text-white/40 hover:text-white/70 underline-offset-2 hover:underline transition-colors">Sign out</button>
-            </div>
-
-            <!-- Upload destination banner — set by client whenever the
-                 publish panel opens. For bridge-allowlisted users this
-                 becomes "Uploading to: VHS Garage @vhsgaragevideo" with
-                 the brand thumbnail so there's zero ambiguity about
-                 which channel the upload will land on. For non-allowlisted
-                 users it shows "Uploading to your channel @handle". -->
+            <!-- Upload destination banner. Single source of truth for
+                 "you're signed in AND uploads land on this channel" —
+                 used to be split across two rows ("Logged in as @X" +
+                 "Uploading to @X") which read as duplicated info since
+                 in 99% of cases they're the same handle. The bridge
+                 architecture means even allowlisted users see one
+                 channel here (VHS Garage) regardless of which Google
+                 account they OAuth'd with, so the "logged in as"
+                 framing was misleading anyway. Sign out lives here
+                 now as a small inline action. -->
             <div id="yt-pub-destination" class="hidden flex items-center gap-2 mb-3 px-2 py-1.5 border border-white/15 text-[11px]">
               <img id="yt-pub-destination-thumb" src="" alt="" class="w-5 h-5 object-cover bg-white/10" />
               <div class="min-w-0 flex-1">
@@ -1103,6 +1099,7 @@ import { BUILD_ID } from '../utils/build-id.js';
                 </p>
               </div>
               <span id="yt-pub-destination-badge" class="hidden text-[8px] uppercase tracking-widest px-1.5 py-0.5 bg-[#dc2626] text-white font-bold">Bridge</span>
+              <button id="yt-pub-signout" class="text-white/30 hover:text-white/70 text-[10px] underline-offset-2 hover:underline transition-colors">Sign out</button>
             </div>
 
             <!-- Manual upload counter. Hidden when count is 0 (fresh
