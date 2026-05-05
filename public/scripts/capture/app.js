@@ -2921,13 +2921,68 @@ async function loadClipIntoEditor(clipId) {
   // 1. Load the file from disk → blob URL for the playback preview.
   let url = '';
   if (clip.filename) {
+    let fh = null;
+    let openError = null;
     try {
-      const fh = await directoryHandle.getFileHandle(clip.filename);
+      fh = await directoryHandle.getFileHandle(clip.filename);
+    } catch (e) {
+      openError = e;
+    }
+
+    // Auto-recovery: if the exact filename misses, try swapping the
+    // extension (mp4 ↔ webm). This is the most common drift now that
+    // Trim can output a different container than the source — if a
+    // catalog entry was written before that fix landed, or a manual
+    // rename happened outside the app, the file is RIGHT THERE under
+    // a sibling extension. Found → silently update the catalog and
+    // continue. Beats throwing up an alert.
+    if (!fh) {
+      const altName = clip.filename.endsWith('.mp4')
+        ? clip.filename.replace(/\.mp4$/i, '.webm')
+        : clip.filename.endsWith('.webm') ? clip.filename.replace(/\.webm$/i, '.mp4') : null;
+      if (altName) {
+        try {
+          fh = await directoryHandle.getFileHandle(altName);
+          console.info('[loadClip] auto-relinked extension', {
+            from: clip.filename, to: altName, clipId,
+          });
+          updateClip(clipId, { filename: altName });
+          clip.filename = altName;
+          openError = null;
+        } catch { /* fall through to the friendly error below */ }
+      }
+    }
+
+    if (!fh) {
+      // Surface the ACTUAL filename + error reason so the user can
+      // tell us which clip is broken and we can tell them why. Old
+      // message ("save folder may need to be re-selected") was
+      // misleading — if the folder permission were broken, every clip
+      // would fail, not just one. The real cause is almost always a
+      // missing-or-renamed file on disk.
+      const detail = (openError && openError.message) || 'unknown error';
+      const errName = (openError && openError.name) || '';
+      console.warn('[loadClip] could not open file', {
+        filename: clip.filename, errName, error: detail, clipId,
+      });
+      alert(
+        `Could not open file:\n\n  "${clip.filename}"\n\n` +
+        `Reason: ${errName ? errName + ' — ' : ''}${detail}\n\n` +
+        `Most likely the file was renamed, moved, or deleted outside ` +
+        `the app. If you've revoked folder permission, click the ` +
+        `directory name in the toolbar to re-grant access.`
+      );
+      return;
+    }
+
+    try {
       const file = await fh.getFile();
       url = URL.createObjectURL(file);
     } catch (e) {
-      console.warn('[loadClip] could not open file:', e.message);
-      alert('Could not open file. The save folder may need to be re-selected.');
+      console.warn('[loadClip] file handle opened but getFile() failed', {
+        filename: clip.filename, error: e.message, clipId,
+      });
+      alert(`Could not read file:\n\n  "${clip.filename}"\n\n${e.message}`);
       return;
     }
   }
