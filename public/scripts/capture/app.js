@@ -996,15 +996,60 @@ function wireRecordButton() {
         // Save sidecar JSON + YouTube plaintext to disk
         saveSidecarFiles(directoryHandle, basename, entry).catch(() => {});
 
-        // Create blob URL from the recorded file for playback. Pull the file
-        // by name from the directory handle in case the file was just renamed
-        // — the recorder's cached handle still points at the old name.
+        // Create blob URL from the recorded file for playback. Pull the
+        // file by name from the directory handle — the recorder's
+        // cached handle may have been invalidated by the rename.
+        //
+        // Defensive resolution: try the catalog filename, then the
+        // alt-extension sibling (mp4↔webm — covers cases where rename
+        // didn't actually take or the recorder produced a different
+        // container than we asked for), then the recorder's cached
+        // handle as last resort. ALWAYS call showPlaybackTab() so the
+        // user sees the view switch even if the file load failed —
+        // they were expecting to land on playback after a recording
+        // stops, and silently staying on the live feed (the previous
+        // behavior) is the worst of all worlds.
+        let fh = null;
+        let fhResolution = null;
         try {
-          const fh = currentFilename && directoryHandle
-            ? await directoryHandle.getFileHandle(currentFilename).catch(() => getLastFileHandle())
-            : getLastFileHandle();
+          if (currentFilename && directoryHandle) {
+            try {
+              fh = await directoryHandle.getFileHandle(currentFilename);
+              fhResolution = 'exact';
+            } catch (e1) {
+              // Try the alternate extension. Most likely cause if this
+              // succeeds: the rename via move() reported success but
+              // didn't actually take, OR the recorder fell back to a
+              // different container than the filename suggests.
+              const altName = currentFilename.endsWith('.mp4')
+                ? currentFilename.replace(/\.mp4$/i, '.webm')
+                : currentFilename.endsWith('.webm') ? currentFilename.replace(/\.webm$/i, '.mp4') : null;
+              if (altName) {
+                try {
+                  fh = await directoryHandle.getFileHandle(altName);
+                  fhResolution = 'alt-ext';
+                  console.warn('[capture] post-stop fell back to alt-ext file', {
+                    catalog: currentFilename, found: altName,
+                  });
+                  // Update the catalog entry so future opens hit the
+                  // right name (the entry we just added points at the
+                  // wrong name — fix it before the user notices).
+                  updateClip(entry.id, { filename: altName });
+                  currentFilename = altName;
+                } catch { /* fall through to lastFileHandle */ }
+              }
+            }
+          }
+          if (!fh) {
+            fh = getLastFileHandle();
+            if (fh) fhResolution = 'recorder-cached-handle';
+          }
+
           if (fh) {
             const file = await fh.getFile();
+            console.info('[capture] playback file ready', {
+              filename: currentFilename, resolution: fhResolution, bytes: file.size,
+            });
             if (playbackBlobUrl) URL.revokeObjectURL(playbackBlobUrl);
             playbackBlobUrl = URL.createObjectURL(file);
             const playbackVideo = document.getElementById('playback');
@@ -1019,12 +1064,29 @@ function wireRecordButton() {
               playbackVideo.removeEventListener('loadeddata', onReady);
               showPlaybackTab();
             }, 3000);
-            // Now that the blob is ready, fire the thumbnail picker
-            // automatically so the user doesn't have to click anything.
             triggerThumbnailGenForActiveClip();
+          } else {
+            // No handle at all. Switch to playback view anyway so the
+            // user sees that the recording ended (the live-feed-stays
+            // behavior was confusing — looked like recording silently
+            // failed). Surface a clear error.
+            console.warn('[capture] post-stop could not resolve any file handle', {
+              catalogFilename: currentFilename,
+            });
+            showPlaybackTab();
+            alert(
+              `Recording ended but the file could not be opened for playback:\n\n` +
+              `  "${currentFilename}"\n\n` +
+              `The clip is saved in the library — try opening it from there. ` +
+              `If that also fails, the file may not have written correctly to disk.`
+            );
           }
         } catch (err) {
-          console.warn('Could not load playback:', err);
+          console.warn('[capture] post-stop playback load threw', {
+            catalogFilename: currentFilename, resolution: fhResolution, error: err.message,
+          });
+          // Still show the playback tab so the UI matches user expectation.
+          showPlaybackTab();
         }
 
         currentFilename = null;
