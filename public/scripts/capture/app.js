@@ -4948,18 +4948,45 @@ function wireYouTubePublish() {
     // point, you tweak it, "Use this" copies your version into the
     // main sidebar form. Empty fields don't overwrite (so an accidental
     // wipe doesn't blow away whatever's already in the sidebar).
+    //
+    // Track which fields actually changed so we can persist them to
+    // the catalog directly. Programmatic .value assignments DO NOT
+    // fire 'input' events, which means wireMainEditorAutosave never
+    // runs and the catalog stays stale. That was invisible for single
+    // uploads (snapshotPublishForm reads the form directly) but bit
+    // hard on bulk uploads, which round-trip through the catalog
+    // (Matt reported AI descriptions vanishing when he batch-uploaded).
+    const updates = {};
     if (currentSuggestionScope === 'all' || currentSuggestionScope === 'title') {
       const t = (suggestionTitle.value || '').trim();
-      if (t) titleInput.value = t;
+      if (t) { titleInput.value = t; updates.title = t; }
     }
     if (currentSuggestionScope === 'all' || currentSuggestionScope === 'description') {
       const d = suggestionDesc.value || '';
-      if (d.trim()) descInput.value = d;
+      if (d.trim()) { descInput.value = d; updates.description = d; }
     }
     if (currentSuggestionScope === 'all') {
       const tags = (suggestionTags.value || '').trim();
-      if (tags) tagsInput.value = tags;
+      if (tags) { tagsInput.value = tags; updates.tags = tags; }
     }
+    // Persist directly to the catalog (bypasses the autosave debounce
+    // entirely). Also dispatch input events so anything else listening
+    // — char counters, future hooks — gets a chance to react.
+    if (lastClipId && Object.keys(updates).length > 0) {
+      updateClip(lastClipId, updates);
+      // Also re-write the JSON sidecar to disk so the on-disk copy
+      // stays in sync with the catalog (otherwise re-import would
+      // clobber the AI text with whatever was in the sidecar).
+      const clips = getClips();
+      const clip = clips.find(c => c.id === lastClipId);
+      if (clip && clip.filename && directoryHandle) {
+        const basename = clip.filename.replace(/\.(webm|mp4)$/, '');
+        saveSidecarFiles(directoryHandle, basename, clip).catch(() => {});
+      }
+    }
+    [titleInput, descInput, tagsInput].forEach((el) => {
+      if (el) el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
     currentSuggestion = null;
     refreshAllCharCounters();
     showForm();
