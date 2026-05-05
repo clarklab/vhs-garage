@@ -5517,9 +5517,13 @@ async function runTrimEncode(choice) {
     if (posEl) posEl.textContent = `${formatTrimTime(doneSec)} of ${formatTrimTime(totalSec)}`;
   };
 
-  let outBlob = null;
+  // encodeTrim returns { blob, mime, ext } so we can write a filename
+  // matching the actual recorder output (mp4 source → mp4 output where
+  // browser supports it). Fallback to webm extension if the shape is
+  // somehow wrong (defensive against future encoder rewrites).
+  let result = null;
   try {
-    outBlob = await encodeTrim(srcFile, inSec, outSec, onProgress, detailEl);
+    result = await encodeTrim(srcFile, inSec, outSec, onProgress, detailEl);
   } catch (e) {
     console.error('[trim] encode failed:', e);
     toast?.classList.add('hidden');
@@ -5527,6 +5531,8 @@ async function runTrimEncode(choice) {
     return;
   }
 
+  const outBlob = result?.blob || result; // back-compat
+  const outExt = result?.ext || '.webm';
   if (!outBlob || outBlob.size === 0) {
     toast?.classList.add('hidden');
     alert('Trim failed: encoder produced an empty file. Try a longer range.');
@@ -5536,9 +5542,9 @@ async function runTrimEncode(choice) {
   // Persist + update catalog.
   try {
     if (choice === 'replace') {
-      await persistTrimReplace(clip, outBlob, outSec - inSec, outBlob.size);
+      await persistTrimReplace(clip, outBlob, outSec - inSec, outBlob.size, outExt);
     } else {
-      await persistTrimNew(clip, outBlob, outSec - inSec, outBlob.size);
+      await persistTrimNew(clip, outBlob, outSec - inSec, outBlob.size, outExt);
     }
   } catch (e) {
     console.error('[trim] persist failed:', e);
@@ -5566,131 +5572,178 @@ async function runTrimEncode(choice) {
 // toast either way; the only visible difference is the small detail
 // line ("WebCodecs encode" vs "Real-time encode — leave this tab open").
 async function encodeTrim(srcFile, inSec, outSec, onProgress, detailEl) {
-  // Feature probe — bail out of WebCodecs if any required API is
-  // missing. webm-muxer is dynamic-imported so its weight isn't paid
-  // by anyone who doesn't trim.
-  const hasWebCodecs =
-    typeof window.VideoEncoder === 'function' &&
-    typeof window.VideoDecoder === 'function' &&
-    typeof window.AudioEncoder === 'function' &&
-    typeof window.VideoFrame === 'function' &&
-    typeof window.MediaStreamTrackProcessor === 'function';
-
-  if (hasWebCodecs) {
-    try {
-      if (detailEl) detailEl.textContent = 'WebCodecs encode (hardware-accelerated where supported).';
-      const blob = await encodeWithWebCodecs(srcFile, inSec, outSec, onProgress);
-      return blob;
-    } catch (e) {
-      console.warn('[trim] WebCodecs path failed, falling back to MediaRecorder:', e.message);
-      // Reset progress so the fallback's progress isn't appended on top
-      // of partial WebCodecs progress.
-      onProgress(0, Math.max(0.1, outSec - inSec));
-    }
-  }
-
+  // WebCodecs path is currently DISABLED — the previous implementation
+  // had a muxer-creation race condition (muxer was built lazily on the
+  // first audio chunk, but video chunks emitted before that were
+  // dropped — including the keyframe, hence the all-black output Matt
+  // saw) AND positioned the source <video> at left:-9999px, which let
+  // some browsers optimize the rendering pipeline away and produce
+  // empty/stale captures. Both fixable, but a proper rewrite needs
+  // MediaStreamTrackProcessor for the video track (parallel to audio)
+  // plus upfront-built muxer using getSettings() to know audio shape
+  // before chunks flow. Until that lands, MediaRecorder is the only
+  // path. Slow but reliable.
   if (detailEl) detailEl.textContent = 'Real-time encode — leave this tab open.';
   return await encodeWithMediaRecorder(srcFile, inSec, outSec, onProgress);
 }
 
 // ---------------------------------------------------------------------------
-// MediaRecorder encode (fallback) — strictly realtime, very reliable
+// MediaRecorder encode — strictly realtime, very reliable
 // ---------------------------------------------------------------------------
+//
+// Returns { blob, mime, ext } so the caller can pick a filename
+// extension matching the actual recorder output (mp4 source ought to
+// produce mp4 output where possible).
 async function encodeWithMediaRecorder(srcFile, inSec, outSec, onProgress) {
   const sourceUrl = URL.createObjectURL(srcFile);
   const wantSeconds = Math.max(0.1, outSec - inSec);
 
-  // Hidden source video. volume=0 (not muted=true) so audio reliably
-  // flows into captureStream() across Chromium versions.
+  // Hidden source <video>. We position it OFF-screen but inside the
+  // viewport rectangle (1×1 px in the bottom-right with opacity 0)
+  // rather than left:-9999px. The reason: browsers may aggressively
+  // skip rendering / frame production for elements that are entirely
+  // outside the viewport, which starves captureStream() of frames and
+  // produces empty trims. A 1×1 in-viewport element is invisible to
+  // the user but the rendering pipeline still pumps frames.
+  //
+  // muted=true (in addition to volume=0) so play() always satisfies
+  // autoplay policy even if the user-gesture chain has been broken
+  // by an awaited microtask. captureStream still gets the audio track
+  // because muted-element capture is well-supported in Chrome — the
+  // mute affects local output, not the captured stream.
   const srcVideo = document.createElement('video');
   srcVideo.src = sourceUrl;
   srcVideo.volume = 0;
+  srcVideo.muted = true;
   srcVideo.playsInline = true;
-  srcVideo.style.cssText = 'position:fixed;left:-9999px;top:0;width:320px;height:180px;';
+  srcVideo.style.cssText = 'position:fixed;bottom:0;right:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1;';
   document.body.appendChild(srcVideo);
 
-  await new Promise((resolve) => {
-    if (isFinite(srcVideo.duration) && srcVideo.duration > 0) resolve();
-    else srcVideo.addEventListener('loadedmetadata', resolve, { once: true });
-  });
-
-  let stream;
-  try { stream = srcVideo.captureStream(); }
-  catch (e) {
-    URL.revokeObjectURL(sourceUrl);
-    srcVideo.remove();
-    throw new Error('captureStream() unavailable: ' + e.message);
-  }
-
-  const mimeCandidates = [
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm',
-  ];
-  const mime = mimeCandidates.find(m => MediaRecorder.isTypeSupported(m));
-  if (!mime) {
-    URL.revokeObjectURL(sourceUrl);
-    srcVideo.remove();
-    throw new Error('No supported MediaRecorder MIME type.');
-  }
-
-  const recorder = new MediaRecorder(stream, { mimeType: mime });
-  activeTrimRecorder = recorder;
-  const chunks = [];
-  recorder.addEventListener('dataavailable', (e) => {
-    if (e.data && e.data.size > 0) chunks.push(e.data);
-  });
-
-  // Seek to IN, then play.
-  await new Promise((resolve, reject) => {
-    const onSeeked = () => { srcVideo.removeEventListener('seeked', onSeeked); resolve(); };
-    srcVideo.addEventListener('seeked', onSeeked);
-    try { srcVideo.currentTime = inSec; } catch (e) { reject(e); }
-  });
-
-  recorder.start(250);
-  try { await srcVideo.play(); } catch {}
-
-  let stopped = false;
-  const finalize = () => new Promise((resolve) => {
-    if (stopped) return resolve();
-    stopped = true;
-    recorder.addEventListener('stop', resolve, { once: true });
-    try { recorder.stop(); } catch {}
+  const cleanup = () => {
     try { srcVideo.pause(); } catch {}
-  });
-
-  const onTime = async () => {
-    const done = Math.max(0, srcVideo.currentTime - inSec);
-    onProgress(done, wantSeconds);
-    if (srcVideo.currentTime >= outSec) {
-      srcVideo.removeEventListener('timeupdate', onTime);
-      await finalize();
-    }
+    URL.revokeObjectURL(sourceUrl);
+    srcVideo.remove();
+    activeTrimRecorder = null;
   };
-  srcVideo.addEventListener('timeupdate', onTime);
 
-  const failsafe = setTimeout(async () => {
-    if (!stopped) {
-      console.warn('[trim] MediaRecorder failsafe timer fired');
-      srcVideo.removeEventListener('timeupdate', onTime);
-      await finalize();
+  try {
+    await new Promise((resolve) => {
+      if (isFinite(srcVideo.duration) && srcVideo.duration > 0) resolve();
+      else srcVideo.addEventListener('loadedmetadata', resolve, { once: true });
+    });
+
+    let stream;
+    try { stream = srcVideo.captureStream(); }
+    catch (e) { throw new Error('captureStream() unavailable: ' + e.message); }
+
+    // MIME negotiation — match the source format where possible so a
+    // .mp4 input produces a .mp4 trim. Falls through to WebM if the
+    // browser can't record MP4 (older Chrome / Firefox). Order matters:
+    // first supported wins.
+    const sourceIsMp4 = (srcFile.type || '').startsWith('video/mp4')
+      || /\.mp4$/i.test(srcFile.name || '');
+    const mp4Candidates = [
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4;codecs=avc1',
+      'video/mp4',
+    ];
+    const webmCandidates = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+    ];
+    const candidates = sourceIsMp4
+      ? [...mp4Candidates, ...webmCandidates]
+      : webmCandidates;
+    const mime = candidates.find((m) => MediaRecorder.isTypeSupported(m));
+    if (!mime) throw new Error('No supported MediaRecorder MIME type.');
+    const ext = mime.startsWith('video/mp4') ? '.mp4' : '.webm';
+    console.info('[trim] encoding via MediaRecorder', {
+      sourceType: srcFile.type, sourceName: srcFile.name,
+      sourceIsMp4, mime, ext,
+    });
+
+    const recorder = new MediaRecorder(stream, { mimeType: mime });
+    activeTrimRecorder = recorder;
+    const chunks = [];
+    recorder.addEventListener('dataavailable', (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
+    });
+    recorder.addEventListener('error', (e) => {
+      console.warn('[trim] MediaRecorder error event:', e.error || e);
+    });
+
+    // Seek to IN, await 'seeked' so we know currentTime took effect
+    // before we start capture.
+    await new Promise((resolve, reject) => {
+      const onSeeked = () => { srcVideo.removeEventListener('seeked', onSeeked); resolve(); };
+      srcVideo.addEventListener('seeked', onSeeked);
+      try { srcVideo.currentTime = inSec; } catch (e) { reject(e); }
+    });
+
+    // Start playback FIRST, then briefly wait for the first frame to
+    // actually present, THEN start the recorder. Without the grace
+    // period, recorder.start() races with the source's first frame
+    // and can lose the keyframe — producing exactly the "black video,
+    // has duration" output Matt observed.
+    try { await srcVideo.play(); } catch (e) {
+      throw new Error('Could not play source video: ' + e.message);
     }
-  }, Math.ceil(wantSeconds * 1.5 * 1000) + 5000);
+    await new Promise((resolve) => setTimeout(resolve, 80));
 
-  await new Promise((resolve) => {
-    const check = () => { if (stopped) resolve(); else setTimeout(check, 100); };
-    check();
-  });
-  clearTimeout(failsafe);
-  activeTrimRecorder = null;
+    recorder.start(250);
 
-  URL.revokeObjectURL(sourceUrl);
-  srcVideo.remove();
+    let stopped = false;
+    const finalize = () => new Promise((resolve) => {
+      if (stopped) return resolve();
+      stopped = true;
+      recorder.addEventListener('stop', resolve, { once: true });
+      try { recorder.stop(); } catch {}
+      try { srcVideo.pause(); } catch {}
+    });
 
-  return new Blob(chunks, { type: mime });
+    const onTime = async () => {
+      const done = Math.max(0, srcVideo.currentTime - inSec);
+      onProgress(done, wantSeconds);
+      if (srcVideo.currentTime >= outSec) {
+        srcVideo.removeEventListener('timeupdate', onTime);
+        await finalize();
+      }
+    };
+    srcVideo.addEventListener('timeupdate', onTime);
+
+    // Failsafe — if timeupdate stops firing for some reason, bail
+    // after wantSeconds * 1.5 + 5s wall-clock.
+    const failsafe = setTimeout(async () => {
+      if (!stopped) {
+        console.warn('[trim] MediaRecorder failsafe timer fired');
+        srcVideo.removeEventListener('timeupdate', onTime);
+        await finalize();
+      }
+    }, Math.ceil(wantSeconds * 1.5 * 1000) + 5000);
+
+    await new Promise((resolve) => {
+      const check = () => { if (stopped) resolve(); else setTimeout(check, 100); };
+      check();
+    });
+    clearTimeout(failsafe);
+
+    cleanup();
+
+    const totalBytes = chunks.reduce((s, c) => s + c.size, 0);
+    console.info('[trim] MediaRecorder finished', {
+      chunkCount: chunks.length, totalBytes, mime,
+    });
+    if (totalBytes === 0) throw new Error('Recorder produced no data.');
+
+    return { blob: new Blob(chunks, { type: mime }), mime, ext };
+  } catch (e) {
+    cleanup();
+    throw e;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -5973,8 +6026,8 @@ async function encodeWithWebCodecs(srcFile, inSec, outSec, onProgress) {
 
 // Pick a unique filename for the new-clip case. Tries `_trim`, then
 // `_trim2`, `_trim3`, etc.
-async function pickTrimFilename(srcFilename) {
-  return pickAvailableFilename(srcFilename, 'trim', '.webm');
+async function pickTrimFilename(srcFilename, ext = '.webm') {
+  return pickAvailableFilename(srcFilename, 'trim', ext);
 }
 
 // Find an unused filename for a derived clip (trim, duplicate, etc).
@@ -6095,8 +6148,11 @@ async function duplicateClip(clipId) {
   refreshLibrary();
 }
 
-async function persistTrimNew(srcClip, blob, durationSec, bytes) {
-  const filename = await pickTrimFilename(srcClip.filename);
+async function persistTrimNew(srcClip, blob, durationSec, bytes, ext = '.webm') {
+  // Use the encoder's actual output extension so a .mp4 source whose
+  // trim produced an .mp4 blob lands on disk as .mp4 — not .webm. The
+  // ext parameter comes from encodeWithMediaRecorder's MIME selection.
+  const filename = await pickTrimFilename(srcClip.filename, ext);
   // Write the file.
   const fh = await directoryHandle.getFileHandle(filename, { create: true });
   const w = await fh.createWritable();
@@ -6139,25 +6195,44 @@ async function persistTrimNew(srcClip, blob, durationSec, bytes) {
   await loadClipIntoEditor(entry.id);
 }
 
-async function persistTrimReplace(srcClip, blob, durationSec, bytes) {
-  // Overwrite the source file in place. We KEEP the same filename so
-  // the catalog entry, sidecars, and any youtubeUrl reference stay
-  // pointed at the right basename.
-  const fh = await directoryHandle.getFileHandle(srcClip.filename, { create: true });
+async function persistTrimReplace(srcClip, blob, durationSec, bytes, ext = '.webm') {
+  // Most common path: source ext matches new ext (mp4→mp4, webm→webm).
+  // Overwrite in place, keep the filename, sidecars and any youtubeUrl
+  // reference all stay correctly pointed.
+  const srcExt = srcClip.filename.endsWith('.mp4') ? '.mp4' : '.webm';
+  const filename = (srcExt === ext)
+    ? srcClip.filename
+    : srcClip.filename.replace(/\.(webm|mp4)$/, ext);
+
+  const fh = await directoryHandle.getFileHandle(filename, { create: true });
   const w = await fh.createWritable();
   await w.write(blob);
   await w.close();
 
-  // Update the catalog entry's duration + size. Title etc untouched.
-  updateClip(srcClip.id, {
+  // If the extension changed (rare — only happens when MediaRecorder
+  // can't honor the source format and falls through to webm) we now
+  // have BOTH the new file and the old file on disk. Delete the
+  // stale one so the user doesn't see two copies in the library on
+  // resync, and update the catalog filename to match what's now on
+  // disk.
+  const updates = {
     duration: Math.round(durationSec),
     fileSize: bytes,
-  });
+  };
+  if (filename !== srcClip.filename) {
+    try { await directoryHandle.removeEntry(srcClip.filename); }
+    catch (e) { console.warn('[trim] could not delete stale source file:', e); }
+    updates.filename = filename;
+    console.info('[trim] replace produced different ext — moved', {
+      from: srcClip.filename, to: filename,
+    });
+  }
+  updateClip(srcClip.id, updates);
 
   // Re-write the JSON sidecar so the on-disk copy stays in sync with
   // the catalog (otherwise re-import / re-sync would clobber the new
   // duration with the stale one).
-  const basename = srcClip.filename.replace(/\.(webm|mp4)$/, '');
+  const basename = filename.replace(/\.(webm|mp4)$/, '');
   const updated = (getClips()).find(c => c.id === srcClip.id);
   if (updated) {
     await saveSidecarFiles(directoryHandle, basename, updated);
