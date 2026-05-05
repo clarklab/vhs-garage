@@ -8,7 +8,18 @@ interface Props {
 }
 
 const { title, description, ogImage } = Astro.props;
-const ogImageUrl = ogImage || 'https://vhsgarage.com/unfurl.png';
+// OG/Twitter image — must be an absolute URL per spec. Crawlers
+// reject relative paths. We accept either a relative path
+// ("/images/blog/foo.webp") or an already-absolute URL from the
+// caller, then normalize. Falls back to the site-wide /unfurl.png
+// when the page doesn't supply one.
+const SITE_ORIGIN = 'https://vhsgarage.com';
+const normalizeOgImage = (src) => {
+  if (!src) return `${SITE_ORIGIN}/unfurl.png`;
+  if (/^https?:\/\//i.test(src)) return src;
+  return SITE_ORIGIN + (src.startsWith('/') ? src : '/' + src);
+};
+const ogImageUrl = normalizeOgImage(ogImage);
 const fullTitle = title === 'VHS Garage'
   ? 'VHS Garage — A Lo-Fi Love Letter to the Golden Age of Video'
   : `${title} — VHS Garage`;
