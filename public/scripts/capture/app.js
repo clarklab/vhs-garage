@@ -4089,9 +4089,13 @@ function clearWhoamiCache() {
 // bottom-right. Clicking Upload in the publish panel:
 //   1. Snapshots the form state (title/desc/tags/privacy) into a queue item
 //   2. Spawns a toast card showing progress
-//   3. The first toast in a fresh interface triggers a 3-2-1 countdown +
-//      "Keep Tape Info" bail-out link; on completion the editor wipes back
-//      to live-feed-ready state so the user can immediately record again
+//   3. The first toast in a fresh interface triggers a 3-2-1 countdown.
+//      On completion the editor wipes the per-clip fields (title /
+//      description / tags) and goes back to live-feed-ready — but KEEPS
+//      tape-level info + sleeves, since most users capture many clips
+//      from one tape per sitting. The "Reset everything" link in the
+//      countdown row is the opt-in for the rarer full wipe (use when
+//      starting a new tape).
 //   4. Up to 2 uploads run concurrently; the rest sit Queued in the stack
 //   5. Success → green border + View link, auto-dismiss after 6s
 //   6. Failure → red border + retry icon; toast persists until dismissed,
@@ -4444,7 +4448,12 @@ function retryUpload(id) {
 }
 
 // 3-2-1 countdown attached to a specific toast. After 3 ticks (or immediately
-// if user clicks Keep Tape Info) we wipe the editor back to live-feed-ready.
+// if the user clicks the toast action link) we reset the editor for the next
+// recording. Default reset KEEPS the tape-level info + sleeves (the user is
+// usually capturing many clips from the same tape in one sitting); only
+// title/description/tags wipe so the next recording starts with a clean
+// per-clip slate. The action link is the opt-in for the rarer "this was
+// the last clip from this tape" full wipe.
 function startCountdownForItem(item) {
   uploadQueue.countdownItemId = item.id;
   let n = 3;
@@ -4456,17 +4465,20 @@ function startCountdownForItem(item) {
       if (numEl) numEl.textContent = String(n);
       countdownTimerId = setTimeout(tick, 1000);
     } else {
-      // Countdown elapsed → clear interface, full wipe.
+      // Countdown elapsed → clip-only wipe (default keepTapeInfo: true).
       countdownTimerId = null;
       uploadQueue.countdownItemId = null;
       renderToast(item); // strips the countdown row
-      clearClipForNewCapture({ keepTapeInfo: false });
+      clearClipForNewCapture();
     }
   };
   countdownTimerId = setTimeout(tick, 1000);
 }
 
-function endCountdownKeepingTape(item) {
+// Toast action: "Reset everything" — opt-in for the full wipe (clip
+// fields + tape-level fields + sleeves). Used when the user just
+// finished the LAST clip from a tape and is about to swap tapes.
+function endCountdownWithFullWipe(item) {
   if (uploadQueue.countdownItemId !== item.id) return;
   if (countdownTimerId) {
     clearTimeout(countdownTimerId);
@@ -4474,7 +4486,7 @@ function endCountdownKeepingTape(item) {
   }
   uploadQueue.countdownItemId = null;
   renderToast(item); // strips the countdown row
-  clearClipForNewCapture({ keepTapeInfo: true });
+  clearClipForNewCapture({ keepTapeInfo: false });
 }
 
 // Render or update a toast card for a queue item. Idempotent — safe to call
@@ -4525,7 +4537,7 @@ function renderToast(item) {
     ${showCountdown ? `
       <div class="toast-meta-row">
         <span>Starting next clip in <span data-countdown-num>3</span>…</span>
-        <button class="toast-secondary-link" data-action="keep">Keep Tape Info</button>
+        <button class="toast-secondary-link" data-action="wipe-all" title="Also clear tape info + sleeve photos (use when starting a new tape)">Reset everything</button>
       </div>
     ` : ''}
     ${showViewLink ? `<div class="toast-meta-row"><a class="toast-link" href="${item.ytUrl}" target="_blank" rel="noopener">View on YouTube →</a></div>` : ''}
@@ -4537,7 +4549,7 @@ function renderToast(item) {
       const action = el.dataset.action;
       if (action === 'retry') retryUpload(item.id);
       else if (action === 'close') dismissToast(item.id);
-      else if (action === 'keep') endCountdownKeepingTape(item);
+      else if (action === 'wipe-all') endCountdownWithFullWipe(item);
     };
   });
 }
@@ -4548,13 +4560,21 @@ function escapeHtml(s) {
 }
 
 // Reset the editor back to "ready to record" state. Runs at the end of the
-// 3-2-1 countdown OR immediately when the user clicks Keep Tape Info.
-//   keepTapeInfo: false → full wipe (clip-specific AND tape-level fields,
-//                          plus sleeves)
-//   keepTapeInfo: true  → wipe only clip-specific fields (title, description,
-//                          tags); keep year, distributor, format, speed,
-//                          condition, cassette notes, AND sleeve photos
-function clearClipForNewCapture({ keepTapeInfo = false } = {}) {
+// 3-2-1 countdown OR immediately when the user clicks the toast action.
+//   keepTapeInfo: true (DEFAULT)
+//                       → wipe ONLY clip-specific fields (title, description,
+//                         tags); keep year, distributor, format, speed,
+//                         condition, cassette notes, AND sleeve photos.
+//                         This matches the actual usage pattern: a user
+//                         captures many clips from the SAME tape in one
+//                         sitting, so the sleeve + tape-level info should
+//                         persist between recordings. The reset-info-btn
+//                         in the sidebar (× Reset info) is the explicit
+//                         "starting a new tape" wipe.
+//   keepTapeInfo: false → full wipe (also clears tape-level fields + sleeves).
+//                         Available via the "Reset everything" link in the
+//                         post-upload toast countdown.
+function clearClipForNewCapture({ keepTapeInfo = true } = {}) {
   // Drop the active clip — hides Thumbnail + Publish panels via
   // updateClipDependentPanels.
   lastClipId = null;
@@ -4960,6 +4980,21 @@ function wireYouTubePublish() {
     btn.disabled = !!busy;
   }
 
+  // Force the publish fieldset visible while an AI session is in flight.
+  // The loading spinner + suggestion preview live INSIDE #cap-pub-fieldset,
+  // and that fieldset is hidden whenever there's no active clip — so when
+  // the user clicks AI mid-recording (we now allow that) the spinner +
+  // result would be invisible, hidden by their own parent. This pops the
+  // parent open for the duration of the AI session; revertPublishFieldset
+  // restores it to whatever updateClipDependentPanels says when we're done.
+  function forcePublishFieldsetForAi() {
+    const pub = document.getElementById('cap-pub-fieldset');
+    if (pub) pub.classList.remove('hidden');
+  }
+  function revertPublishFieldsetVisibility() {
+    if (typeof updateClipDependentPanels === 'function') updateClipDependentPanels();
+  }
+
   async function fetchSuggestion(scope, btnEl) {
     const metadata = buildMetadata();
     if (!metadata) {
@@ -4968,6 +5003,7 @@ function wireYouTubePublish() {
     }
 
     setAiBusy(btnEl, true);
+    forcePublishFieldsetForAi();
     hideAllPanels();
     loading.classList.remove('hidden');
     startLoadingAnim('Generating');
@@ -5060,6 +5096,11 @@ function wireYouTubePublish() {
     currentSuggestion = null;
     refreshAllCharCounters();
     showForm();
+    // Revert the publish fieldset to whatever updateClipDependentPanels
+    // would say — when AI was invoked mid-recording (no clip yet), this
+    // hides the fieldset so the user goes back to the live recording UI.
+    // When there IS a clip, the fieldset stays visible.
+    revertPublishFieldsetVisibility();
   }
 
   // The standalone "▶ YouTube" trigger button used to live next to the
@@ -5072,7 +5113,10 @@ function wireYouTubePublish() {
     // restarted from there (or the user can edit + re-upload).
     showForm();
   });
-  errorCloseBtn.addEventListener('click', () => showForm());
+  errorCloseBtn.addEventListener('click', () => {
+    showForm();
+    revertPublishFieldsetVisibility();
+  });
   publishClip = startPublish;
 
   // Sparkle buttons — main button rewrites everything; per-field sparkles
@@ -5096,6 +5140,7 @@ function wireYouTubePublish() {
   if (suggestionCancelBtn) suggestionCancelBtn.addEventListener('click', () => {
     currentSuggestion = null;
     showForm();
+    revertPublishFieldsetVisibility();
   });
 
   // Sign-in button inside the modal. Remember which clip was being published
