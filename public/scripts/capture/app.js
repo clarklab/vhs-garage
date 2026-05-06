@@ -920,7 +920,14 @@ function wireRecordButton() {
     document.getElementById('rec-overlay-timer').classList.remove('hidden');
     const liveTab = document.getElementById('tab-live');
     if (liveTab) liveTab.textContent = '░ Recording ░';
-    resetSleeve();
+    // (Previously called resetSleeve() here — removed because it broke
+    // the multi-clip-from-one-tape flow. The actual usage pattern is:
+    // photograph the tape's sleeve once, then record many clips in
+    // sequence. Each recording stop calls saveSleevePhotos so every
+    // clip's basename gets its own copy on disk; the sleeve module
+    // retains the source data between records. The user explicitly
+    // resets via × Reset Sleeve / × Reset info / the toast's "Reset
+    // everything" link when they swap to a new tape.)
 
     await startRecording(captureStream, directoryHandle, currentFilename, bitrate, videoFormat, {
       onTick: ({ elapsed, bytes }) => {
@@ -3416,6 +3423,13 @@ function wireMainEditorAutosave() {
       }
       const basename = clip.filename.replace(/\.(webm|mp4)$/, '');
       saveSidecarFiles(directoryHandle, basename, clip).catch(() => {});
+      // Defensive: also (re)write the sleeve JPGs against this clip's
+      // basename. Recording-stop already does this once, but if the
+      // user takes/edits sleeve photos AFTER recording (or we missed
+      // them on the original stop for any reason), the autosave path
+      // is the catch-all. saveSleevePhotos no-ops gracefully when the
+      // sleeve module has no front/back data, so this is cheap.
+      saveSleevePhotos(directoryHandle, basename).catch(() => {});
     })();
 
     // Library tile is title-derived; nudge it to redraw.
