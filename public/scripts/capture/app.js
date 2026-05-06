@@ -4901,13 +4901,23 @@ function wireYouTubePublish() {
     refreshAllCharCounters();
   }
 
-  async function fetchSuggestion(scope) {
+  // Toggle the in-button "twinkle" loader on whichever AI button was
+  // clicked. Disabled bit prevents double-fire while a request is in
+  // flight. CSS animation lives in capture.astro under .ai-busy.
+  function setAiBusy(btn, busy) {
+    if (!btn) return;
+    btn.classList.toggle('ai-busy', busy);
+    btn.disabled = !!busy;
+  }
+
+  async function fetchSuggestion(scope, btnEl) {
     const metadata = buildMetadata();
     if (!metadata) {
       showError('Clip not found.');
       return;
     }
 
+    setAiBusy(btnEl, true);
     hideAllPanels();
     loading.classList.remove('hidden');
     startLoadingAnim('Generating');
@@ -4943,6 +4953,10 @@ function wireYouTubePublish() {
       showSuggestionPanel(scope, data);
     } catch (e) {
       showError(e.message);
+    } finally {
+      // Always clear — covers success, every error path, and the early
+      // return cases above (which all hit this finally too).
+      setAiBusy(btnEl, false);
     }
   }
 
@@ -5012,14 +5026,22 @@ function wireYouTubePublish() {
 
   // Sparkle buttons — main button rewrites everything; per-field sparkles
   // scope the suggestion panel to just that one field.
-  if (aiAllBtn) aiAllBtn.addEventListener('click', () => fetchSuggestion('all'));
-  if (aiTitleBtn) aiTitleBtn.addEventListener('click', () => fetchSuggestion('title'));
-  if (aiDescBtn) aiDescBtn.addEventListener('click', () => fetchSuggestion('description'));
+  if (aiAllBtn) aiAllBtn.addEventListener('click', () => fetchSuggestion('all', aiAllBtn));
+  if (aiTitleBtn) aiTitleBtn.addEventListener('click', () => fetchSuggestion('title', aiTitleBtn));
+  if (aiDescBtn) aiDescBtn.addEventListener('click', () => fetchSuggestion('description', aiDescBtn));
 
   // Suggestion panel: Use this writes the visible fields back into the form,
   // Try again re-fetches with the same scope, Cancel just discards.
   if (suggestionUseBtn) suggestionUseBtn.addEventListener('click', applySuggestion);
-  if (suggestionRetryBtn) suggestionRetryBtn.addEventListener('click', () => fetchSuggestion(currentSuggestionScope));
+  if (suggestionRetryBtn) suggestionRetryBtn.addEventListener('click', () => {
+    // Retry from inside the suggestion panel — twinkle the AI button
+    // that matches the original scope so the user gets the same
+    // in-button feedback as the initial click.
+    const btnForScope = currentSuggestionScope === 'title' ? aiTitleBtn
+                      : currentSuggestionScope === 'description' ? aiDescBtn
+                      : aiAllBtn;
+    fetchSuggestion(currentSuggestionScope, btnForScope);
+  });
   if (suggestionCancelBtn) suggestionCancelBtn.addEventListener('click', () => {
     currentSuggestion = null;
     showForm();

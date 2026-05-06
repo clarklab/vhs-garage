@@ -137,6 +137,28 @@ import { BUILD_ID } from '../utils/build-id.js';
       0%, 100% { box-shadow: 0 0 8px rgba(34,197,94,0.2), inset 0 0 8px rgba(34,197,94,0.05); }
       50% { box-shadow: 0 0 18px rgba(34,197,94,0.5), inset 0 0 18px rgba(34,197,94,0.15); }
     }
+    /* AI Enhance button busy state — when an AI rewrite request is in
+       flight. The icon is the two-sparkle pixel glyph; we animate each
+       <path> independently with a staggered scale-pulse so the sparkles
+       "twinkle" alive. Gives the user instant "yes, I heard you" feedback
+       the moment they click — the larger loader at the bottom of the
+       panel still tells the longer "generating" story. transform-box:
+       fill-box is critical so each path's transform-origin is the path's
+       own bounding box, not the SVG's; without it both shapes scale
+       around the SVG center and the small one drifts. */
+    .ai-busy svg path {
+      transform-origin: center;
+      transform-box: fill-box;
+      animation: ai-twinkle 0.9s ease-in-out infinite;
+    }
+    .ai-busy svg path:nth-child(2) {
+      animation-delay: 0.45s;
+    }
+    @keyframes ai-twinkle {
+      0%, 100% { transform: scale(1);    opacity: 1; }
+      50%      { transform: scale(0.55); opacity: 0.45; }
+    }
+
     /* Library window "shoop" — opens from below + grows in scale + fades in,
        like a real OS window animating into place. Animation is applied to
        the inner chrome (the bordered box) rather than the outer position
