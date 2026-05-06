@@ -4,12 +4,38 @@
 
 const YOUTUBE_CLIENT_ID = process.env.YOUTUBE_OAUTH_CLIENT_ID;
 const YOUTUBE_CLIENT_SECRET = process.env.YOUTUBE_OAUTH_CLIENT_SECRET;
+
+// Per-provider config from Netlify AI Gateway. Each provider has its own
+// base URL + API key in the gateway. Defaults work out of the box if the
+// gateway env vars are configured; missing keys cause that provider's
+// path to fall back to the template description.
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_BASE_URL = process.env.GOOGLE_GEMINI_BASE_URL;
-// Stable Flash model from Netlify AI Gateway's allowed list. Plenty smart
-// for structured JSON SEO metadata and ~3-5x faster than pro-preview, which
-// was exceeding Netlify's 10s function timeout.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
+
+// Default model. Overridable per-request via body.model. Allowlisted in
+// pickModel() — anything else falls back to the default so a typo can't
+// route to an unintended provider.
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+const ALLOWED_MODELS = new Set([
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gpt-4.1-nano',
+  'claude-haiku-4-5',
+]);
+function pickModel(requested) {
+  if (requested && ALLOWED_MODELS.has(requested)) return requested;
+  return DEFAULT_MODEL;
+}
+function providerFor(model) {
+  if (model.startsWith('gemini')) return 'gemini';
+  if (model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3')) return 'openai';
+  if (model.startsWith('claude')) return 'anthropic';
+  return 'gemini';
+}
 
 export default async (req) => {
   if (req.method !== 'POST') {
@@ -27,7 +53,8 @@ export default async (req) => {
     return json({ error: 'Invalid JSON' }, 400);
   }
 
-  const { metadata, action, refreshToken } = body;
+  const { metadata, action, refreshToken, model: requestedModel } = body;
+  const model = pickModel(requestedModel);
 
   if (!refreshToken) {
     return json({ error: 'Not signed in' }, 401);
@@ -46,7 +73,7 @@ export default async (req) => {
 
     const [token, aiCopy] = await Promise.all([
       getAccessToken(refreshToken),
-      rewriteForYouTube(metadata),
+      rewriteForYouTube(metadata, model),
     ]);
 
     if (!token) return json({ error: 'Could not get access token — please sign in again' }, 401);
@@ -56,6 +83,7 @@ export default async (req) => {
       title: aiCopy.title,
       description: aiCopy.description,
       tags: aiCopy.tags,
+      model,
       aiFallback: aiCopy._aiFallback === true,
     });
   }
@@ -64,11 +92,12 @@ export default async (req) => {
   if (action === 'rewrite') {
     if (!metadata) return json({ error: 'Missing metadata' }, 400);
 
-    const aiCopy = await rewriteForYouTube(metadata);
+    const aiCopy = await rewriteForYouTube(metadata, model);
     return json({
       title: aiCopy.title,
       description: aiCopy.description,
       tags: aiCopy.tags,
+      model,
       aiFallback: aiCopy._aiFallback === true,
     });
   }
@@ -96,16 +125,8 @@ async function getAccessToken(refreshToken) {
   }
 }
 
-async function rewriteForYouTube(metadata) {
-  const fallback = {
-    title: metadata.title || 'VHS Tape',
-    description: buildFallbackDescription(metadata),
-    tags: metadata.tags || 'VHS, retro, analog',
-  };
-
-  if (!GEMINI_API_KEY || !GEMINI_BASE_URL) return fallback;
-
-  const prompt = `You are a YouTube SEO expert optimizing for maximum discoverability on a VHS archival channel called "VHS Garage" (@oracrest). Your #1 job: make this clip findable by people searching YouTube and Google for retro/VHS content.
+function buildPrompt(metadata) {
+  return `You are a YouTube SEO expert optimizing for maximum discoverability on a VHS archival channel called "VHS Garage" (@oracrest). Your #1 job: make this clip findable by people searching YouTube and Google for retro/VHS content.
 
 METADATA:
 Title: ${metadata.title || 'Untitled'}
@@ -150,37 +171,144 @@ Return ONLY valid JSON:
   "description": "...",
   "tags": "..."
 }`;
+}
 
-  // Must return before Netlify's 10s function timeout kills the whole response.
+// Lenient JSON parse — handles models that wrap output in ```json fences,
+// add trailing prose, or otherwise leak around strict mode. Returns null
+// if no parseable object can be recovered.
+function parseModelJson(raw) {
+  if (!raw) return null;
+  // Strip markdown fences first.
+  let s = String(raw).replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  try { return JSON.parse(s); } catch {}
+  // Fall back to extracting the first top-level {...} block.
+  const start = s.indexOf('{');
+  const end = s.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(s.slice(start, end + 1)); } catch {}
+  }
+  return null;
+}
+
+// Dispatcher — picks the provider handler based on the model ID. Wraps
+// each call in an 8s abort so we never blow Netlify's 10s function
+// timeout. Any failure (provider down, no API key, bad JSON, abort)
+// falls back to a template-built description so the user still gets
+// SOMETHING to upload with.
+async function rewriteForYouTube(metadata, model) {
+  const fallback = {
+    title: metadata.title || 'VHS Tape',
+    description: buildFallbackDescription(metadata),
+    tags: metadata.tags || 'VHS, retro, analog',
+  };
+
+  const prompt = buildPrompt(metadata);
+  const provider = providerFor(model);
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
 
   try {
-    const res = await fetch(
-      `${GEMINI_BASE_URL}/v1beta/models/${GEMINI_MODEL}:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': GEMINI_API_KEY,
-        },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        }),
-        signal: controller.signal,
-      }
-    );
-    const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-    return JSON.parse(cleaned);
+    let raw;
+    if (provider === 'openai') raw = await callOpenAI(prompt, model, controller.signal);
+    else if (provider === 'anthropic') raw = await callAnthropic(prompt, model, controller.signal);
+    else raw = await callGemini(prompt, model, controller.signal);
+
+    const parsed = parseModelJson(raw);
+    if (!parsed || (!parsed.title && !parsed.description && !parsed.tags)) {
+      console.warn('AI rewrite returned unparseable output, falling back', { model });
+      return { ...fallback, _aiFallback: true };
+    }
+    return parsed;
   } catch (e) {
     const reason = e.name === 'AbortError' ? 'timeout after 8s' : e.message;
-    console.warn('Gemini rewrite failed, using fallback:', reason);
+    console.warn('AI rewrite failed, using fallback:', { model, provider, reason });
     return { ...fallback, _aiFallback: true };
   } finally {
     clearTimeout(timer);
   }
+}
+
+// --- Provider handlers ---
+// Each takes (prompt, model, signal) and returns the raw text response.
+// JSON parsing happens once in the caller (parseModelJson) so each
+// handler stays small and only worries about wire format.
+
+async function callGemini(prompt, model, signal) {
+  if (!GEMINI_API_KEY || !GEMINI_BASE_URL) throw new Error('Gemini not configured');
+  const res = await fetch(
+    `${GEMINI_BASE_URL}/v1beta/models/${model}:generateContent`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        // generationConfig.responseMimeType: "application/json" gives us
+        // strict-JSON output on Gemini 2.5+ — no fence-stripping needed
+        // (parseModelJson handles it as a belt-and-suspenders fallback).
+        generationConfig: { responseMimeType: 'application/json' },
+      }),
+      signal,
+    }
+  );
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Gemini ${res.status}: ${errText.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+async function callOpenAI(prompt, model, signal) {
+  if (!OPENAI_API_KEY) throw new Error('OpenAI not configured (set OPENAI_API_KEY)');
+  const res = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      // response_format json_object forces valid JSON output — pairs
+      // with the "Return ONLY valid JSON" instruction in the prompt.
+      response_format: { type: 'json_object' },
+    }),
+    signal,
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`OpenAI ${res.status}: ${errText.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+async function callAnthropic(prompt, model, signal) {
+  if (!ANTHROPIC_API_KEY) throw new Error('Anthropic not configured (set ANTHROPIC_API_KEY)');
+  const res = await fetch(`${ANTHROPIC_BASE_URL}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+    signal,
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Anthropic ${res.status}: ${errText.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  // Anthropic responses are a content array of blocks; we want the first
+  // text block. parseModelJson handles any prefix/suffix prose.
+  const block = (data.content || []).find((b) => b.type === 'text');
+  return block?.text || '';
 }
 
 function buildFallbackDescription(m) {

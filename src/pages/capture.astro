@@ -559,19 +559,19 @@ import { BUILD_ID } from '../utils/build-id.js';
            as the last item in each menu for the bigger view. -->
       <button id="status-vid-trigger" class="toolbar-trigger flex items-center gap-1.5 px-3 py-2 border-r border-white/10 min-w-0 hover:text-white/80 transition-colors text-left" title="Capture video source">
         <span class="text-white/40 uppercase tracking-wider shrink-0">VID</span>
-        <span id="status-video-label" class="truncate text-white/70" style="max-width:140px;">—</span>
+        <span id="status-video-label" class="truncate text-white/70" style="max-width:100px;">—</span>
         <span id="status-video-dot" class="shrink-0" style="color:#f44336;">░</span>
         <span class="text-white/30 text-[8px] shrink-0" aria-hidden="true">▾</span>
       </button>
       <button id="status-aud-trigger" class="toolbar-trigger flex items-center gap-1.5 px-3 py-2 border-r border-white/10 min-w-0 hover:text-white/80 transition-colors text-left" title="Capture audio source">
         <span class="text-white/40 uppercase tracking-wider shrink-0">AUD</span>
-        <span id="status-audio-label" class="truncate text-white/70" style="max-width:120px;">—</span>
+        <span id="status-audio-label" class="truncate text-white/70" style="max-width:80px;">—</span>
         <span id="status-audio-dot" class="shrink-0" style="color:#f44336;">░</span>
         <span class="text-white/30 text-[8px] shrink-0" aria-hidden="true">▾</span>
       </button>
       <button id="status-cam-trigger" class="toolbar-trigger flex items-center gap-1.5 px-3 py-2 border-r border-white/10 min-w-0 hover:text-white/80 transition-colors text-left" title="Webcam (sleeve photos)">
         <span class="text-white/40 uppercase tracking-wider shrink-0">CAM</span>
-        <span id="status-webcam-label" class="truncate text-white/70" style="max-width:100px;">—</span>
+        <span id="status-webcam-label" class="truncate text-white/70" style="max-width:60px;">—</span>
         <span id="status-webcam-dot" class="shrink-0" style="color:#f44336;">░</span>
         <span class="text-white/30 text-[8px] shrink-0" aria-hidden="true">▾</span>
       </button>
@@ -584,6 +584,15 @@ import { BUILD_ID } from '../utils/build-id.js';
       <!-- Help -->
       <button id="help-btn" class="flex items-center justify-center px-3 py-2 border-l border-white/15 text-white/50 hover:text-white/80 transition-colors shrink-0" title="Help &amp; shortcuts">
         <span class="inline-flex items-center justify-center w-4 h-4 border border-white/40 text-[9px] leading-none" style="border-radius:50%;">?</span>
+      </button>
+
+      <!-- AI model selector: pick which Gateway model powers the AI
+           Enhance buttons. Persists to localStorage. The default
+           (Gemini Flash Lite) is fast + structured-output friendly;
+           GPT and Claude options give cost / style alternatives. -->
+      <button id="status-ai-trigger" class="toolbar-trigger flex items-center gap-1.5 px-3 py-2 border-l border-white/15 shrink-0 text-white/50 hover:text-white/80 transition-colors" title="AI model for Enhance">
+        <span class="uppercase tracking-wider">AI</span>
+        <span class="text-white/30 text-[8px]" aria-hidden="true">▾</span>
       </button>
 
       <!-- Demo: scripted "player piano" run-through of a full capture

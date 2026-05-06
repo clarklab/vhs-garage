@@ -1632,6 +1632,56 @@ function wireToolbarMenus() {
       ]);
     });
   }
+
+  const aiTrigger = document.getElementById('status-ai-trigger');
+  if (aiTrigger) {
+    aiTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const current = getAiModel();
+      const items = AI_MODELS.map((m) => ({
+        label: m.label,
+        checked: m.id === current,
+        onClick: () => setAiModel(m.id),
+      }));
+      items.push({ separator: true });
+      items.push({
+        label: 'Reset to default',
+        disabled: current === DEFAULT_AI_MODEL,
+        onClick: () => setAiModel(DEFAULT_AI_MODEL),
+      });
+      openToolbarMenu(aiTrigger, items);
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AI model selection
+// ---------------------------------------------------------------------------
+//
+// Three Gateway models, one persistent per-browser choice. Default is
+// Gemini Flash Lite — designed for high-volume structured outputs, fast,
+// cheap. GPT-4.1-nano + Claude Haiku 4.5 are alternatives if quality or
+// style needs differ. The selected ID is sent on every /api/youtube-publish
+// rewrite request; the function dispatches to the matching provider.
+const AI_MODELS = [
+  { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite (default, fastest)' },
+  { id: 'gpt-4.1-nano',          label: 'GPT-4.1 nano' },
+  { id: 'claude-haiku-4-5',      label: 'Claude Haiku 4.5' },
+];
+const DEFAULT_AI_MODEL = 'gemini-2.5-flash-lite';
+const AI_MODEL_KEY = 'vhsg_ai_model';
+
+function getAiModel() {
+  try {
+    const stored = localStorage.getItem(AI_MODEL_KEY);
+    // Validate against the allowlist so a stale value can't survive a
+    // rename and silently 4xx every request.
+    if (stored && AI_MODELS.some((m) => m.id === stored)) return stored;
+  } catch {}
+  return DEFAULT_AI_MODEL;
+}
+function setAiModel(id) {
+  try { localStorage.setItem(AI_MODEL_KEY, id); } catch {}
 }
 
 // --- Demo (puppeteered "player piano" capture session) ---
@@ -4929,6 +4979,7 @@ function wireYouTubePublish() {
         body: JSON.stringify({
           action: 'rewrite',
           metadata,
+          model: getAiModel(),
           refreshToken: ytGetRefreshToken(),
         }),
       });

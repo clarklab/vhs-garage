@@ -1,9 +1,37 @@
 // YouTube publish helper (Edge Function variant)
 // Runs on Netlify Edge (Deno) — gets ~50s response budget vs. 10s for regular
-// Functions, so the Gemini AI rewrite has much more headroom.
+// Functions, so the AI rewrite has much more headroom.
+//
 // The caller supplies their own refresh token (per-user OAuth). This function
 // exchanges it for a short-lived access token and returns it along with the
 // AI-rewritten copy. Upload itself is done directly from the browser.
+//
+// AI MODEL ROUTING
+//   The client passes a `model` field in the body (set by the AI dropdown
+//   in the capture toolbar). pickModel() validates against the allowlist
+//   and providerFor() routes to the matching handler. Adding a new model
+//   means: append to ALLOWED_MODELS, ensure providerFor() returns the
+//   right provider name, and confirm the env vars for that provider are
+//   set in the Netlify dashboard.
+
+const ALLOWED_MODELS = new Set([
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gpt-4.1-nano',
+  'claude-haiku-4-5',
+]);
+
+function pickModel(requested, defaultModel) {
+  if (requested && ALLOWED_MODELS.has(requested)) return requested;
+  return defaultModel;
+}
+
+function providerFor(model) {
+  if (model.startsWith('gemini')) return 'gemini';
+  if (model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3')) return 'openai';
+  if (model.startsWith('claude')) return 'anthropic';
+  return 'gemini';
+}
 
 export default async (req) => {
   if (req.method !== 'POST') {
@@ -14,9 +42,27 @@ export default async (req) => {
 
   const YOUTUBE_CLIENT_ID = env('YOUTUBE_OAUTH_CLIENT_ID');
   const YOUTUBE_CLIENT_SECRET = env('YOUTUBE_OAUTH_CLIENT_SECRET');
-  const GEMINI_API_KEY = env('GEMINI_API_KEY');
-  const GEMINI_BASE_URL = env('GOOGLE_GEMINI_BASE_URL');
-  const GEMINI_MODEL = env('GEMINI_MODEL') || 'gemini-2.5-flash';
+
+  // Per-provider config. The Gemini path is always wired up (default
+  // model). OpenAI / Anthropic only work if the user has populated the
+  // matching env vars in the Netlify dashboard; if not, those models
+  // gracefully fall through to the template-built fallback.
+  const providers = {
+    gemini: {
+      apiKey: env('GEMINI_API_KEY'),
+      baseUrl: env('GOOGLE_GEMINI_BASE_URL'),
+    },
+    openai: {
+      apiKey: env('OPENAI_API_KEY'),
+      baseUrl: env('OPENAI_BASE_URL') || 'https://api.openai.com/v1',
+    },
+    anthropic: {
+      apiKey: env('ANTHROPIC_API_KEY'),
+      baseUrl: env('ANTHROPIC_BASE_URL') || 'https://api.anthropic.com/v1',
+    },
+  };
+
+  const DEFAULT_MODEL = env('GEMINI_MODEL') || 'gemini-2.5-flash-lite';
 
   if (!YOUTUBE_CLIENT_ID || !YOUTUBE_CLIENT_SECRET) {
     return json({ error: 'YouTube OAuth not configured' }, 500);
@@ -29,7 +75,8 @@ export default async (req) => {
     return json({ error: 'Invalid JSON' }, 400);
   }
 
-  const { metadata, action, refreshToken } = body;
+  const { metadata, action, refreshToken, model: requestedModel } = body;
+  const model = pickModel(requestedModel, DEFAULT_MODEL);
 
   if (!refreshToken) {
     return json({ error: 'Not signed in' }, 401);
@@ -55,7 +102,7 @@ export default async (req) => {
         clientSecret: YOUTUBE_CLIENT_SECRET,
         refreshToken,
       }),
-      rewriteForYouTube(metadata, { apiKey: GEMINI_API_KEY, baseUrl: GEMINI_BASE_URL, model: GEMINI_MODEL }),
+      rewriteForYouTube(metadata, model, providers),
     ]);
 
     if (!token) return json({ error: 'Could not get access token — please sign in again' }, 401);
@@ -66,7 +113,7 @@ export default async (req) => {
       description: aiCopy.description,
       tags: aiCopy.tags,
       aiFallback: aiCopy._aiFallback === true,
-      model: GEMINI_MODEL,
+      model,
       elapsedMs: Date.now() - started,
     });
   }
@@ -78,14 +125,14 @@ export default async (req) => {
     if (!metadata) return json({ error: 'Missing metadata' }, 400);
 
     const started = Date.now();
-    const aiCopy = await rewriteForYouTube(metadata, { apiKey: GEMINI_API_KEY, baseUrl: GEMINI_BASE_URL, model: GEMINI_MODEL });
+    const aiCopy = await rewriteForYouTube(metadata, model, providers);
 
     return json({
       title: aiCopy.title,
       description: aiCopy.description,
       tags: aiCopy.tags,
       aiFallback: aiCopy._aiFallback === true,
-      model: GEMINI_MODEL,
+      model,
       elapsedMs: Date.now() - started,
     });
   }
@@ -115,16 +162,8 @@ async function getAccessToken({ clientId, clientSecret, refreshToken }) {
   }
 }
 
-async function rewriteForYouTube(metadata, { apiKey, baseUrl, model }) {
-  const fallback = {
-    title: metadata.title || 'VHS Tape',
-    description: buildFallbackDescription(metadata),
-    tags: metadata.tags || 'VHS, retro, analog',
-  };
-
-  if (!apiKey || !baseUrl) return fallback;
-
-  const prompt = `You are a YouTube SEO expert optimizing for maximum discoverability on a VHS archival channel called "VHS Garage" (@oracrest). Your #1 job: make this clip findable by people searching YouTube and Google for retro/VHS content.
+function buildPrompt(metadata) {
+  return `You are a YouTube SEO expert optimizing for maximum discoverability on a VHS archival channel called "VHS Garage" (@oracrest). Your #1 job: make this clip findable by people searching YouTube and Google for retro/VHS content.
 
 METADATA:
 Title: ${metadata.title || 'Untitled'}
@@ -169,39 +208,146 @@ Return ONLY valid JSON:
   "description": "...",
   "tags": "..."
 }`;
+}
 
-  // Edge Functions get ~50s wall time. Cap the AI call well below that so
-  // the token fetch (part of the Promise.all) has room to return even if
-  // Gemini stalls.
+// Lenient JSON parse — handles models that wrap output in ```json fences,
+// add trailing prose, or otherwise leak around strict mode. Returns null
+// if no parseable object can be recovered.
+function parseModelJson(raw) {
+  if (!raw) return null;
+  let s = String(raw).replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  try { return JSON.parse(s); } catch {}
+  const start = s.indexOf('{');
+  const end = s.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(s.slice(start, end + 1)); } catch {}
+  }
+  return null;
+}
+
+// Dispatcher — picks the provider handler based on the model ID. Wraps
+// each call in an abort timer so we never blow the edge function's 50s
+// budget. Any failure (provider down, no API key, bad JSON, abort)
+// falls back to a template-built description so the user still gets
+// SOMETHING to upload with.
+async function rewriteForYouTube(metadata, model, providers) {
+  const fallback = {
+    title: metadata.title || 'VHS Tape',
+    description: buildFallbackDescription(metadata),
+    tags: metadata.tags || 'VHS, retro, analog',
+  };
+
+  const prompt = buildPrompt(metadata);
+  const provider = providerFor(model);
+  const cfg = providers[provider];
+
+  // Edge functions have ~50s wall time. Cap the AI call below that so
+  // the token fetch (part of the Promise.all in `prepare`) has room to
+  // return even if the AI provider stalls.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30000);
 
   try {
-    const res = await fetch(
-      `${baseUrl}/v1beta/models/${model}:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        }),
-        signal: controller.signal,
-      }
-    );
-    const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-    return JSON.parse(cleaned);
+    let raw;
+    if (provider === 'openai') raw = await callOpenAI(prompt, model, cfg, controller.signal);
+    else if (provider === 'anthropic') raw = await callAnthropic(prompt, model, cfg, controller.signal);
+    else raw = await callGemini(prompt, model, cfg, controller.signal);
+
+    const parsed = parseModelJson(raw);
+    if (!parsed || (!parsed.title && !parsed.description && !parsed.tags)) {
+      console.warn('AI rewrite returned unparseable output, falling back', { model });
+      return { ...fallback, _aiFallback: true };
+    }
+    return parsed;
   } catch (e) {
     const reason = e.name === 'AbortError' ? 'timeout after 30s' : e.message;
-    console.warn('Gemini rewrite failed, using fallback:', reason);
+    console.warn('AI rewrite failed, using fallback:', { model, provider, reason });
     return { ...fallback, _aiFallback: true };
   } finally {
     clearTimeout(timer);
   }
+}
+
+// --- Provider handlers ---
+// Each takes (prompt, model, cfg, signal) and returns the raw text response.
+// JSON parsing happens once in the caller (parseModelJson) so each handler
+// stays small and only worries about wire format.
+
+async function callGemini(prompt, model, cfg, signal) {
+  if (!cfg.apiKey || !cfg.baseUrl) throw new Error('Gemini not configured');
+  const res = await fetch(
+    `${cfg.baseUrl}/v1beta/models/${model}:generateContent`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.apiKey },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        // generationConfig.responseMimeType: "application/json" gives us
+        // strict-JSON output on Gemini 2.5+ — no fence-stripping needed
+        // (parseModelJson handles it as a belt-and-suspenders fallback).
+        generationConfig: { responseMimeType: 'application/json' },
+      }),
+      signal,
+    }
+  );
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Gemini ${res.status}: ${errText.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+async function callOpenAI(prompt, model, cfg, signal) {
+  if (!cfg.apiKey) throw new Error('OpenAI not configured (set OPENAI_API_KEY)');
+  const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${cfg.apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      // response_format json_object forces valid JSON output — pairs
+      // with the "Return ONLY valid JSON" instruction in the prompt.
+      response_format: { type: 'json_object' },
+    }),
+    signal,
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`OpenAI ${res.status}: ${errText.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+async function callAnthropic(prompt, model, cfg, signal) {
+  if (!cfg.apiKey) throw new Error('Anthropic not configured (set ANTHROPIC_API_KEY)');
+  const res = await fetch(`${cfg.baseUrl}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': cfg.apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+    signal,
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Anthropic ${res.status}: ${errText.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  // Anthropic responses are a content array of blocks; we want the first
+  // text block. parseModelJson handles any prefix/suffix prose.
+  const block = (data.content || []).find((b) => b.type === 'text');
+  return block?.text || '';
 }
 
 function buildFallbackDescription(m) {
