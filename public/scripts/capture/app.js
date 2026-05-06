@@ -4826,10 +4826,15 @@ function wireYouTubePublish() {
   function buildMetadata() {
     const clips = getClips();
     const storedClip = clips.find(c => c.id === publishClipId);
-    if (!storedClip) return null;
-    const base = publishClipId === lastClipId
-      ? { ...storedClip, ...readFormFields() }
-      : storedClip;
+    // No stored clip yet (e.g. recording is rolling but the catalog
+    // entry hasn't been added on stop yet) — fall back to whatever's
+    // in the form so the AI can work on the in-progress metadata. The
+    // user shouldn't have to wait for the recording to finish before
+    // they can ask the AI to clean up the title or description they
+    // already typed.
+    const base = storedClip
+      ? (publishClipId === lastClipId ? { ...storedClip, ...readFormFields() } : storedClip)
+      : readFormFields();
     return {
       ...base,
       title: titleInput.value || base.title,

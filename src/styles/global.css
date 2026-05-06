@@ -13,6 +13,21 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Tailwind v4 dropped the default `cursor: pointer` on <button> that
+   v3 / browsers used to ship. Restore it globally so buttons (and
+   ARIA-button-roled elements) always read as clickable. Disabled
+   buttons still get not-allowed via the [disabled] selector below. */
+button:not(:disabled),
+[role="button"]:not(:disabled),
+summary {
+  cursor: pointer;
+}
+button:disabled,
+[role="button"][disabled],
+[role="button"][aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
 .vhs-prose {
   color: var(--color-gray-300);
   font-size: var(--text-base);

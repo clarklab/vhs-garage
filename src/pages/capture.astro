@@ -137,17 +137,6 @@ import { BUILD_ID } from '../utils/build-id.js';
       0%, 100% { box-shadow: 0 0 8px rgba(34,197,94,0.2), inset 0 0 8px rgba(34,197,94,0.05); }
       50% { box-shadow: 0 0 18px rgba(34,197,94,0.5), inset 0 0 18px rgba(34,197,94,0.15); }
     }
-    .scanlines {
-      background: repeating-linear-gradient(
-        0deg,
-        transparent,
-        transparent 2px,
-        rgba(0, 0, 0, 0.08) 2px,
-        rgba(0, 0, 0, 0.08) 4px
-      );
-      pointer-events: none;
-    }
-
     /* Library window "shoop" — opens from below + grows in scale + fades in,
        like a real OS window animating into place. Animation is applied to
        the inner chrome (the bordered box) rather than the outer position
@@ -613,7 +602,6 @@ import { BUILD_ID } from '../utils/build-id.js';
           <div id="preview-container" class="relative flex-1 bg-[#141214] border border-white/10 overflow-hidden cursor-pointer">
             <video id="preview" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
             <video id="playback" controls class="hidden w-full h-full object-contain bg-black"></video>
-            <div class="scanlines absolute inset-0"></div>
             <div id="rec-overlay-timer" class="hidden absolute top-3 right-4 text-red-500 tabular-nums z-10" style="text-shadow: 0 0 10px rgba(229,57,53,0.7), 0 0 20px rgba(229,57,53,0.4);">
               00:00:00
             </div>
