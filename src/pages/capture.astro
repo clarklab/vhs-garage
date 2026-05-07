@@ -1160,6 +1160,23 @@ import { BUILD_ID } from '../utils/build-id.js';
                   <option value="private">Private</option>
                 </select>
               </div>
+
+              <!-- Add to playlists. Bridge-only feature for now. The 3
+                   most recent playlists on the bridge channel are
+                   fetched at panel mount; the section auto-hides
+                   when there are none (e.g., bridge token still has
+                   old scope, user is non-allowlisted, or the channel
+                   has no playlists yet). After a successful upload
+                   the client fires a fire-and-forget add-to-playlist
+                   for each checked box. Failures are logged but never
+                   surfaced to the user — the upload itself worked.
+                   The list itself is rendered into #yt-pub-playlists-list
+                   by populatePlaylistsUI() in app.js. -->
+              <div id="yt-pub-playlists" class="hidden mb-3">
+                <p class="text-white/40 text-[10px] uppercase tracking-widest mb-1.5">Add to playlists</p>
+                <div id="yt-pub-playlists-list" class="space-y-1"></div>
+              </div>
+
               <button id="yt-pub-upload" class="w-full py-2 bg-red-600 hover:bg-red-500 text-white text-xs transition-colors">Upload to YouTube</button>
               <!-- (The #yt-pub-progress bar lives at the top of
                    #cap-pub-fieldset above, NOT here — keeps it visible

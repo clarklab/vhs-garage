@@ -3876,17 +3876,23 @@ const YT_REFRESH_KEY = 'yt_refresh_token';
 const YT_CHANNEL_KEY = 'yt_channel';
 const YT_PKCE_KEY = 'yt_pkce_verifier';
 const YT_PENDING_PUBLISH_KEY = 'yt_pending_publish_clip_id';
-// `openid email` added so the upload-bridge edge function can verify a
-// user's identity via Google's tokeninfo endpoint and check it against
-// the bridge allowlist. Without these scopes tokeninfo doesn't return
-// the `email` field. One-time consent re-prompt for existing users —
-// they'll see "wants to know your email address" the next time they
-// sign in.
+// `openid email` so the bridge edge function can verify a user's
+// identity via Google's tokeninfo endpoint and check the allowlist.
+//
+// `youtube.force-ssl` was added later for playlist support: the
+// bridge needs WRITE access to add freshly-uploaded videos into the
+// VHS Garage channel's playlists (playlistItems.insert). upload +
+// readonly alone can list playlists but not modify them. The bridge
+// uses ITS OWN stored token for the actual playlist add, so even
+// non-allowlisted users granting force-ssl don't gain any new
+// powers — it's just along for the ride. One-time consent re-prompt
+// for existing users on next sign-in.
 const YT_SCOPES = [
   'openid',
   'email',
   'https://www.googleapis.com/auth/youtube.upload',
   'https://www.googleapis.com/auth/youtube.readonly',
+  'https://www.googleapis.com/auth/youtube.force-ssl',
 ].join(' ');
 
 function ytGetRefreshToken() {
@@ -4191,6 +4197,99 @@ function clearWhoamiCache() {
   cachedWhoami = null;
   cachedWhoamiToken = null;
   inflightWhoami = null;
+  cachedPlaylists = null;
+  cachedPlaylistsToken = null;
+}
+
+// ---------------------------------------------------------------------------
+// Bridge playlists
+// ---------------------------------------------------------------------------
+//
+// The publish panel offers checkboxes to add the just-uploaded video to one
+// or more of the bridge channel's playlists (3 most recent, sorted by
+// creation date). Bridge-only feature; the section auto-hides when the
+// list is empty (non-allowlisted user, bridge token still on old scope, or
+// no playlists on the channel).
+//
+// The fetch is cached per access token so we don't re-hit the bridge on
+// every panel open. Cleared by clearWhoamiCache (sign-out / token rotate).
+let cachedPlaylists = null;        // [{id, title, itemCount}, ...] or [] when none
+let cachedPlaylistsToken = null;
+let inflightPlaylists = null;
+
+async function fetchBridgePlaylists() {
+  const token = currentToken || await fetchAccessTokenInBackground();
+  if (!token) return [];
+  if (cachedPlaylists !== null && cachedPlaylistsToken === token) return cachedPlaylists;
+  if (inflightPlaylists) return inflightPlaylists;
+
+  inflightPlaylists = (async () => {
+    try {
+      const res = await fetch('/api/youtube-bridge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'list-playlists', accessToken: token }),
+      });
+      if (!res.ok) {
+        // 403 → user not allowlisted (expected, no logging needed).
+        // Anything else → log so we can debug if playlists vanish.
+        if (res.status !== 403) {
+          const detail = await res.json().catch(() => ({}));
+          console.warn('[playlists] list failed', { status: res.status, detail });
+        }
+        cachedPlaylists = [];
+        cachedPlaylistsToken = token;
+        return [];
+      }
+      const data = await res.json();
+      cachedPlaylists = Array.isArray(data.playlists) ? data.playlists : [];
+      cachedPlaylistsToken = token;
+      return cachedPlaylists;
+    } catch (e) {
+      console.warn('[playlists] list threw:', e.message);
+      return [];
+    }
+  })();
+  try { return await inflightPlaylists; }
+  finally { inflightPlaylists = null; }
+}
+
+// Render checkboxes into #yt-pub-playlists-list. Auto-hides the wrapper
+// section when there are no playlists. Idempotent — safe to call on every
+// publish panel open. The DOM order matches the API response order
+// (already sorted by snippet.publishedAt DESC server-side).
+function populatePlaylistsUI(playlists) {
+  const wrapper = document.getElementById('yt-pub-playlists');
+  const list = document.getElementById('yt-pub-playlists-list');
+  if (!wrapper || !list) return;
+  if (!playlists || playlists.length === 0) {
+    wrapper.classList.add('hidden');
+    list.innerHTML = '';
+    return;
+  }
+  // Render fresh each time. Preserves no per-checkbox state across panel
+  // opens (intentional — the user picks playlists fresh per upload).
+  list.innerHTML = playlists.map((p) => `
+    <label class="flex items-center gap-2 text-[11px] text-white/70 hover:text-white/90 cursor-pointer">
+      <input type="checkbox" data-playlist-id="${escapeHtml(p.id)}"
+             class="accent-red-600 cursor-pointer" />
+      <span class="flex-1 truncate">${escapeHtml(p.title)}</span>
+      <span class="text-white/30 tabular-nums">${p.itemCount || 0}</span>
+    </label>
+  `).join('');
+  wrapper.classList.remove('hidden');
+}
+
+// Read which playlist boxes are currently checked. Returns an array of
+// playlist IDs in DOM order. Snapshot at the moment of upload click — once
+// an item is in the upload queue, the user can navigate around without
+// changing what playlists it'll land in.
+function getCheckedPlaylistIds() {
+  const list = document.getElementById('yt-pub-playlists-list');
+  if (!list) return [];
+  return Array.from(list.querySelectorAll('input[type="checkbox"]:checked'))
+    .map((el) => el.dataset.playlistId)
+    .filter(Boolean);
 }
 
 // --- Upload queue + toast notifications ---
@@ -4260,6 +4359,11 @@ function enqueueUpload(clipId, token) {
     errorMsg: null,
     token,
     snippet: snapshotPublishForm(),
+    // Snapshot which playlists were checked at upload-click time. Frozen
+    // onto the queue item so the user can navigate / open other panels
+    // without changing where this video lands. Empty array if no
+    // playlists picked or the section was hidden.
+    playlistIds: getCheckedPlaylistIds(),
     queuePosition: 1,
     queueLength: 1,
   };
@@ -4530,6 +4634,28 @@ async function runUploadItem(item) {
                   aiModel: typeof getAiModel === 'function' ? getAiModel() : null,
                 }),
               }).catch(() => {});
+            }
+            // Add the new video to each playlist the user checked at
+            // queue-time. Bridge-only — direct uploads can't add to
+            // VHS Garage's playlists. Fire-and-forget per playlist
+            // (parallel); the add operation isn't critical to the
+            // user-facing success state. Failures land in the bridge's
+            // console.warn for debugging.
+            if (item.uploadedViaBridge && Array.isArray(item.playlistIds) && item.playlistIds.length > 0) {
+              for (const playlistId of item.playlistIds) {
+                fetch('/api/youtube-bridge', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    action: 'add-to-playlist',
+                    accessToken: item.token,
+                    videoId: result.id,
+                    playlistId,
+                  }),
+                }).catch((e) => {
+                  console.warn('[upload] add-to-playlist threw:', e.message, { playlistId });
+                });
+              }
             }
             resolve();
           } catch (e) {
@@ -5049,6 +5175,11 @@ function wireYouTubePublish() {
     // switches typically resolve from cache without a network round-trip.
     fetchAccessTokenInBackground().then(() => {
       refreshDestinationBanner();
+      // Also fetch + render playlists. Cached per token, so this is
+      // a no-op on subsequent clips. populatePlaylistsUI hides the
+      // section gracefully when the list is empty (non-allowlisted
+      // user, scope mismatch, no playlists on the channel).
+      fetchBridgePlaylists().then(populatePlaylistsUI);
     });
   }
   publishStateForClip_external = publishStateForClip;

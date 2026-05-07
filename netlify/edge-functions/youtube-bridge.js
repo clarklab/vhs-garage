@@ -278,6 +278,113 @@ export default async (req) => {
     return json({ ok: true });
   }
 
+  // ------------ USER: list the bridge channel's playlists ------------
+  // Returns the 3 most recent playlists (by creation date) so the
+  // capture page can render them as checkboxes in the publish panel.
+  // Allowlisted users only — the bridge token is what owns these
+  // playlists; we don't expose them to the public.
+  //
+  // Sorted client-side by snippet.publishedAt DESC because
+  // playlists.list doesn't accept an order parameter. Limited to 3
+  // because that's the design call (most recent N is plenty; a
+  // dropdown is cleaner than a long checkbox list). If you want more,
+  // change PLAYLIST_LIMIT below.
+  if (action === 'list-playlists') {
+    if (!ALLOWED_EMAILS.includes(userEmail)) {
+      return json({ error: 'Not authorized', email: userEmail }, 403);
+    }
+    const bridgeAccessToken = await getBridgeAccessToken({
+      clientId: YOUTUBE_CLIENT_ID,
+      clientSecret: YOUTUBE_CLIENT_SECRET,
+    });
+    if (!bridgeAccessToken) {
+      return json({
+        error: 'Bridge token missing or expired. Admin must re-connect at /admin/connect-youtube.',
+      }, 503);
+    }
+
+    // playlists.list with mine=true + part=snippet,contentDetails gives us
+    // the title (for the checkbox label) + itemCount (so we can show
+    // "Movie Trailers (47)" so the user knows it's the right one).
+    const PLAYLIST_LIMIT = 3;
+    const res = await fetch(
+      'https://www.googleapis.com/youtube/v3/playlists?mine=true&part=snippet,contentDetails&maxResults=50',
+      { headers: { Authorization: `Bearer ${bridgeAccessToken}` } }
+    );
+    if (!res.ok) {
+      const detail = await res.text();
+      return json({
+        error: 'YouTube playlists.list failed',
+        detail,
+        ytStatus: res.status,
+      }, 502);
+    }
+    const data = await res.json();
+    const items = (data.items || [])
+      .map((p) => ({
+        id: p.id,
+        title: p.snippet?.title || '(untitled)',
+        itemCount: p.contentDetails?.itemCount || 0,
+        publishedAt: p.snippet?.publishedAt || '',
+      }))
+      .sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''))
+      .slice(0, PLAYLIST_LIMIT);
+    return json({ playlists: items });
+  }
+
+  // ------------ USER: add an uploaded video to a bridge playlist ------------
+  // Fire-and-forget from the client after a successful upload. Uses
+  // the BRIDGE token (the one that owns the playlists) — the user's
+  // own token doesn't have rights here even with force-ssl, since the
+  // playlists belong to the brand channel, not them.
+  if (action === 'add-to-playlist') {
+    if (!ALLOWED_EMAILS.includes(userEmail)) {
+      return json({ error: 'Not authorized', email: userEmail }, 403);
+    }
+    const { videoId, playlistId } = body;
+    if (!videoId || !playlistId) {
+      return json({ error: 'Missing videoId or playlistId' }, 400);
+    }
+    const bridgeAccessToken = await getBridgeAccessToken({
+      clientId: YOUTUBE_CLIENT_ID,
+      clientSecret: YOUTUBE_CLIENT_SECRET,
+    });
+    if (!bridgeAccessToken) {
+      return json({ error: 'Bridge token missing or expired' }, 503);
+    }
+    const res = await fetch(
+      'https://www.googleapis.com/youtube/v3/playlistItems?part=snippet',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${bridgeAccessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          snippet: {
+            playlistId,
+            resourceId: { kind: 'youtube#video', videoId },
+          },
+        }),
+      }
+    );
+    if (!res.ok) {
+      const detail = await res.text();
+      // 404 here usually means the playlist was deleted between the
+      // panel-load and the upload-finish. 403 likely means the bridge
+      // token's scope is stale — admin needs to re-grant force-ssl.
+      console.warn('[bridge] playlistItems.insert failed', {
+        ytStatus: res.status, playlistId, videoId, detail: detail.slice(0, 300),
+      });
+      return json({
+        error: 'Could not add to playlist',
+        detail,
+        ytStatus: res.status,
+      }, 502);
+    }
+    return json({ ok: true, playlistId, videoId });
+  }
+
   // ------------ USER: record a successful bridge upload (stats only) ------------
   // Called by the client after a video PUT succeeds. We don't trust the
   // numbers blindly — both fields are clamped to sane ranges — but the
