@@ -645,11 +645,15 @@ async function readSidecarJson(dirHandle, basename) {
 async function saveSidecarFiles(dirHandle, basename, entry) {
   if (!dirHandle) return;
 
-  // Strip sleeve image data from JSON (too large for sidecar)
+  // Strip image data from JSON. These all live as their own files on
+  // disk (sleeves as {basename}_front/_back.jpg, the picked YouTube
+  // frame as {basename}_youtube.jpg) so duplicating them as base64
+  // inside the sidecar JSON just bloats the file for no benefit.
   const jsonEntry = { ...entry };
   delete jsonEntry.thumbnail;
   delete jsonEntry.sleeveFront;
   delete jsonEntry.sleeveBack;
+  delete jsonEntry.ytThumbnailDataUrl;
 
   // Save JSON sidecar
   try {
@@ -2510,12 +2514,22 @@ function refreshLibrary() {
   // they need to. This is a "let me redo the upload from VHS Garage's
   // side" shortcut, not a YouTube content moderation action.
   const onMarkUnuploaded = (id) => {
+    const clips = getClips();
+    const target = clips.find(c => c.id === id);
     updateClip(id, {
       youtubeUrl: null,
       youtubeId: null,
       ytThumbnailDataUrl: null,
       ytThumbnailTime: null,
     });
+    // Clear the on-disk thumbnail backup too — without this, the disk
+    // copy outlives the catalog clear and gets re-imported the next time
+    // loadClipIntoEditor restores from disk, undoing the user's intent
+    // to "redo this upload from scratch."
+    if (target && target.filename && directoryHandle) {
+      const basename = target.filename.replace(/\.(webm|mp4)$/, '');
+      directoryHandle.removeEntry(`${basename}_youtube.jpg`).catch(() => {});
+    }
     // If the cleared clip is the one currently in the editor, refresh
     // the publish panel so it flips back from "Uploaded" to the form.
     if (lastClipId === id) {
@@ -2583,6 +2597,7 @@ function refreshLibrary() {
         `${basename}.youtube.txt`,
         `${basename}_front.jpg`,
         `${basename}_back.jpg`,
+        `${basename}_youtube.jpg`,
       ];
       for (const name of targets) {
         try { await directoryHandle.removeEntry(name); } catch {}
@@ -3027,6 +3042,41 @@ async function readSleeveFromDisk(dirHandle, basename, side) {
   }
 }
 
+// Persist the user-picked YouTube thumbnail frame to disk as
+// {basename}_youtube.jpg. The catalog copy in localStorage gets evicted
+// under quota pressure (see HEAVY_FIELDS in library.js) — without a disk
+// backup, the pick silently disappears on revisit and the upload sends
+// nothing, letting YouTube pick a random frame. Disk is the durable
+// source of truth, mirroring the sleeve photo pattern.
+async function saveYtThumbnailToDisk(clipId, dataUrl) {
+  if (!directoryHandle || !clipId || !dataUrl) return;
+  const clips = getClips();
+  const clip = clips.find(c => c.id === clipId);
+  if (!clip || !clip.filename) return;
+  const basename = clip.filename.replace(/\.(webm|mp4)$/, '');
+  const fh = await directoryHandle.getFileHandle(`${basename}_youtube.jpg`, { create: true });
+  const w = await fh.createWritable();
+  const res = await fetch(dataUrl);
+  await w.write(await res.blob());
+  await w.close();
+}
+
+async function readYtThumbnailFromDisk(dirHandle, basename) {
+  if (!dirHandle || !basename) return null;
+  try {
+    const fh = await dirHandle.getFileHandle(`${basename}_youtube.jpg`);
+    const file = await fh.getFile();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  } catch {
+    return null;
+  }
+}
+
 // Load a previously-captured clip back into the main capture screen so the
 // user can review / edit / publish it using the same UI as a fresh capture.
 // This is the new "primary" way to interact with library clips — it replaces
@@ -3162,6 +3212,26 @@ async function loadClipIntoEditor(clipId) {
   // "front_captured" with the webcam moved into the back slot.
   restoreSleeve(frontData, backData);
 
+  // 4b. Restore the picked YouTube thumbnail from disk if the catalog lost
+  // it to a quota eviction (HEAVY_FIELDS in library.js evicts older clips'
+  // ytThumbnailDataUrl when localStorage gets tight). Without this, the
+  // picker re-generates fresh random frames on revisit, the upload sends
+  // no thumbnail, and YouTube auto-picks a random frame instead of what
+  // the user originally selected.
+  if (clip.filename && directoryHandle && !clip.ytThumbnailDataUrl) {
+    const baseForThumb = clip.filename.replace(/\.(webm|mp4)$/, '');
+    const savedThumb = await readYtThumbnailFromDisk(directoryHandle, baseForThumb);
+    if (savedThumb) {
+      // Refill the catalog so renderGrid + the upload path see it again.
+      // saveClips' quota-recovery may evict another older clip's heavy
+      // field to make room — that one will self-heal the same way the
+      // next time it's opened. Disk is the durable source of truth.
+      const updates = { ytThumbnailDataUrl: savedThumb };
+      if (!clip.thumbnail) updates.thumbnail = await shrinkDataUrlForCatalog(savedThumb);
+      updateClip(clipId, updates);
+    }
+  }
+
   // 5. Wire up the Last Recording playback with this clip's blob URL and
   // switch to that tab so the user sees the clip immediately. Library-open
   // is a user-gesture-driven action, so autoplay-with-sound is allowed —
@@ -3276,8 +3346,19 @@ function wireThumbnailPicker() {
     const clip = clips.find(c => c.id === lastClipId);
     const selected = clip && clip.ytThumbnailDataUrl;
 
+    // Always render the saved pick as the first cell when one exists, so
+    // re-opening a clip (which auto-generates 6 fresh random frames that
+    // never match the saved one) doesn't make the highlight disappear and
+    // look like the pick was lost. Refresh keeps regenerating the trailing
+    // 6 — the saved cell stays put and stays highlighted until replaced.
+    const cells = [];
+    if (selected) cells.push(selected);
+    for (const t of currentThumbnails) {
+      if (t !== selected) cells.push(t);
+    }
+
     grid.innerHTML = '';
-    currentThumbnails.forEach((dataUrl, i) => {
+    cells.forEach((dataUrl, i) => {
       const isSelected = dataUrl === selected;
       const cell = document.createElement('button');
       cell.type = 'button';
@@ -3291,6 +3372,11 @@ function wireThumbnailPicker() {
       cell.addEventListener('click', () => selectThumbnail(dataUrl));
       grid.appendChild(cell);
     });
+
+    // Flip into grid state when at least the saved pick is present, so a
+    // clip with a saved pick but no auto-gen yet still shows it instead
+    // of the empty placeholder grid.
+    if (cells.length > 0) showState('grid');
   }
 
   async function selectThumbnail(dataUrl) {
@@ -3300,6 +3386,14 @@ function wireThumbnailPicker() {
     // localStorage. Both come from the same source frame so they stay in sync.
     const small = await shrinkDataUrlForCatalog(dataUrl);
     updateClip(lastClipId, { ytThumbnailDataUrl: dataUrl, thumbnail: small });
+    // Mirror the full-res frame to disk so the pick survives a localStorage
+    // quota eviction (catalog ytThumbnailDataUrl is in HEAVY_FIELDS). Without
+    // this, opening an older clip after the catalog has filled up shows no
+    // saved pick and the upload silently sends none — YouTube then auto-picks
+    // a random frame, which is the bug Matt hit (Kurt Cobain → Anthony Kiedis).
+    saveYtThumbnailToDisk(lastClipId, dataUrl).catch((e) => {
+      console.warn('[thumb] disk save failed:', e.message);
+    });
     refreshLibrary();
     renderGrid();
   }
@@ -3663,12 +3757,14 @@ async function renameSiblings(oldBasename, newBasename) {
     `${oldBasename}.youtube.txt`,
     `${oldBasename}_front.jpg`,
     `${oldBasename}_back.jpg`,
+    `${oldBasename}_youtube.jpg`,
   ];
   const targets = [
     `${newBasename}.json`,
     `${newBasename}.youtube.txt`,
     `${newBasename}_front.jpg`,
     `${newBasename}_back.jpg`,
+    `${newBasename}_youtube.jpg`,
   ];
   for (let i = 0; i < siblings.length; i++) {
     await renameFileOnDisk(siblings[i], targets[i]).catch(() => {});
@@ -4357,12 +4453,27 @@ async function runUploadItem(item) {
             // bridge, the thumbnail must too — otherwise it'd attempt a
             // thumbnails.set on a videoId that belongs to the bridge
             // account using the user's own token, which 403s.
+            //
+            // The catalog ytThumbnailDataUrl can be missing here even when
+            // the user picked one earlier — HEAVY_FIELDS evicts it under
+            // localStorage pressure, which is exactly what happens to older
+            // clips in a multi-upload batch. Fall back to {basename}_youtube.jpg
+            // on disk so the originally-picked frame still gets uploaded
+            // instead of letting YouTube auto-pick a random one.
             const clipsAfter = getClips();
             const clipAfter = clipsAfter.find(c => c.id === item.clipId);
-            if (clipAfter && clipAfter.ytThumbnailDataUrl) {
-              uploadYouTubeThumbnail(result.id, item.token, clipAfter.ytThumbnailDataUrl, { useBridge: item.uploadedViaBridge })
-                .catch((e) => console.warn('[upload] thumbnail failed:', e.message));
-            }
+            (async () => {
+              if (!clipAfter) return;
+              let thumbDataUrl = clipAfter.ytThumbnailDataUrl;
+              if (!thumbDataUrl && clipAfter.filename && directoryHandle) {
+                const baseForThumb = clipAfter.filename.replace(/\.(webm|mp4)$/, '');
+                thumbDataUrl = await readYtThumbnailFromDisk(directoryHandle, baseForThumb);
+              }
+              if (thumbDataUrl) {
+                uploadYouTubeThumbnail(result.id, item.token, thumbDataUrl, { useBridge: item.uploadedViaBridge })
+                  .catch((e) => console.warn('[upload] thumbnail failed:', e.message));
+              }
+            })();
             // If the video went through the bridge, record stats (count +
             // duration + size) so the admin dashboard has something to show.
             // Fire-and-forget — failure to record stats never affects the
@@ -5308,6 +5419,7 @@ function wirePlaybackTabs() {
         `${basename}.youtube.txt`,
         `${basename}_front.jpg`,
         `${basename}_back.jpg`,
+        `${basename}_youtube.jpg`,
       ];
       for (const name of targets) {
         try { await directoryHandle.removeEntry(name); } catch {} // best-effort
