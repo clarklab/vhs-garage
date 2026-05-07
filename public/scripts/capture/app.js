@@ -4491,6 +4491,46 @@ async function runUploadItem(item) {
                 }),
               }).catch(() => {});
             }
+            // Centralized upload log — every successful upload (bridge AND
+            // direct) gets a row in the upload_logs table. Lives in a
+            // separate Node function because @netlify/database is Node-only
+            // (Edge runs Deno + can't import the package). Fire-and-forget
+            // for the same reason as the bridge stats above: a network
+            // hiccup here shouldn't make the user think their YouTube
+            // upload failed (it already succeeded — we're just logging).
+            if (clipAfter) {
+              const personalCh = ytGetChannel();
+              const channelHandle = item.uploadedViaBridge
+                ? (cachedWhoami?.bridgeChannel?.handle || null)
+                : (personalCh?.handle || null);
+              fetch('/.netlify/functions/log-upload', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  accessToken: item.token,
+                  videoId: result.id,
+                  videoUrl: item.ytUrl,
+                  visibility: item.snippet?.privacyStatus || null,
+                  uploadedViaBridge: !!item.uploadedViaBridge,
+                  channelHandle,
+                  clientClipId: clipAfter.id,
+                  title: clipAfter.title || null,
+                  description: clipAfter.description || null,
+                  tags: clipAfter.tags || null,
+                  durationSeconds: clipAfter.duration || 0,
+                  byteSize: clipAfter.fileSize || 0,
+                  mimeType: contentType,
+                  year: clipAfter.year || null,
+                  tapeTitle: clipAfter.tape || null,
+                  distributor: clipAfter.distributor || null,
+                  tapeLength: clipAfter.tapeLength || null,
+                  recordingSpeed: clipAfter.recordingSpeed || null,
+                  condition: clipAfter.condition || null,
+                  cassetteNotes: clipAfter.cassetteNotes || null,
+                  aiModel: typeof getAiModel === 'function' ? getAiModel() : null,
+                }),
+              }).catch(() => {});
+            }
             resolve();
           } catch (e) {
             reject(new Error('Upload succeeded but response was unparseable.'));

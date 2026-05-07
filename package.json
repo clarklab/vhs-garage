@@ -15,6 +15,7 @@
     "@astrojs/mdx": "^5.0.4",
     "@hackernoon/pixel-icon-library": "^1.1.0",
     "@netlify/blobs": "^10.7.4",
+    "@netlify/database": "^1.0.0",
     "@tailwindcss/vite": "^4.2.2",
     "astro": "^6.1.2",
     "fuse.js": "^7.3.0",
