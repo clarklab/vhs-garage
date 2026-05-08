@@ -1085,11 +1085,9 @@ function wireRecordButton() {
               catalogFilename: currentFilename,
             });
             showPlaybackTab();
-            alert(
-              `Recording ended but the file could not be opened for playback:\n\n` +
-              `  "${currentFilename}"\n\n` +
-              `The clip is saved in the library — try opening it from there. ` +
-              `If that also fails, the file may not have written correctly to disk.`
+            showErrorToast(
+              `Recording saved — preview unavailable`,
+              `Couldn't open "${currentFilename}" for playback. The clip is in the library — open it from there. If that also fails, the file may not have written correctly to disk.`
             );
           }
         } catch (err) {
@@ -3156,12 +3154,11 @@ async function loadClipIntoEditor(clipId) {
       console.warn('[loadClip] could not open file', {
         filename: clip.filename, errName, error: detail, clipId,
       });
-      alert(
-        `Could not open file:\n\n  "${clip.filename}"\n\n` +
-        `Reason: ${errName ? errName + ' — ' : ''}${detail}\n\n` +
-        `Most likely the file was renamed, moved, or deleted outside ` +
-        `the app. If you've revoked folder permission, click the ` +
-        `directory name in the toolbar to re-grant access.`
+      showErrorToast(
+        `Couldn't open "${clip.filename}"`,
+        `${errName ? errName + ': ' : ''}${detail}. ` +
+        `Most likely the file was renamed, moved, or deleted outside the app. ` +
+        `If you revoked folder permission, click the directory name in the toolbar to re-grant access.`
       );
       return;
     }
@@ -3173,7 +3170,7 @@ async function loadClipIntoEditor(clipId) {
       console.warn('[loadClip] file handle opened but getFile() failed', {
         filename: clip.filename, error: e.message, clipId,
       });
-      alert(`Could not read file:\n\n  "${clip.filename}"\n\n${e.message}`);
+      showErrorToast(`Couldn't read "${clip.filename}"`, e.message);
       return;
     }
   }
@@ -4870,6 +4867,45 @@ function renderToast(item) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Non-blocking error toast — same red-border styling as upload-failure
+// toasts but not tied to the upload queue. Use for any "thing went
+// wrong, user should know but we don't want to block the tab" case.
+//
+// Replaces the native alert() pattern. alert() blocks the entire tab
+// until dismissed AND can land off-screen / hidden in PWA mode (Matt's
+// setup) where the user might not see it — manifesting as "the app
+// is frozen completely." This toast appears in the bottom-right stack
+// alongside upload toasts, persists until the X is clicked, and lets
+// the user keep using the app while it's there.
+function showErrorToast(title, message) {
+  const stack = document.getElementById('toast-stack');
+  if (!stack) {
+    // Fallback if the stack hasn't been rendered yet (very early init
+    // or some pages without it). Keep alert as a last resort so the
+    // error isn't completely silent.
+    alert(`${title}\n\n${message}`);
+    return;
+  }
+  const id = 'err_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+  const card = document.createElement('div');
+  card.id = 'toast-' + id;
+  card.className = 'toast-card is-error';
+  card.innerHTML = `
+    <div class="toast-title-row">
+      <span class="toast-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+      <span class="toast-state-label">✗ Error</span>
+      <button class="toast-close-btn" data-action="close" title="Dismiss">×</button>
+    </div>
+    <p class="toast-error-msg">${escapeHtml(message)}</p>
+  `;
+  stack.appendChild(card);
+  requestAnimationFrame(() => card.classList.add('is-visible'));
+  card.querySelector('[data-action="close"]').addEventListener('click', () => {
+    card.classList.remove('is-visible');
+    setTimeout(() => card.remove(), 200);
+  });
 }
 
 // Reset the editor back to "ready to record" state. Runs at the end of the
