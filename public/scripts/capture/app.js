@@ -3130,6 +3130,18 @@ async function loadClipIntoEditor(clipId) {
   const clip = clips.find(c => c.id === clipId);
   if (!clip) return;
 
+  // If trim mode is still active from a PREVIOUS clip, tear it down
+  // before swapping in the new one. The trim panel attaches a
+  // 'timeupdate' clamp listener that pauses + rewinds whenever
+  // currentTime crosses [trimIn, trimOut] — and those values are
+  // stuck on the old clip's range. Without this, opening a library
+  // clip mid-trim left the clamp wired against stale boundaries:
+  // scrubbing worked (no constraint on the scrub itself) but pressing
+  // Play would start, timeupdate would fire, the clamp would see
+  // currentTime > stale trimOut, and immediately pause + rewind to
+  // stale trimIn. Looked exactly like "Play button does nothing."
+  if (typeof exitTrimMode === 'function') exitTrimMode();
+
   // 1. Load the file from disk → blob URL for the playback preview.
   let url = '';
   if (clip.filename) {
