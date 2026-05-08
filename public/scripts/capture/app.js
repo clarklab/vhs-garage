@@ -916,6 +916,14 @@ function wireRecordButton() {
     const title = titleInput.value;
     const videoFormat = settings.videoFormat || 'mp4';
     currentFilename = generateFilename(title, settings.nameFormat || 'title', videoFormat);
+    // Suffix the filename if a clip with this title already exists on disk —
+    // generateFilename's title+timestamp pattern can collide when the user
+    // copy-pastes the same title between recordings in the same minute. The
+    // collision was silently overwriting the prior clip's video AND its
+    // sidecar JSON / _youtube.txt / sleeve files, which is how Matt ended
+    // up with one clip's description tied to a different clip from the
+    // same tape.
+    currentFilename = await pickUniqueFilename(currentFilename);
     const bitrate = settings.bitrate || 5000000;
 
     btn.classList.add('recording');
@@ -971,8 +979,14 @@ function wireRecordButton() {
           settingsNow.nameFormat || 'title'
         );
         if (desiredFilename && desiredFilename !== currentFilename) {
-          const renamed = await renameFileOnDisk(currentFilename, desiredFilename);
-          if (renamed) currentFilename = renamed;
+          // Suffix if the desired name collides with another clip's file.
+          // allowSelf passes our current name so we don't suffix against
+          // ourselves on the round-trip.
+          const safeDesired = await pickUniqueFilename(desiredFilename, { allowSelf: currentFilename });
+          if (safeDesired !== currentFilename) {
+            const renamed = await renameFileOnDisk(currentFilename, safeDesired);
+            if (renamed) currentFilename = renamed;
+          }
         }
 
         const basename = currentFilename.replace(/\.(webm|mp4)$/, '');
@@ -1065,6 +1079,15 @@ function wireRecordButton() {
             playbackBlobUrl = URL.createObjectURL(file);
             const playbackVideo = document.getElementById('playback');
             playbackVideo.src = playbackBlobUrl;
+            // Reset audio defaults — the demo flow + various other code
+            // paths leave the playback element in muted=true (it was
+            // playing the silent /puppet/vhs-sample.mp4). If we don't
+            // reset here, the user records a clip after running the
+            // demo and the playback is silent for no obvious reason.
+            // loadClipIntoEditor already does this; mirroring here so
+            // the post-stop path is consistent.
+            playbackVideo.muted = false;
+            playbackVideo.playbackRate = 1;
             playbackVideo.load();
             const onReady = () => {
               clearTimeout(fallbackTimer);
@@ -3495,8 +3518,18 @@ function wireMainEditorAutosave() {
         settings.nameFormat || 'title'
       );
       if (desired && desired !== clip.filename) {
+        // Suffix if the desired name collides with another clip's file —
+        // autosave fires on every keystroke, so a user typing the same
+        // title as another clip in the library would otherwise silently
+        // overwrite that clip's video + sidecars. If the unique-pick
+        // hands us back our own current name (no work needed), skip the
+        // rename branch but still let the sidecar save below run.
+        const safeDesired = await pickUniqueFilename(desired, { allowSelf: clip.filename });
+        if (safeDesired === clip.filename) {
+          // Fall through — sidecar save still happens.
+        } else {
         const oldBase = clip.filename.replace(/\.(webm|mp4)$/, '');
-        const renamed = await renameFileOnDisk(clip.filename, desired);
+        const renamed = await renameFileOnDisk(clip.filename, safeDesired);
         if (renamed) {
           updateClip(id, { filename: renamed });
           await renameSiblings(oldBase, renamed.replace(/\.(webm|mp4)$/, ''));
@@ -3533,6 +3566,7 @@ function wireMainEditorAutosave() {
             console.warn('[autosave] could not refresh blob URL after rename:', e.message);
           }
         }
+        }  // close: else (safeDesired !== clip.filename)
       }
       const basename = clip.filename.replace(/\.(webm|mp4)$/, '');
       saveSidecarFiles(directoryHandle, basename, clip).catch(() => {});
@@ -3593,11 +3627,47 @@ async function extractThumbnailsFromBlob(blobUrl, count = 6) {
     const v = document.createElement('video');
     v.muted = true;
     v.playsInline = true;
-    v.preload = 'auto';
+    // 'metadata' instead of 'auto' — long videos (Matt's hour-plus
+    // bootlegs) blew up under 'auto' because it prefetched the entire
+    // file into memory before loadedmetadata fired. metadata-only
+    // pulls just the header so seeks still work.
+    v.preload = 'metadata';
     v.src = blobUrl;
 
+    // Overall failsafe — if metadata never loads (corrupt header,
+    // browser stuck), bail rather than hang the picker forever.
+    const metadataTimeout = setTimeout(() => {
+      reject(new Error('Video metadata took too long to load'));
+    }, 15000);
+
     v.addEventListener('loadedmetadata', async () => {
-      const duration = v.duration;
+      clearTimeout(metadataTimeout);
+      let duration = v.duration;
+      // Some long WebM files report Infinity until you seek past the
+      // end (it's a known Chrome quirk with files written by
+      // MediaRecorder where the duration metadata wasn't finalized).
+      // Workaround: seek way past the end, wait for currentTime to
+      // settle to the actual duration, then use that.
+      if (!isFinite(duration) || duration <= 0) {
+        try {
+          await new Promise((r, rej) => {
+            const t = setTimeout(() => rej(new Error('duration probe timeout')), 5000);
+            const onUpd = () => {
+              if (isFinite(v.duration) && v.duration > 0) {
+                clearTimeout(t);
+                v.removeEventListener('durationchange', onUpd);
+                r();
+              }
+            };
+            v.addEventListener('durationchange', onUpd);
+            try { v.currentTime = 1e10; } catch {}
+          });
+          duration = v.duration;
+        } catch (e) {
+          reject(new Error('Could not read video duration: ' + e.message));
+          return;
+        }
+      }
       if (!duration || !isFinite(duration)) {
         reject(new Error('Could not read video duration'));
         return;
@@ -3611,13 +3681,25 @@ async function extractThumbnailsFromBlob(blobUrl, count = 6) {
       canvas.height = v.videoHeight || 720;
       const ctx = canvas.getContext('2d');
 
+      // Per-seek timeout — long videos can take seconds to demux/decode
+      // up to a random offset deep in the file. If a seek hangs (or the
+      // browser silently fails to fire 'seeked'), give up on THAT
+      // frame and move on rather than locking the picker forever.
+      // Aggregate timeout (count * SEEK_TIMEOUT) caps the total wait
+      // around 30s for a 6-frame run, which is the worst case.
+      const SEEK_TIMEOUT_MS = 5000;
       const out = [];
       for (const t of offsets) {
         try {
           await new Promise((r, rej) => {
+            const failsafe = setTimeout(() => {
+              cleanup();
+              rej(new Error('seek timeout after ' + SEEK_TIMEOUT_MS + 'ms'));
+            }, SEEK_TIMEOUT_MS);
             const onSeek = () => { cleanup(); r(); };
             const onErr = () => { cleanup(); rej(new Error('seek error')); };
             const cleanup = () => {
+              clearTimeout(failsafe);
               v.removeEventListener('seeked', onSeek);
               v.removeEventListener('error', onErr);
             };
@@ -3635,10 +3717,19 @@ async function extractThumbnailsFromBlob(blobUrl, count = 6) {
       // Tear down the offscreen video so the blob URL can be GC'd.
       v.removeAttribute('src');
       v.load();
-      resolve(out);
+      // If we got at least one frame, return what we have rather than
+      // failing the whole batch. Better to show 3 frames than 0.
+      if (out.length === 0) {
+        reject(new Error('No frames could be extracted from this video'));
+      } else {
+        resolve(out);
+      }
     });
 
-    v.addEventListener('error', () => reject(new Error('Video failed to load for thumbnail extraction')));
+    v.addEventListener('error', () => {
+      clearTimeout(metadataTimeout);
+      reject(new Error('Video failed to load for thumbnail extraction'));
+    });
   });
 }
 
@@ -3833,14 +3924,21 @@ function wireSaveData() {
         settingsNow.nameFormat || 'title'
       );
       if (desired && desired !== clip.filename) {
-        const oldBase = clip.filename.replace(/\.(webm|mp4)$/, '');
-        const renamed = await renameFileOnDisk(clip.filename, desired);
-        if (renamed) {
-          updateClip(lastClipId, { filename: renamed });
-          await renameSiblings(oldBase, renamed.replace(/\.(webm|mp4)$/, ''));
-          // Re-read the catalog so subsequent saves use the new filename.
-          clips = getClips();
-          clip = clips.find(c => c.id === lastClipId);
+        // Same collision check as autosave — if another clip is already
+        // using `desired`, suffix instead of clobbering. Skip the rename
+        // if pickUniqueFilename hands us back our own current name (i.e.
+        // no work to do); the sidecar save below STILL needs to run.
+        const safeDesired = await pickUniqueFilename(desired, { allowSelf: clip.filename });
+        if (safeDesired !== clip.filename) {
+          const oldBase = clip.filename.replace(/\.(webm|mp4)$/, '');
+          const renamed = await renameFileOnDisk(clip.filename, safeDesired);
+          if (renamed) {
+            updateClip(lastClipId, { filename: renamed });
+            await renameSiblings(oldBase, renamed.replace(/\.(webm|mp4)$/, ''));
+            // Re-read the catalog so subsequent saves use the new filename.
+            clips = getClips();
+            clip = clips.find(c => c.id === lastClipId);
+          }
         }
       }
     }
@@ -6665,6 +6763,39 @@ async function pickAvailableFilename(srcFilename, suffix, targetExt) {
     try {
       await directoryHandle.getFileHandle(candidate);
       candidate = `${base}_${suffix}${i}${targetExt}`;
+      i++;
+    } catch {
+      return candidate;
+    }
+  }
+  return candidate;
+}
+
+// Return `desiredFilename` unchanged if no file with that name exists on
+// disk; otherwise append _2, _3, etc. until a free slot is found. Used
+// at every point where we MIGHT write a video file (initial recording,
+// post-stop title-rename, autosave title-rename) to prevent two clips
+// with the same title from silently overwriting each other on disk —
+// which previously also clobbered each other's sidecar JSON +
+// _youtube.txt + sleeve files, leaving Matt with descriptions tied to
+// the wrong videos.
+//
+// The `allowSelf` option lets a clip's CURRENT filename be considered
+// "available" — needed for the rename paths, where we don't want to
+// suffix when the user's title change happens to round-trip back to
+// what it already is.
+async function pickUniqueFilename(desiredFilename, { allowSelf = null } = {}) {
+  if (!directoryHandle || !desiredFilename) return desiredFilename;
+  const ext = (desiredFilename.match(/\.(webm|mp4)$/i) || ['.mp4'])[0];
+  const base = desiredFilename.replace(/\.(webm|mp4)$/i, '');
+  let candidate = desiredFilename;
+  let i = 2;
+  while (i < 1000) {
+    try {
+      await directoryHandle.getFileHandle(candidate);
+      // Exists. Allowed if it's our own clip's current name.
+      if (allowSelf && candidate === allowSelf) return candidate;
+      candidate = `${base}_${i}${ext}`;
       i++;
     } catch {
       return candidate;
