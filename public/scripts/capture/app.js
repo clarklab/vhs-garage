@@ -2651,11 +2651,24 @@ function updateBatchCounterButton() {
   if (!batchSelection.mode) {
     btn.textContent = 'Upload Many';
     btn.classList.remove('is-active');
+    btn.title = 'Pick multiple clips to upload at once';
     return;
   }
   const n = batchSelection.ids.size;
-  btn.textContent = `Upload (${n} of ${BATCH_CAP})`;
-  btn.classList.toggle('is-active', n > 0);
+  // When in batch mode with NOTHING selected, the button is the user's
+  // exit hatch (the existing handler turns batch mode off when count is
+  // 0 and they click again). The old label "Upload (0 of 6)" looked
+  // like a no-op upload — we want it to read clearly as "click to bail
+  // out." Once they've picked at least one, label reverts to the count.
+  if (n === 0) {
+    btn.textContent = 'Cancel';
+    btn.classList.remove('is-active');
+    btn.title = 'Exit selection mode';
+  } else {
+    btn.textContent = `Upload (${n} of ${BATCH_CAP})`;
+    btn.classList.add('is-active');
+    btn.title = `Upload ${n} clip${n === 1 ? '' : 's'}`;
+  }
 }
 
 function wireLibraryBatchUpload() {
@@ -2760,7 +2773,16 @@ function openBatchReviewModal() {
 
 function closeBatchReviewModal() {
   document.getElementById('batch-review-modal')?.classList.add('hidden');
-  // Selection is preserved so the user can re-open and continue editing.
+  // ALSO exit batch-selection mode. Previously we preserved the
+  // selection "so the user can re-open and continue editing" — but
+  // that left the library stuck in checkbox-mode after Cancel /
+  // backdrop / Esc, which silently broke the "click a tile to open
+  // it" flow until the user discovered they had to press Esc again
+  // (or hard-refresh). Always exiting on close is the less surprising
+  // default; if a user really wants to keep editing a selection they
+  // can just leave the modal open. Same reasoning as the post-upload
+  // reset default flip.
+  if (typeof setBatchMode === 'function') setBatchMode(false);
 }
 
 async function confirmBatchUpload() {
