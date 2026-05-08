@@ -4346,12 +4346,30 @@ let cachedPlaylists = null;        // [{id, title, itemCount}, ...] or [] when n
 let cachedPlaylistsToken = null;
 let inflightPlaylists = null;
 
+// Returns { status, playlists, error? } so the UI can distinguish:
+//   'ok'                — playlists is the array (possibly empty)
+//   'no-access'         — 403, user not allowlisted (V1 = bridge-only)
+//   'no-bridge-token'   — 503, admin needs to re-do /admin/connect-youtube
+//   'error'             — 5xx from upstream / network / parse failure
+//   'no-token'          — client doesn't have an access token yet
+//
+// Also logs every step under [playlists] so DevTools-watching admins can
+// see exactly what happened (cache hit, network call, response shape,
+// final count). Clark previously saw the section vanish with no clue why
+// — these logs make the silent-empty case diagnosable.
 async function fetchBridgePlaylists() {
   const token = currentToken || await fetchAccessTokenInBackground();
-  if (!token) return [];
-  if (cachedPlaylists !== null && cachedPlaylistsToken === token) return cachedPlaylists;
+  if (!token) {
+    console.info('[playlists] no access token yet — will retry on next panel open');
+    return { status: 'no-token', playlists: [] };
+  }
+  if (cachedPlaylists !== null && cachedPlaylistsToken === token) {
+    console.info('[playlists] cache hit (', cachedPlaylists.length, 'items, hard-refresh to bust)');
+    return { status: 'ok', playlists: cachedPlaylists };
+  }
   if (inflightPlaylists) return inflightPlaylists;
 
+  console.info('[playlists] fetching from bridge…');
   inflightPlaylists = (async () => {
     try {
       const res = await fetch('/api/youtube-bridge', {
@@ -4360,42 +4378,59 @@ async function fetchBridgePlaylists() {
         body: JSON.stringify({ action: 'list-playlists', accessToken: token }),
       });
       if (!res.ok) {
-        // 403 → user not allowlisted (expected, no logging needed).
-        // Anything else → log so we can debug if playlists vanish.
-        if (res.status !== 403) {
-          const detail = await res.json().catch(() => ({}));
-          console.warn('[playlists] list failed', { status: res.status, detail });
-        }
+        const detail = await res.json().catch(() => ({}));
+        const status = res.status === 403 ? 'no-access'
+                     : res.status === 503 ? 'no-bridge-token'
+                     : 'error';
+        console.warn('[playlists] bridge returned', res.status, status, detail);
         cachedPlaylists = [];
         cachedPlaylistsToken = token;
-        return [];
+        return { status, playlists: [], error: detail.error || `HTTP ${res.status}` };
       }
       const data = await res.json();
-      cachedPlaylists = Array.isArray(data.playlists) ? data.playlists : [];
+      const playlists = Array.isArray(data.playlists) ? data.playlists : [];
+      cachedPlaylists = playlists;
       cachedPlaylistsToken = token;
-      return cachedPlaylists;
+      console.info('[playlists] got', playlists.length, 'playlist(s):',
+        playlists.map((p) => `"${p.title}" (${p.itemCount} videos)`).join(', ') || '(empty list — channel has no playlists)');
+      return { status: 'ok', playlists };
     } catch (e) {
       console.warn('[playlists] list threw:', e.message);
-      return [];
+      return { status: 'error', playlists: [], error: e.message };
     }
   })();
   try { return await inflightPlaylists; }
   finally { inflightPlaylists = null; }
 }
 
-// Render checkboxes into #yt-pub-playlists-list. Auto-hides the wrapper
-// section when there are no playlists. Idempotent — safe to call on every
-// publish panel open. The DOM order matches the API response order
-// (already sorted by snippet.publishedAt DESC server-side).
-function populatePlaylistsUI(playlists) {
+// Render the playlists section based on the structured result from
+// fetchBridgePlaylists. Three visible states:
+//   · checkboxes for each playlist (status=ok with items)
+//   · "No playlists yet on this channel" (status=ok with empty array —
+//     surfaces the feature so users with 0 playlists know it's alive
+//     and just needs them to create some on YouTube)
+//   · entirely hidden (any non-ok status — non-allowlisted user, bridge
+//     token expired, network/auth errors)
+// Idempotent — safe to call on every publish panel open. List order
+// matches the bridge response (sorted snippet.publishedAt DESC).
+function populatePlaylistsUI(result) {
   const wrapper = document.getElementById('yt-pub-playlists');
   const list = document.getElementById('yt-pub-playlists-list');
   if (!wrapper || !list) return;
-  if (!playlists || playlists.length === 0) {
+
+  if (!result || result.status !== 'ok') {
     wrapper.classList.add('hidden');
     list.innerHTML = '';
     return;
   }
+
+  const playlists = result.playlists || [];
+  if (playlists.length === 0) {
+    list.innerHTML = `<p class="text-white/40 text-[11px] italic">No playlists found on this channel yet. Create some on YouTube and refresh.</p>`;
+    wrapper.classList.remove('hidden');
+    return;
+  }
+
   // Render fresh each time. Preserves no per-checkbox state across panel
   // opens (intentional — the user picks playlists fresh per upload).
   list.innerHTML = playlists.map((p) => `
