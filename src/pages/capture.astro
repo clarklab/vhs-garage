@@ -650,6 +650,20 @@ import { BUILD_ID } from '../utils/build-id.js';
                    style="border: 2px solid #dc2626; box-shadow: 0 0 0 9999px rgba(0,0,0,0.0);">
                 <span class="absolute top-1 left-1 text-[9px] uppercase tracking-widest text-red-500/90 font-bold pointer-events-none">9:16</span>
               </div>
+              <!-- Letterbox / "Full frame" toggle overlaid in the
+                   bottom-right of the player. When checked: the entire
+                   source frame is centered in the 1080×1920 output with
+                   black bars top + bottom (instead of cropping a 9:16
+                   slice). Use case: composition matters more than
+                   filling the screen — group shot, full sleeve,
+                   wide-establishing-shot, etc. The checkbox sits OVER
+                   the dimmed-side band so it stays visible regardless
+                   of crop position. pointer-events-auto so the click
+                   actually registers (parent overlay is none). -->
+              <label id="shorts-letterbox-toggle" class="absolute bottom-2 right-2 z-30 flex items-center gap-1.5 px-2 py-1 bg-black/80 border border-white/40 cursor-pointer pointer-events-auto select-none hover:bg-black/90 transition-colors">
+                <input id="shorts-letterbox-cb" type="checkbox" class="accent-red-600 cursor-pointer" />
+                <span class="text-white text-[10px] uppercase tracking-widest">Full frame</span>
+              </label>
             </div>
             <div id="rec-overlay-timer" class="hidden absolute top-3 right-4 text-red-500 tabular-nums z-10" style="text-shadow: 0 0 10px rgba(229,57,53,0.7), 0 0 20px rgba(229,57,53,0.4);">
               00:00:00
@@ -933,7 +947,7 @@ import { BUILD_ID } from '../utils/build-id.js';
             <div class="flex items-center justify-between gap-3 pt-2 border-t border-white/10">
               <p class="text-white/40 text-[10px] uppercase tracking-wider">
                 <kbd class="border border-white/15 px-1.5 py-0.5 text-white/60">Esc</kbd>
-                <span class="ml-1">to cancel · drag the red box on the video to pick the crop · drag right handle to extend up to 60s</span>
+                <span class="ml-1">to cancel · drag the red box on the video to pick the crop · drag right handle to extend up to 60s · check Full frame for letterbox</span>
               </p>
               <div class="flex items-center gap-2">
                 <button id="shorts-cancel-btn" type="button"
@@ -1550,9 +1564,9 @@ import { BUILD_ID } from '../utils/build-id.js';
         (<span id="shorts-modal-length" class="text-white/80">30.0s</span>)
       </p>
       <p class="text-white/50 text-[11px] mb-5">
-        Output: <span class="text-white/80">1080×1920 vertical</span>,
-        cropped from the highlighted region. Saved as a new clip in your
-        library, marked as a Short. The original isn't touched.
+        Output: <span class="text-white/80">1080×1920 vertical</span>
+        — <span id="shorts-modal-mode" class="text-white/80">cropped from the highlighted region</span>.
+        Saved as a new clip in your library, marked as a Short. The original isn't touched.
       </p>
       <div class="flex items-center justify-end gap-2">
         <button id="shorts-modal-cancel" type="button"

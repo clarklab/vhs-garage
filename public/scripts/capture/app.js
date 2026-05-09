@@ -7076,6 +7076,11 @@ const SHORTS_MAX_LENGTH = 60;
 const SHORTS_DEFAULT_LENGTH = 30;
 let shortsCropX = 0;          // crop's left X in source-pixel coords
 let shortsCropW = 0;          // crop width in source-pixel coords (= 9/16 * srcH)
+// When true: skip the 9:16 horizontal crop entirely. The whole source
+// frame gets centered in the 1080×1920 output, scaled to fill width,
+// with black letterbox bars top + bottom. Useful when composition
+// matters more than filling the screen (group shot, full sleeve, etc.).
+let shortsLetterbox = false;
 let shortsEscHandlerRef = null;
 let shortsTimeUpdateRef = null;
 let shortsResizeObserver = null;
@@ -7135,6 +7140,11 @@ function enterShortsMode() {
     shortsDuration = dur;
     shortsIn = 0;
     shortsLengthSec = Math.min(SHORTS_DEFAULT_LENGTH, Math.max(SHORTS_MIN_LENGTH, dur));
+    // Reset letterbox to off on each entry. Most uploads will be
+    // crop-style; letterbox is the opt-in for "full-frame" cases.
+    shortsLetterbox = false;
+    const cb = document.getElementById('shorts-letterbox-cb');
+    if (cb) cb.checked = false;
 
     // Default crop: centered horizontally on the source. Computed from
     // the source video's intrinsic dimensions. Updated by drag.
@@ -7239,6 +7249,19 @@ function updateShortsOverlay() {
   const right = document.getElementById('shorts-overlay-right');
   const frame = document.getElementById('shorts-overlay-frame');
   if (!overlay || !left || !right || !frame) return;
+
+  // Letterbox mode: nothing's being cropped, so the red 9:16 frame +
+  // dimmed sides are meaningless. Hide them; the "Full frame" checkbox
+  // (which lives in the same overlay) communicates the state on its own.
+  if (shortsLetterbox) {
+    frame.style.display = 'none';
+    left.style.display = 'none';
+    right.style.display = 'none';
+    return;
+  }
+  frame.style.display = '';
+  left.style.display = '';
+  right.style.display = '';
 
   // Clamp crop to source bounds (defensive — drag can push it).
   shortsCropX = Math.max(0, Math.min(r.srcW - shortsCropW, shortsCropX));
@@ -7455,6 +7478,15 @@ function wireShortsPanel() {
     }
   });
 
+  // Letterbox toggle ("Full frame" checkbox in the bottom-right of the
+  // player overlay). When on, the crop UI hides and the encoder uses
+  // the full-source-fit-to-width path with vertical black bars.
+  const letterboxCb = document.getElementById('shorts-letterbox-cb');
+  letterboxCb?.addEventListener('change', () => {
+    shortsLetterbox = !!letterboxCb.checked;
+    updateShortsOverlay();
+  });
+
   cancelBtn?.addEventListener('click', exitShortsMode);
   saveBtn?.addEventListener('click', openShortsSaveModal);
 }
@@ -7466,6 +7498,14 @@ function openShortsSaveModal() {
   document.getElementById('shorts-modal-in').textContent = formatTrimTime(shortsIn);
   document.getElementById('shorts-modal-out').textContent = formatTrimTime(shortsIn + shortsLengthSec);
   document.getElementById('shorts-modal-length').textContent = shortsLengthSec.toFixed(1) + 's';
+  // Branch the framing-mode line in the modal so the user sees what
+  // they're about to commit to.
+  const modeEl = document.getElementById('shorts-modal-mode');
+  if (modeEl) {
+    modeEl.textContent = shortsLetterbox
+      ? 'full source frame, letterboxed top + bottom'
+      : 'cropped from the highlighted region';
+  }
   modal.classList.remove('hidden');
 }
 
@@ -7495,6 +7535,7 @@ async function runShortsEncode() {
   const outSec = shortsIn + shortsLengthSec;
   const cropX = shortsCropX;
   const cropW = shortsCropW;
+  const letterbox = shortsLetterbox;
   const clipId = lastClipId;
   const clips = getClips();
   const clip = clips.find(c => c.id === clipId);
@@ -7527,7 +7568,7 @@ async function runShortsEncode() {
 
   let result;
   try {
-    result = await encodeShort(srcFile, inSec, outSec, cropX, cropW, onProgress);
+    result = await encodeShort(srcFile, inSec, outSec, cropX, cropW, letterbox, onProgress);
   } catch (e) {
     console.error('[shorts] encode failed:', e);
     toast?.classList.add('hidden');
@@ -7551,10 +7592,12 @@ async function runShortsEncode() {
   }
 }
 
-// Canvas-based encoder. Renders the cropped slice of the source onto a
-// 1080×1920 canvas each frame; captures from canvas + audio from source's
-// captureStream and feeds both into MediaRecorder.
-async function encodeShort(srcFile, inSec, outSec, cropX, cropW, onProgress) {
+// Canvas-based encoder. Renders either the cropped 9:16 slice of the
+// source OR (when letterbox=true) the full source frame fit-to-width
+// with vertical black bars onto a 1080×1920 canvas each frame.
+// Captures from canvas + audio from source's captureStream and feeds
+// both into MediaRecorder.
+async function encodeShort(srcFile, inSec, outSec, cropX, cropW, letterbox, onProgress) {
   const sourceUrl = URL.createObjectURL(srcFile);
   const wantSeconds = Math.max(0.1, outSec - inSec);
 
@@ -7598,9 +7641,17 @@ async function encodeShort(srcFile, inSec, outSec, cropX, cropW, onProgress) {
       else srcVideo.addEventListener('loadedmetadata', resolve, { once: true });
     });
 
+    const srcW = srcVideo.videoWidth || 1280;
     const srcH = srcVideo.videoHeight || 720;
-    // Clamp crop to source bounds defensively.
-    const safeCropX = Math.max(0, Math.min((srcVideo.videoWidth || 1280) - cropW, cropX));
+    // Clamp crop to source bounds defensively (only used in crop mode).
+    const safeCropX = Math.max(0, Math.min(srcW - cropW, cropX));
+
+    // Letterbox layout precomputed once. We fit source horizontally
+    // (full 1080 width), scale height proportionally, center vertically.
+    // Black bars top + bottom. drawImage uses these in the rAF loop.
+    const lbScale = OUT_W / srcW;
+    const lbScaledH = srcH * lbScale;
+    const lbOffsetY = Math.round((OUT_H - lbScaledH) / 2);
 
     // MIME negotiation. Output is always WebM for Shorts (Chrome's
     // canvas captureStream pairs cleanly with vp9/vp8). MP4 from
@@ -7660,11 +7711,21 @@ async function encodeShort(srcFile, inSec, outSec, cropX, cropW, onProgress) {
     const draw = () => {
       if (stopped) return;
       try {
-        // Source rect: (cropX, 0) → (cropX + cropW, srcH)
-        // Dest rect: full 1080×1920 canvas
-        ctx.drawImage(srcVideo,
-          safeCropX, 0, cropW, srcH,
-          0, 0, OUT_W, OUT_H);
+        if (letterbox) {
+          // Full source frame, fit-to-width, vertically centered. Paint
+          // the black bars first so partial draws don't show source
+          // bleed at the edges.
+          ctx.fillStyle = '#000';
+          ctx.fillRect(0, 0, OUT_W, OUT_H);
+          ctx.drawImage(srcVideo,
+            0, 0, srcW, srcH,
+            0, lbOffsetY, OUT_W, lbScaledH);
+        } else {
+          // Crop mode: 9:16 slice from (cropX, 0) → fills full canvas.
+          ctx.drawImage(srcVideo,
+            safeCropX, 0, cropW, srcH,
+            0, 0, OUT_W, OUT_H);
+        }
       } catch {
         // drawImage can throw if the source isn't ready yet — ignore.
       }
