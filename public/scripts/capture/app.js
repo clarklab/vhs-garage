@@ -184,6 +184,7 @@ async function startApp() {
   wireMuteToggle();
   wireSaveData();
   wireTrim();
+  wireShorts();
   wireResetButtons();
   wireYouTubePublish();
   // Sync the "Uploaded today: N" indicators to whatever's in
@@ -3141,6 +3142,9 @@ async function loadClipIntoEditor(clipId) {
   // currentTime > stale trimOut, and immediately pause + rewind to
   // stale trimIn. Looked exactly like "Play button does nothing."
   if (typeof exitTrimMode === 'function') exitTrimMode();
+  // Same defensive cleanup for Shorts mode — its crop overlay + scoped
+  // playback handler would otherwise leak across clip swaps.
+  if (typeof exitShortsMode === 'function') exitShortsMode();
 
   // 1. Load the file from disk → blob URL for the playback preview.
   let url = '';
@@ -7044,11 +7048,727 @@ async function persistTrimReplace(srcClip, blob, durationSec, bytes, ext = '.web
   await loadClipIntoEditor(srcClip.id);
 }
 
+// ---------------------------------------------------------------------------
+// SHORTS MODE
+// ---------------------------------------------------------------------------
+//
+// Trim's cousin — picks a horizontal CROP (9:16 vertical slice of the
+// source) plus a TIME WINDOW (30s default, draggable up to 60s) and
+// encodes a 1080×1920 vertical video that uploads as a YouTube Short.
+// Always creates a NEW catalog entry with isShort: true; never offers
+// to overwrite the source (aspect change makes that semantically wrong).
+//
+// Encoder is canvas-based:
+//   source <video> ──drawImage──▶ <canvas 1080×1920> ──captureStream──▶ ┐
+//                                                                       ├──▶ MediaRecorder
+//   source <video>.captureStream().getAudioTracks() ─────────────────────┘
+// rAF loop pumps each video frame into the canvas at the chosen crop
+// offset; canvas captureStream picks up changes; audio track is taken
+// straight from the source's captureStream and merged. Real-time wall-
+// clock (same as Trim's MediaRecorder path).
+
+let shortsMode = false;
+let shortsDuration = 0;       // full source clip duration (seconds)
+let shortsIn = 0;             // window start (seconds)
+let shortsLengthSec = 30;     // window width (seconds), default 30, max 60
+const SHORTS_MIN_LENGTH = 5;
+const SHORTS_MAX_LENGTH = 60;
+const SHORTS_DEFAULT_LENGTH = 30;
+let shortsCropX = 0;          // crop's left X in source-pixel coords
+let shortsCropW = 0;          // crop width in source-pixel coords (= 9/16 * srcH)
+let shortsEscHandlerRef = null;
+let shortsTimeUpdateRef = null;
+let shortsResizeObserver = null;
+
+function exitShortsMode() {
+  if (!shortsMode) return;
+  shortsMode = false;
+
+  const playback = document.getElementById('playback');
+  const panel = document.getElementById('shorts-panel');
+  const overlay = document.getElementById('shorts-overlay');
+  if (playback) {
+    playback.pause();
+    playback.setAttribute('controls', '');
+    if (shortsTimeUpdateRef) playback.removeEventListener('timeupdate', shortsTimeUpdateRef);
+    shortsTimeUpdateRef = null;
+  }
+  if (panel) panel.classList.add('hidden');
+  if (overlay) overlay.classList.add('hidden');
+
+  if (shortsEscHandlerRef) {
+    document.removeEventListener('keydown', shortsEscHandlerRef);
+    shortsEscHandlerRef = null;
+  }
+  if (shortsResizeObserver) {
+    try { shortsResizeObserver.disconnect(); } catch {}
+    shortsResizeObserver = null;
+  }
+
+  document.getElementById('shorts-play-icon')?.classList.remove('hidden');
+  document.getElementById('shorts-pause-icon')?.classList.add('hidden');
+  const playLabel = document.getElementById('shorts-play-label');
+  if (playLabel) playLabel.textContent = 'Play';
+}
+
+function wireShorts() {
+  const shortsBtn = document.getElementById('shorts-recording-btn');
+  if (!shortsBtn) return;
+
+  shortsBtn.addEventListener('click', () => {
+    if (shortsMode) { exitShortsMode(); return; }
+    enterShortsMode();
+  });
+
+  wireShortsPanel();
+  wireShortsSaveModal();
+}
+
+function enterShortsMode() {
+  if (!hasPlayback) return;
+  const playback = document.getElementById('playback');
+  if (!playback) return;
+
+  const startWith = (dur) => {
+    if (!isFinite(dur) || dur <= 0) return;
+    shortsMode = true;
+    shortsDuration = dur;
+    shortsIn = 0;
+    shortsLengthSec = Math.min(SHORTS_DEFAULT_LENGTH, Math.max(SHORTS_MIN_LENGTH, dur));
+
+    // Default crop: centered horizontally on the source. Computed from
+    // the source video's intrinsic dimensions. Updated by drag.
+    const srcW = playback.videoWidth || 1280;
+    const srcH = playback.videoHeight || 720;
+    shortsCropW = Math.floor((9 / 16) * srcH);
+    shortsCropX = Math.max(0, Math.floor((srcW - shortsCropW) / 2));
+
+    playback.removeAttribute('controls');
+    playback.pause();
+    playback.currentTime = 0;
+
+    document.getElementById('shorts-panel').classList.remove('hidden');
+    document.getElementById('shorts-overlay').classList.remove('hidden');
+    updateShortsUI();
+    updateShortsOverlay();
+    updateShortsPlayhead();
+
+    shortsEscHandlerRef = (e) => {
+      if (e.key === 'Escape') {
+        if (e.target?.id === 'shorts-in-input') { e.target.blur(); return; }
+        exitShortsMode();
+      }
+    };
+    document.addEventListener('keydown', shortsEscHandlerRef);
+
+    // Scoped playback — clamp inside [shortsIn, shortsIn + shortsLengthSec]
+    // and loop on hitting the out edge. Same pattern as Trim.
+    shortsTimeUpdateRef = () => {
+      const out = shortsIn + shortsLengthSec;
+      if (playback.currentTime >= out) {
+        playback.pause();
+        playback.currentTime = shortsIn;
+        document.getElementById('shorts-play-icon')?.classList.remove('hidden');
+        document.getElementById('shorts-pause-icon')?.classList.add('hidden');
+        const lbl = document.getElementById('shorts-play-label');
+        if (lbl) lbl.textContent = 'Play';
+      } else if (playback.currentTime < shortsIn) {
+        playback.currentTime = shortsIn;
+      }
+      updateShortsPlayhead();
+    };
+    playback.addEventListener('timeupdate', shortsTimeUpdateRef);
+
+    // Reposition the crop overlay if the container resizes (window
+    // resize, dev-tools open, etc).
+    if ('ResizeObserver' in window) {
+      shortsResizeObserver = new ResizeObserver(() => updateShortsOverlay());
+      const container = document.getElementById('preview-container');
+      if (container) shortsResizeObserver.observe(container);
+    }
+  };
+
+  if (isFinite(playback.duration) && playback.duration > 0) {
+    startWith(playback.duration);
+  } else {
+    const onMeta = () => { startWith(playback.duration); };
+    playback.addEventListener('loadedmetadata', onMeta, { once: true });
+  }
+}
+
+// Compute where the playback video is actually rendered inside its
+// container. The element uses object-contain, so the rendered image is
+// letterboxed inside the element bounds. Returns the displayed rect in
+// container-pixel coordinates.
+function getPlaybackDisplayRect() {
+  const playback = document.getElementById('playback');
+  const container = document.getElementById('preview-container');
+  if (!playback || !container) return null;
+  const cR = container.getBoundingClientRect();
+  const vw = playback.videoWidth || 16;
+  const vh = playback.videoHeight || 9;
+  const containerW = cR.width;
+  const containerH = cR.height;
+  const containerAspect = containerW / containerH;
+  const videoAspect = vw / vh;
+  let dispW, dispH, dispLeft, dispTop;
+  if (videoAspect > containerAspect) {
+    // Video is wider — letterboxed top + bottom
+    dispW = containerW;
+    dispH = containerW / videoAspect;
+    dispLeft = 0;
+    dispTop = (containerH - dispH) / 2;
+  } else {
+    // Video is taller — pillarboxed left + right
+    dispH = containerH;
+    dispW = containerH * videoAspect;
+    dispTop = 0;
+    dispLeft = (containerW - dispW) / 2;
+  }
+  return { left: dispLeft, top: dispTop, width: dispW, height: dispH, srcW: vw, srcH: vh };
+}
+
+// Position the crop overlay frame + dim sides so they align with the
+// actual displayed video rect (NOT the full container). Reads the
+// current crop X (in source-pixel coords) and converts to display-px.
+function updateShortsOverlay() {
+  const r = getPlaybackDisplayRect();
+  if (!r) return;
+  const overlay = document.getElementById('shorts-overlay');
+  const left = document.getElementById('shorts-overlay-left');
+  const right = document.getElementById('shorts-overlay-right');
+  const frame = document.getElementById('shorts-overlay-frame');
+  if (!overlay || !left || !right || !frame) return;
+
+  // Clamp crop to source bounds (defensive — drag can push it).
+  shortsCropX = Math.max(0, Math.min(r.srcW - shortsCropW, shortsCropX));
+
+  const scale = r.width / r.srcW;
+  const cropPxLeft = r.left + shortsCropX * scale;
+  const cropPxWidth = shortsCropW * scale;
+
+  frame.style.left = cropPxLeft + 'px';
+  frame.style.top = r.top + 'px';
+  frame.style.width = cropPxWidth + 'px';
+  frame.style.height = r.height + 'px';
+
+  left.style.left = r.left + 'px';
+  left.style.top = r.top + 'px';
+  left.style.width = (cropPxLeft - r.left) + 'px';
+  left.style.height = r.height + 'px';
+
+  right.style.left = (cropPxLeft + cropPxWidth) + 'px';
+  right.style.top = r.top + 'px';
+  right.style.width = (r.left + r.width - (cropPxLeft + cropPxWidth)) + 'px';
+  right.style.height = r.height + 'px';
+}
+
+function updateShortsUI() {
+  if (!shortsDuration) return;
+  const inPct = clampPct((shortsIn / shortsDuration) * 100);
+  const outSec = shortsIn + shortsLengthSec;
+  const outPct = clampPct((outSec / shortsDuration) * 100);
+  const widthPct = outPct - inPct;
+
+  const window = document.getElementById('shorts-band-window');
+  const handleR = document.getElementById('shorts-handle-right');
+  const bandL = document.getElementById('shorts-band-left');
+  const bandR = document.getElementById('shorts-band-right');
+  const inputIn = document.getElementById('shorts-in-input');
+  const lengthDisp = document.getElementById('shorts-length-display');
+
+  if (window) { window.style.left = inPct + '%'; window.style.width = widthPct + '%'; }
+  if (handleR) handleR.style.left = outPct + '%';
+  if (bandL) bandL.style.width = inPct + '%';
+  if (bandR) bandR.style.width = (100 - outPct) + '%';
+  if (inputIn && document.activeElement !== inputIn) inputIn.value = formatTrimTime(shortsIn);
+  if (lengthDisp) lengthDisp.textContent = shortsLengthSec.toFixed(1) + 's';
+}
+
+function updateShortsPlayhead() {
+  if (!shortsDuration) return;
+  const playback = document.getElementById('playback');
+  const playhead = document.getElementById('shorts-playhead');
+  const pos = document.getElementById('shorts-position');
+  const t = playback?.currentTime || 0;
+  const pct = clampPct((t / shortsDuration) * 100);
+  if (playhead) playhead.style.left = pct + '%';
+  if (pos) {
+    const rel = Math.max(0, t - shortsIn);
+    pos.textContent = `${formatTrimTime(rel)} / ${formatTrimTime(shortsLengthSec)}`;
+  }
+}
+
+function wireShortsPanel() {
+  const timeline = document.getElementById('shorts-timeline');
+  const window = document.getElementById('shorts-band-window');
+  const handleR = document.getElementById('shorts-handle-right');
+  const inputIn = document.getElementById('shorts-in-input');
+  const playBtn = document.getElementById('shorts-play-btn');
+  const cancelBtn = document.getElementById('shorts-cancel-btn');
+  const saveBtn = document.getElementById('shorts-save-btn');
+  const cropFrame = document.getElementById('shorts-overlay-frame');
+  if (!timeline || !window || !handleR) return;
+
+  // Click on track (outside window) → move window so its center lands
+  // on click point (clamped to bounds).
+  timeline.addEventListener('pointerdown', (e) => {
+    if (e.target === window || e.target === handleR) return;
+    if (!shortsMode || !shortsDuration) return;
+    const rect = timeline.getBoundingClientRect();
+    const pct = clampPct(((e.clientX - rect.left) / rect.width) * 100);
+    const t = (pct / 100) * shortsDuration;
+    // Center the window on click.
+    shortsIn = Math.max(0, Math.min(shortsDuration - shortsLengthSec, t - shortsLengthSec / 2));
+    updateShortsUI();
+    const playback = document.getElementById('playback');
+    if (playback) { playback.pause(); playback.currentTime = shortsIn; }
+    updateShortsPlayhead();
+  });
+
+  // Drag the WINDOW itself → slide it (preserve width).
+  window.addEventListener('pointerdown', (e) => {
+    if (!shortsMode || !shortsDuration) return;
+    e.stopPropagation();
+    window.setPointerCapture(e.pointerId);
+    const rect = timeline.getBoundingClientRect();
+    const startMouseX = e.clientX;
+    const startIn = shortsIn;
+
+    const onMove = (ev) => {
+      const dx = ev.clientX - startMouseX;
+      const dPct = (dx / rect.width) * 100;
+      const dSec = (dPct / 100) * shortsDuration;
+      shortsIn = Math.max(0, Math.min(shortsDuration - shortsLengthSec, startIn + dSec));
+      updateShortsUI();
+      const playback = document.getElementById('playback');
+      if (playback) { playback.pause(); playback.currentTime = shortsIn; }
+      updateShortsPlayhead();
+    };
+    const onUp = (ev) => {
+      try { window.releasePointerCapture(ev.pointerId); } catch {}
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  });
+
+  // Drag the right edge → resize window length (5s–60s).
+  handleR.addEventListener('pointerdown', (e) => {
+    if (!shortsMode || !shortsDuration) return;
+    e.stopPropagation();
+    handleR.setPointerCapture(e.pointerId);
+    const rect = timeline.getBoundingClientRect();
+    const onMove = (ev) => {
+      const pct = clampPct(((ev.clientX - rect.left) / rect.width) * 100);
+      const t = (pct / 100) * shortsDuration;
+      const newLen = Math.max(SHORTS_MIN_LENGTH, Math.min(SHORTS_MAX_LENGTH, t - shortsIn));
+      // Don't let window extend past source duration.
+      shortsLengthSec = Math.min(newLen, shortsDuration - shortsIn);
+      updateShortsUI();
+      // Preview the new out-edge by jumping playhead there briefly.
+      const playback = document.getElementById('playback');
+      if (playback) { playback.pause(); playback.currentTime = shortsIn + shortsLengthSec; }
+      updateShortsPlayhead();
+    };
+    const onUp = (ev) => {
+      try { handleR.releasePointerCapture(ev.pointerId); } catch {}
+      handleR.removeEventListener('pointermove', onMove);
+      handleR.removeEventListener('pointerup', onUp);
+      handleR.removeEventListener('pointercancel', onUp);
+    };
+    handleR.addEventListener('pointermove', onMove);
+    handleR.addEventListener('pointerup', onUp);
+    handleR.addEventListener('pointercancel', onUp);
+  });
+
+  // Drag the crop frame on the video → horizontal pan in source-px.
+  if (cropFrame) {
+    cropFrame.addEventListener('pointerdown', (e) => {
+      if (!shortsMode) return;
+      e.stopPropagation();
+      cropFrame.setPointerCapture(e.pointerId);
+      const r = getPlaybackDisplayRect();
+      if (!r) return;
+      const startMouseX = e.clientX;
+      const startCropX = shortsCropX;
+      const scale = r.width / r.srcW;
+      const onMove = (ev) => {
+        const dxPx = ev.clientX - startMouseX;
+        const dxSrc = dxPx / scale;
+        shortsCropX = Math.max(0, Math.min(r.srcW - shortsCropW, startCropX + dxSrc));
+        updateShortsOverlay();
+      };
+      const onUp = (ev) => {
+        try { cropFrame.releasePointerCapture(ev.pointerId); } catch {}
+        cropFrame.removeEventListener('pointermove', onMove);
+        cropFrame.removeEventListener('pointerup', onUp);
+        cropFrame.removeEventListener('pointercancel', onUp);
+      };
+      cropFrame.addEventListener('pointermove', onMove);
+      cropFrame.addEventListener('pointerup', onUp);
+      cropFrame.addEventListener('pointercancel', onUp);
+    });
+  }
+
+  // Start time text input — accepts the same lenient h:mm:ss.s format
+  // as Trim's inputs.
+  function commitInputIn() {
+    if (!shortsMode || !shortsDuration) return;
+    const parsed = parseTrimTime(inputIn.value);
+    if (parsed === null) {
+      inputIn.value = formatTrimTime(shortsIn);
+      return;
+    }
+    shortsIn = Math.max(0, Math.min(shortsDuration - shortsLengthSec, parsed));
+    updateShortsUI();
+    const playback = document.getElementById('playback');
+    if (playback) { playback.pause(); playback.currentTime = shortsIn; }
+  }
+  inputIn?.addEventListener('blur', commitInputIn);
+  inputIn?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); inputIn.blur(); }
+  });
+
+  playBtn?.addEventListener('click', () => {
+    const playback = document.getElementById('playback');
+    if (!playback) return;
+    if (playback.paused) {
+      const out = shortsIn + shortsLengthSec;
+      if (playback.currentTime < shortsIn || playback.currentTime >= out) {
+        playback.currentTime = shortsIn;
+      }
+      playback.play();
+      document.getElementById('shorts-play-icon')?.classList.add('hidden');
+      document.getElementById('shorts-pause-icon')?.classList.remove('hidden');
+      const lbl = document.getElementById('shorts-play-label');
+      if (lbl) lbl.textContent = 'Pause';
+    } else {
+      playback.pause();
+      document.getElementById('shorts-play-icon')?.classList.remove('hidden');
+      document.getElementById('shorts-pause-icon')?.classList.add('hidden');
+      const lbl = document.getElementById('shorts-play-label');
+      if (lbl) lbl.textContent = 'Play';
+    }
+  });
+
+  cancelBtn?.addEventListener('click', exitShortsMode);
+  saveBtn?.addEventListener('click', openShortsSaveModal);
+}
+
+function openShortsSaveModal() {
+  if (!shortsMode || !shortsDuration) return;
+  const modal = document.getElementById('shorts-save-modal');
+  if (!modal) return;
+  document.getElementById('shorts-modal-in').textContent = formatTrimTime(shortsIn);
+  document.getElementById('shorts-modal-out').textContent = formatTrimTime(shortsIn + shortsLengthSec);
+  document.getElementById('shorts-modal-length').textContent = shortsLengthSec.toFixed(1) + 's';
+  modal.classList.remove('hidden');
+}
+
+function closeShortsSaveModal() {
+  document.getElementById('shorts-save-modal')?.classList.add('hidden');
+}
+
+function wireShortsSaveModal() {
+  const modal = document.getElementById('shorts-save-modal');
+  if (!modal) return;
+  document.getElementById('shorts-modal-cancel')?.addEventListener('click', closeShortsSaveModal);
+  document.getElementById('shorts-modal-confirm')?.addEventListener('click', async () => {
+    closeShortsSaveModal();
+    await runShortsEncode();
+  });
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeShortsSaveModal();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Shorts encode pipeline — canvas-based, real-time
+// ---------------------------------------------------------------------------
+async function runShortsEncode() {
+  // Snapshot params + clip context BEFORE exiting Shorts mode.
+  const inSec = shortsIn;
+  const outSec = shortsIn + shortsLengthSec;
+  const cropX = shortsCropX;
+  const cropW = shortsCropW;
+  const clipId = lastClipId;
+  const clips = getClips();
+  const clip = clips.find(c => c.id === clipId);
+  if (!clip || !clip.filename) { showErrorToast('Shorts encode failed', 'Clip is missing from the catalog.'); return; }
+  if (!directoryHandle) { showErrorToast('Shorts encode failed', 'No save folder selected.'); return; }
+
+  let srcFile;
+  try {
+    const fh = await directoryHandle.getFileHandle(clip.filename);
+    srcFile = await fh.getFile();
+  } catch (e) {
+    showErrorToast('Shorts encode failed', `Could not read source file (${clip.filename}).`);
+    return;
+  }
+
+  exitShortsMode();
+
+  // Progress toast.
+  const toast = document.getElementById('shorts-progress-toast');
+  const posEl = document.getElementById('shorts-progress-position');
+  const barEl = document.getElementById('shorts-progress-bar');
+  toast?.classList.remove('hidden');
+  if (barEl) barEl.style.width = '0%';
+  const wantSeconds = Math.max(0.1, outSec - inSec);
+  const onProgress = (doneSec, totalSec) => {
+    const pct = Math.min(100, (doneSec / totalSec) * 100);
+    if (barEl) barEl.style.width = pct + '%';
+    if (posEl) posEl.textContent = `${formatTrimTime(doneSec)} of ${formatTrimTime(totalSec)}`;
+  };
+
+  let result;
+  try {
+    result = await encodeShort(srcFile, inSec, outSec, cropX, cropW, onProgress);
+  } catch (e) {
+    console.error('[shorts] encode failed:', e);
+    toast?.classList.add('hidden');
+    showErrorToast('Shorts encode failed', e.message || 'encoder error');
+    return;
+  }
+
+  if (!result || !result.blob || result.blob.size === 0) {
+    toast?.classList.add('hidden');
+    showErrorToast('Shorts encode failed', 'Encoder produced an empty file.');
+    return;
+  }
+
+  try {
+    await persistShortsClip(clip, result.blob, wantSeconds, result.blob.size, result.ext || '.webm');
+  } catch (e) {
+    console.error('[shorts] persist failed:', e);
+    showErrorToast('Shorts saved encode but write failed', e.message);
+  } finally {
+    toast?.classList.add('hidden');
+  }
+}
+
+// Canvas-based encoder. Renders the cropped slice of the source onto a
+// 1080×1920 canvas each frame; captures from canvas + audio from source's
+// captureStream and feeds both into MediaRecorder.
+async function encodeShort(srcFile, inSec, outSec, cropX, cropW, onProgress) {
+  const sourceUrl = URL.createObjectURL(srcFile);
+  const wantSeconds = Math.max(0.1, outSec - inSec);
+
+  // Hidden source <video>. 1×1 in viewport (NOT off-screen) so the
+  // browser keeps the rendering pipeline alive — same lesson as the
+  // Trim encoder. muted+volume=0 for autoplay + no audible playback.
+  const srcVideo = document.createElement('video');
+  srcVideo.src = sourceUrl;
+  srcVideo.volume = 0;
+  srcVideo.muted = true;
+  srcVideo.playsInline = true;
+  srcVideo.style.cssText = 'position:fixed;bottom:0;right:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1;';
+  document.body.appendChild(srcVideo);
+
+  // Output canvas — fixed at 1080×1920 regardless of source resolution.
+  // YouTube's preferred Shorts dimensions; even a 4:3 480p source
+  // upscales here, intentionally — vertical Shorts are universally
+  // delivered at this size on mobile.
+  const OUT_W = 1080, OUT_H = 1920;
+  const canvas = document.createElement('canvas');
+  canvas.width = OUT_W;
+  canvas.height = OUT_H;
+  canvas.style.cssText = 'position:fixed;bottom:0;right:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1;';
+  document.body.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+
+  let recorder = null;
+  let rafHandle = 0;
+  const cleanup = () => {
+    try { srcVideo.pause(); } catch {}
+    if (rafHandle) cancelAnimationFrame(rafHandle);
+    URL.revokeObjectURL(sourceUrl);
+    srcVideo.remove();
+    canvas.remove();
+    activeTrimRecorder = null;
+  };
+
+  try {
+    await new Promise((resolve) => {
+      if (isFinite(srcVideo.duration) && srcVideo.duration > 0) resolve();
+      else srcVideo.addEventListener('loadedmetadata', resolve, { once: true });
+    });
+
+    const srcH = srcVideo.videoHeight || 720;
+    // Clamp crop to source bounds defensively.
+    const safeCropX = Math.max(0, Math.min((srcVideo.videoWidth || 1280) - cropW, cropX));
+
+    // MIME negotiation. Output is always WebM for Shorts (Chrome's
+    // canvas captureStream pairs cleanly with vp9/vp8). MP4 from
+    // canvas captureStream is unreliable across versions.
+    const candidates = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+    ];
+    const mime = candidates.find((m) => MediaRecorder.isTypeSupported(m));
+    if (!mime) throw new Error('No supported MediaRecorder MIME type for Shorts.');
+
+    // Pull audio from the source via its own captureStream. Combine
+    // canvas video + source audio into one MediaStream for the
+    // recorder. captureStream() requires the source to be playing for
+    // tracks to flow — we play() below.
+    let srcStream;
+    try { srcStream = srcVideo.captureStream(); }
+    catch (e) { throw new Error('Source captureStream() unavailable: ' + e.message); }
+    const audioTracks = srcStream.getAudioTracks();
+
+    const canvasStream = canvas.captureStream(30); // 30fps draw
+    const combined = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...audioTracks,
+    ]);
+
+    recorder = new MediaRecorder(combined, { mimeType: mime });
+    activeTrimRecorder = recorder;
+    const chunks = [];
+    recorder.addEventListener('dataavailable', (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
+    });
+    recorder.addEventListener('error', (e) => {
+      console.warn('[shorts] MediaRecorder error:', e.error || e);
+    });
+
+    // Seek to in.
+    await new Promise((resolve, reject) => {
+      const onSeeked = () => { srcVideo.removeEventListener('seeked', onSeeked); resolve(); };
+      srcVideo.addEventListener('seeked', onSeeked);
+      try { srcVideo.currentTime = inSec; } catch (e) { reject(e); }
+    });
+
+    try { await srcVideo.play(); }
+    catch (e) { throw new Error('Could not play source: ' + e.message); }
+    // Tiny grace for first frame to be ready.
+    await new Promise((r) => setTimeout(r, 80));
+
+    // rAF draw loop — paints the cropped slice onto the canvas every
+    // frame. Started before recorder.start() so the canvas already has
+    // pixels by the time recording begins (avoids a few empty frames
+    // at the head of the output).
+    let stopped = false;
+    const draw = () => {
+      if (stopped) return;
+      try {
+        // Source rect: (cropX, 0) → (cropX + cropW, srcH)
+        // Dest rect: full 1080×1920 canvas
+        ctx.drawImage(srcVideo,
+          safeCropX, 0, cropW, srcH,
+          0, 0, OUT_W, OUT_H);
+      } catch {
+        // drawImage can throw if the source isn't ready yet — ignore.
+      }
+      rafHandle = requestAnimationFrame(draw);
+    };
+    draw();
+    // One more grace period so the canvas has a stable image before
+    // recording starts. Without this, the first ~150ms of the Short
+    // can be a blank frame.
+    await new Promise((r) => setTimeout(r, 100));
+
+    recorder.start(250);
+
+    const finalize = () => new Promise((resolve) => {
+      if (stopped) return resolve();
+      stopped = true;
+      recorder.addEventListener('stop', resolve, { once: true });
+      try { recorder.stop(); } catch {}
+      try { srcVideo.pause(); } catch {}
+    });
+
+    const onTime = async () => {
+      const done = Math.max(0, srcVideo.currentTime - inSec);
+      onProgress(done, wantSeconds);
+      if (srcVideo.currentTime >= outSec) {
+        srcVideo.removeEventListener('timeupdate', onTime);
+        await finalize();
+      }
+    };
+    srcVideo.addEventListener('timeupdate', onTime);
+
+    const failsafe = setTimeout(async () => {
+      if (!stopped) {
+        console.warn('[shorts] failsafe timer fired');
+        srcVideo.removeEventListener('timeupdate', onTime);
+        await finalize();
+      }
+    }, Math.ceil(wantSeconds * 1.5 * 1000) + 5000);
+
+    await new Promise((resolve) => {
+      const check = () => { if (stopped) resolve(); else setTimeout(check, 100); };
+      check();
+    });
+    clearTimeout(failsafe);
+
+    const totalBytes = chunks.reduce((s, c) => s + c.size, 0);
+    console.info('[shorts] encode finished', { chunkCount: chunks.length, totalBytes, mime });
+    cleanup();
+    if (totalBytes === 0) throw new Error('Encoder produced no data.');
+
+    return { blob: new Blob(chunks, { type: mime }), mime, ext: '.webm' };
+  } catch (e) {
+    cleanup();
+    throw e;
+  }
+}
+
+async function persistShortsClip(srcClip, blob, durationSec, bytes, ext) {
+  // Filename: original basename + "_short" suffix, with collision
+  // protection via the existing helper.
+  const filename = await pickAvailableFilename(srcClip.filename, 'short', ext);
+  const fh = await directoryHandle.getFileHandle(filename, { create: true });
+  const w = await fh.createWritable();
+  await w.write(blob);
+  await w.close();
+
+  // New catalog entry. createClipEntry generates a fresh ID + sets
+  // isShort: false by default; we override to true here. Inherits
+  // the source's tape-level metadata (year, distributor, etc.) so the
+  // user doesn't re-type — same pattern as Trim's "Create new clip".
+  // youtubeUrl/youtubeId/ytThumbnailDataUrl explicitly NOT cloned —
+  // the Short is its own upload artifact.
+  const entry = createClipEntry(
+    `${srcClip.title || 'Untitled'} (Short)`,
+    filename,
+    Math.round(durationSec),
+    bytes,
+    srcClip.bitrate || 0,
+  );
+  entry.isShort = true;
+  for (const k of ['description', 'tags', 'year', 'tape', 'distributor',
+                   'tapeLength', 'recordingSpeed', 'condition', 'cassetteNotes',
+                   'thumbnail', 'sleeveFront', 'sleeveBack']) {
+    if (srcClip[k] != null) entry[k] = srcClip[k];
+  }
+  addClip(entry);
+  const basename = filename.replace(/\.(webm|mp4)$/, '');
+  await saveSidecarFiles(directoryHandle, basename, entry);
+
+  // Sleeve copy — Shorts inherit the parent tape's sleeve photos.
+  const srcBasename = srcClip.filename.replace(/\.(webm|mp4)$/, '');
+  await copySleeveFiles(srcBasename, basename);
+
+  refreshLibrary();
+  // Hop the editor to the new Short so the user can review/upload it.
+  await loadClipIntoEditor(entry.id);
+}
+
 function showPlaybackTab() {
   const preview = document.getElementById('preview');
   const playback = document.getElementById('playback');
   const deleteBtn = document.getElementById('delete-recording-btn');
   const trimBtn = document.getElementById('trim-recording-btn');
+  const shortsBtn = document.getElementById('shorts-recording-btn');
 
   previewMode = 'playback';
   hasPlayback = true;
@@ -7057,9 +7777,10 @@ function showPlaybackTab() {
   preview.muted = true;
   playback.classList.remove('hidden');
   deleteBtn.classList.remove('hidden');
-  // Trim button mirrors Delete's visibility — only meaningful when
-  // there's a playback loaded. Visibility flips back off in showLiveTab().
+  // Trim + Shorts buttons mirror Delete's visibility — only meaningful
+  // when there's a playback loaded. Both flip off in showLiveTab().
   trimBtn?.classList.remove('hidden');
+  shortsBtn?.classList.remove('hidden');
   // Save Data + Publish buttons used to live in the controls row alongside
   // Delete; they were retired (auto-save + inline publish in sidebar). Guard
   // the show/hide for any older HTML still floating around.
@@ -7084,18 +7805,21 @@ function showLiveTab() {
   const playback = document.getElementById('playback');
   const deleteBtn = document.getElementById('delete-recording-btn');
   const trimBtn = document.getElementById('trim-recording-btn');
+  const shortsBtn = document.getElementById('shorts-recording-btn');
 
   previewMode = 'live';
 
-  // If we're switching to Live while inside Trim mode, bail out of
-  // trim cleanly first so the playback element gets its native
-  // controls back and the trim panel hides.
+  // If we're switching to Live while inside Trim or Shorts mode, bail
+  // out of those cleanly first so the playback element gets its
+  // native controls back and the panels hide.
   if (typeof exitTrimMode === 'function') exitTrimMode();
+  if (typeof exitShortsMode === 'function') exitShortsMode();
 
   playback.classList.add('hidden');
   preview.classList.remove('hidden');
   deleteBtn.classList.add('hidden');
   trimBtn?.classList.add('hidden');
+  shortsBtn?.classList.add('hidden');
   document.getElementById('save-data-btn')?.classList.add('hidden');
   document.getElementById('publish-yt-btn')?.classList.add('hidden');
 

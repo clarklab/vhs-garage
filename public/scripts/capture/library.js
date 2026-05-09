@@ -101,6 +101,11 @@ export function createClipEntry(title, filename, duration, fileSize, bitrate) {
     metadata: { description: '', tags: [], notes: '' },
     status: 'captured',
     youtubeUrl: null,
+    // True when this clip was produced via Shorts mode (vertical 9:16
+    // crop). Drives the library tile badge and downstream UI hints.
+    // Always false on fresh recording / duplicate; set true only by
+    // the Shorts encoder's persist step.
+    isShort: false,
   };
 }
 
@@ -216,6 +221,20 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
            <span>Uploaded</span>
          </a>`
       : '';
+    // Shorts badge — small pixel-style 9:16 frame in the top-left
+    // corner. Marks clips that came out of Shorts mode (vertical
+    // crop, ≤60s). Sits opposite the YouTube pill (right side) so
+    // both can show at once on uploaded shorts. Pure presentation —
+    // doesn't hijack clicks (pointer-events ignored at the parent).
+    const shortsBadge = clip.isShort
+      ? `<span class="library-shorts-pill absolute top-1 left-1 inline-flex items-center gap-1 px-1.5 py-0.5 bg-black/80 border border-white/30 text-white text-[9px] font-bold uppercase tracking-wider" title="Vertical Short">
+           <svg class="w-2.5 h-3 fill-current" viewBox="0 0 9 16" aria-hidden="true">
+             <path d="M0 0h9v1H0zM0 15h9v1H0zM0 1h1v14H0zM8 1h1v14H8z"/>
+             <polygon points="3 6 3 10 4 10 4 11 5 11 5 10 6 10 6 9 7 9 7 7 6 7 6 6 5 6 5 5 4 5 4 6"/>
+           </svg>
+           <span>Short</span>
+         </span>`
+      : '';
     // Selection-mode checkbox indicator. Only on un-uploaded tiles —
     // uploaded ones can't be re-uploaded (and the YouTube pill already
     // tells you what's up).
@@ -238,6 +257,7 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
       <div class="relative aspect-[4/3] bg-[#141214] overflow-hidden flex items-center justify-center">
         ${clip.thumbnail ? `<img src="${clip.thumbnail}" class="w-full h-full object-cover pointer-events-none" alt="">` : '<span class="text-white/10 text-[10px] pointer-events-none">--</span>'}
         ${checkboxIndicator}
+        ${shortsBadge}
         ${uploadedBadge}
       </div>
       <div class="px-1.5 py-1.5 min-w-0">

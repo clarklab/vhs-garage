@@ -633,6 +633,24 @@ import { BUILD_ID } from '../utils/build-id.js';
           <div id="preview-container" class="relative flex-1 bg-[#141214] border border-white/10 overflow-hidden cursor-pointer">
             <video id="preview" autoplay playsinline muted class="w-full h-full object-contain bg-black"></video>
             <video id="playback" controls class="hidden w-full h-full object-contain bg-black"></video>
+            <!-- Shorts mode crop overlay. A red 9:16 frame the user
+                 drags horizontally to pick which slice of the source
+                 video becomes the vertical Short. Positioned + sized
+                 by JS at shorts-mode-enter time (object-contain
+                 letterboxes the video, so we calculate the actual
+                 displayed rect from videoWidth/Height vs container
+                 size and align this overlay to it). The dimmed sides
+                 (#shorts-overlay-left + #shorts-overlay-right) show
+                 what gets cropped OUT, so the user can see the framing
+                 they're committing to before encode. -->
+            <div id="shorts-overlay" class="hidden absolute inset-0 z-20 pointer-events-none">
+              <div id="shorts-overlay-left" class="absolute top-0 bottom-0 left-0 bg-black/60"></div>
+              <div id="shorts-overlay-right" class="absolute top-0 bottom-0 right-0 bg-black/60"></div>
+              <div id="shorts-overlay-frame" class="absolute pointer-events-auto cursor-ew-resize"
+                   style="border: 2px solid #dc2626; box-shadow: 0 0 0 9999px rgba(0,0,0,0.0);">
+                <span class="absolute top-1 left-1 text-[9px] uppercase tracking-widest text-red-500/90 font-bold pointer-events-none">9:16</span>
+              </div>
+            </div>
             <div id="rec-overlay-timer" class="hidden absolute top-3 right-4 text-red-500 tabular-nums z-10" style="text-shadow: 0 0 10px rgba(229,57,53,0.7), 0 0 20px rgba(229,57,53,0.4);">
               00:00:00
             </div>
@@ -702,6 +720,18 @@ import { BUILD_ID } from '../utils/build-id.js';
                 <rect x="18" y="11" width="5" height="2"/>
               </svg>
               Trim
+            </button>
+            <!-- Shorts: cuts a vertical (9:16) crop + 30-60s window from
+                 the playback and saves it as its own clip flagged isShort.
+                 Inline pixel-style icon: tall 9:16 rectangle outline with
+                 a tiny play triangle inside. Same hidden-until-playback
+                 visibility pattern as Trim/Delete. -->
+            <button id="shorts-recording-btn" class="lib-btn pixel-btn shrink-0 hidden" title="Make a vertical Short from this recording">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 2h8v1H8zM8 21h8v1H8zM8 3h1v18H8zM15 3h1v18h-1z"/>
+                <polygon points="11 9 11 15 12 15 12 16 13 16 13 15 14 15 14 14 15 14 15 10 14 10 14 9 13 9 13 8 12 8 12 9"/>
+              </svg>
+              Short
             </button>
             <button id="to-library-btn" class="lib-btn pixel-btn shrink-0" title="Library">
               <!-- Folder Open icon from @hackernoon/pixel-icon-library
@@ -827,6 +857,92 @@ import { BUILD_ID } from '../utils/build-id.js';
                         type="button"
                         class="px-3 py-1.5 bg-[#dc2626] hover:bg-[#ef4444] text-white text-[11px] uppercase tracking-wider transition-colors">
                   Save Trim
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Shorts mode panel — Trim's cousin, but with a fixed-width
+               draggable WINDOW on the timeline (not two independent
+               handles). Default 30s wide, right edge can drag out to
+               60s (the YouTube Shorts cap). The horizontal crop
+               overlay (#shorts-overlay above) sits on top of the
+               playback element.
+
+               ESC exits, Cancel exits, Save opens the confirm modal.
+               Always creates a NEW clip (no overwrite-original option,
+               since aspect change makes that semantically wrong).
+               Output is encoded via a canvas-based pipeline (drawImage
+               from source → canvas → captureStream → MediaRecorder)
+               at 1080×1920. Audio piped from source's captureStream
+               into the same MediaRecorder. -->
+          <div id="shorts-panel" class="hidden mt-2 px-2 py-2 border border-white/15 bg-[#0a090a]" style="font-family: 'VCR', monospace;">
+            <!-- Custom timeline track. Single fixed-width WINDOW
+                 instead of trim's two independent handles. The window
+                 (#shorts-band-window) is the kept range. Sides are
+                 dimmed cross-hatched to show what's being cut. The
+                 right-edge handle (#shorts-handle-right) lets the
+                 user extend the window from default 30s out to 60s
+                 (or shrink it back). Dragging the window itself (not
+                 a handle) slides it along the timeline keeping width. -->
+            <div class="relative h-10 select-none mb-2" id="shorts-timeline">
+              <div class="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 bg-white/10"></div>
+              <div id="shorts-band-left"
+                   class="absolute top-0 bottom-0 left-0 bg-black/50 pointer-events-none"
+                   style="background-image: repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(220,38,38,0.15) 4px, rgba(220,38,38,0.15) 8px); width: 0%;"></div>
+              <div id="shorts-band-right"
+                   class="absolute top-0 bottom-0 right-0 bg-black/50 pointer-events-none"
+                   style="background-image: repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(220,38,38,0.15) 4px, rgba(220,38,38,0.15) 8px); width: 0%;"></div>
+              <div id="shorts-band-window"
+                   class="absolute top-1/2 -translate-y-1/2 h-2 bg-[#dc2626]/40 cursor-grab"
+                   style="left: 0%; width: 0%;"></div>
+              <div id="shorts-handle-right"
+                   class="absolute top-0 bottom-0 w-3 -translate-x-1/2 bg-[#dc2626] cursor-ew-resize hover:bg-[#ef4444] transition-colors"
+                   style="left: 0%;" role="slider" aria-label="Short window end" tabindex="0"></div>
+              <div id="shorts-playhead"
+                   class="absolute top-0 bottom-0 w-px bg-white pointer-events-none"
+                   style="left: 0%; box-shadow: 0 0 4px rgba(255,255,255,0.6);"></div>
+            </div>
+
+            <div class="flex items-center justify-between gap-3 text-[11px] mb-2">
+              <div class="flex items-center gap-2">
+                <span class="text-white/40 uppercase tracking-wider text-[9px]">Start</span>
+                <input id="shorts-in-input" type="text" value="0:00:00.0" autocomplete="off" spellcheck="false"
+                       class="w-20 bg-transparent border border-white/20 px-2 py-1 text-white tabular-nums text-center focus:outline-none focus:border-[#dc2626]" />
+              </div>
+              <div class="flex items-center gap-2">
+                <button id="shorts-play-btn" type="button"
+                        class="inline-flex items-center gap-1.5 px-2.5 py-1 border border-white/30 text-white/80 hover:text-white hover:border-white/60 transition-colors">
+                  <svg id="shorts-play-icon" class="w-3 h-3 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                    <polygon points="5 3 5 21 7 21 7 19 9 19 9 17 11 17 11 15 13 15 13 13 15 13 15 11 17 11 17 9 15 9 15 7 13 7 13 5 11 5 11 3 9 3 9 1 7 1 7 3 5 3"/>
+                  </svg>
+                  <svg id="shorts-pause-icon" class="hidden w-3 h-3 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="6" y="4" width="4" height="16"/>
+                    <rect x="14" y="4" width="4" height="16"/>
+                  </svg>
+                  <span id="shorts-play-label">Play</span>
+                </button>
+                <span id="shorts-position" class="text-white/40 tabular-nums">0:00 / 0:30</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-white/40 uppercase tracking-wider text-[9px]">Length</span>
+                <span id="shorts-length-display" class="w-14 px-2 py-1 text-white tabular-nums text-center border border-white/10">30.0s</span>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between gap-3 pt-2 border-t border-white/10">
+              <p class="text-white/40 text-[10px] uppercase tracking-wider">
+                <kbd class="border border-white/15 px-1.5 py-0.5 text-white/60">Esc</kbd>
+                <span class="ml-1">to cancel · drag the red box on the video to pick the crop · drag right handle to extend up to 60s</span>
+              </p>
+              <div class="flex items-center gap-2">
+                <button id="shorts-cancel-btn" type="button"
+                        class="px-3 py-1.5 border border-white/30 text-white/70 hover:text-white text-[11px] uppercase tracking-wider transition-colors">
+                  Cancel
+                </button>
+                <button id="shorts-save-btn" type="button"
+                        class="px-3 py-1.5 bg-[#dc2626] hover:bg-[#ef4444] text-white text-[11px] uppercase tracking-wider transition-colors">
+                  Save Short
                 </button>
               </div>
             </div>
@@ -1413,6 +1529,56 @@ import { BUILD_ID } from '../utils/build-id.js';
       <div id="trim-progress-bar" class="h-full bg-[#dc2626] transition-all duration-150" style="width: 0%;"></div>
     </div>
     <p id="trim-progress-detail" class="text-white/30 text-[9px] mt-2">Real-time encode — leave this tab open.</p>
+  </div>
+
+  <!-- Shorts save confirm modal — single-action (always create new),
+       no two-radio choice like Trim because the aspect change makes
+       overwrite-original semantically wrong. Shows a summary of the
+       cropped range + crop position so the user has a moment to verify
+       before kicking off the encode. Already-uploaded clips don't need
+       any special note here (Shorts always derives a NEW clip + new
+       upload). -->
+  <div id="shorts-save-modal"
+       class="hidden fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+       style="font-family: 'VCR', monospace;">
+    <div class="bg-[#0a090a] border border-white/30 max-w-md w-full p-5"
+         style="box-shadow: 4px 4px 0 0 rgba(0,0,0,0.8);">
+      <h3 class="text-white text-base uppercase tracking-wider mb-3">Save Short</h3>
+      <p class="text-white/50 text-[11px] mb-4 tabular-nums">
+        Range: <span id="shorts-modal-in" class="text-white/80">0:00:00.0</span> →
+        <span id="shorts-modal-out" class="text-white/80">0:00:00.0</span>
+        (<span id="shorts-modal-length" class="text-white/80">30.0s</span>)
+      </p>
+      <p class="text-white/50 text-[11px] mb-5">
+        Output: <span class="text-white/80">1080×1920 vertical</span>,
+        cropped from the highlighted region. Saved as a new clip in your
+        library, marked as a Short. The original isn't touched.
+      </p>
+      <div class="flex items-center justify-end gap-2">
+        <button id="shorts-modal-cancel" type="button"
+                class="px-3 py-2 text-white/60 hover:text-white text-[11px] uppercase tracking-wider transition-colors">
+          Cancel
+        </button>
+        <button id="shorts-modal-confirm" type="button"
+                class="px-4 py-2 bg-[#dc2626] hover:bg-[#ef4444] text-white text-[11px] uppercase tracking-wider transition-colors">
+          Save Short
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shorts encode progress toast — same shape as the trim one but
+       with Shorts-specific copy. Real-time encode (canvas-based pipeline
+       runs at source-video playback speed = ~30s for a 30s Short). -->
+  <div id="shorts-progress-toast"
+       class="hidden fixed bottom-4 right-4 z-50 bg-[#0a090a] border border-white/30 px-4 py-3 min-w-[280px]"
+       style="font-family: 'VCR', monospace; box-shadow: 4px 4px 0 0 rgba(0,0,0,0.8);">
+    <p class="text-white text-[11px] uppercase tracking-wider mb-2">Encoding Short…</p>
+    <p id="shorts-progress-position" class="text-white/60 text-[10px] tabular-nums mb-2">0:00 of 0:30</p>
+    <div class="h-1 bg-white/10 overflow-hidden">
+      <div id="shorts-progress-bar" class="h-full bg-[#dc2626] transition-all duration-150" style="width: 0%;"></div>
+    </div>
+    <p class="text-white/30 text-[9px] mt-2">Real-time encode — leave this tab open.</p>
   </div>
 
   <!-- Upload toast stack — bottom-right, vertical column, newest on top.
