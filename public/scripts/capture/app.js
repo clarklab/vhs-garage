@@ -933,6 +933,22 @@ function wireRecordButton() {
     document.getElementById('rec-overlay-timer').classList.remove('hidden');
     const liveTab = document.getElementById('tab-live');
     if (liveTab) liveTab.textContent = '░ Recording ░';
+    // CRITICAL: drop lastClipId for the duration of the recording.
+    // The form fields (title / description / tags / etc.) are used by
+    // BOTH the editor (autosaves into lastClipId) AND the recording
+    // (the onStop handler reads them into the new clip's catalog
+    // entry). If the user had a previous clip loaded into the editor,
+    // lastClipId still points there, and any field edits during this
+    // recording — including pasting the next clip's title — would
+    // autosave into the OLD clip, silently overwriting its metadata
+    // with the in-progress recording's. That's the "info getting
+    // linked to the wrong video" Matt's been seeing across his
+    // 20-commercial-breaks-from-one-tape sessions. By nulling
+    // lastClipId here, scheduleAutoSave's `if (!lastClipId) return`
+    // guard short-circuits during recording. The onStop handler then
+    // assigns lastClipId = entry.id once the new clip exists, and
+    // autosave resumes against THAT one.
+    lastClipId = null;
     // (Previously called resetSleeve() here — removed because it broke
     // the multi-clip-from-one-tape flow. The actual usage pattern is:
     // photograph the tape's sleeve once, then record many clips in
@@ -3392,6 +3408,18 @@ function wireThumbnailPicker() {
   if (!grid) return;
 
   let currentThumbnails = [];
+  // Tracks the user's saved thumbnail pick for the active clip. Sourced
+  // from catalog OR disk on every clip swap; updated immediately on
+  // selectThumbnail click. THIS — not catalog.ytThumbnailDataUrl — is
+  // what the highlight reads from. Decoupling matters because the
+  // catalog field gets evicted under quota pressure (HEAVY_FIELDS in
+  // library.js), so the catalog can lose the pick mid-session even
+  // though the disk copy + on-screen state are intact. Matt's "thumb
+  // selection works but doesn't highlight" bug was exactly that — the
+  // catalog field went null after a save, the highlight check used
+  // the catalog, the cell rendered with no border. Module-scope var
+  // sidesteps the whole quota dance.
+  let pickedThumb = null;
 
   function showState(state) {
     emptyState.classList.toggle('hidden', state !== 'empty');
@@ -3400,24 +3428,20 @@ function wireThumbnailPicker() {
   }
 
   function renderGrid() {
-    const clips = getClips();
-    const clip = clips.find(c => c.id === lastClipId);
-    const selected = clip && clip.ytThumbnailDataUrl;
-
     // Always render the saved pick as the first cell when one exists, so
     // re-opening a clip (which auto-generates 6 fresh random frames that
     // never match the saved one) doesn't make the highlight disappear and
     // look like the pick was lost. Refresh keeps regenerating the trailing
     // 6 — the saved cell stays put and stays highlighted until replaced.
     const cells = [];
-    if (selected) cells.push(selected);
+    if (pickedThumb) cells.push(pickedThumb);
     for (const t of currentThumbnails) {
-      if (t !== selected) cells.push(t);
+      if (t !== pickedThumb) cells.push(t);
     }
 
     grid.innerHTML = '';
     cells.forEach((dataUrl, i) => {
-      const isSelected = dataUrl === selected;
+      const isSelected = dataUrl === pickedThumb;
       const cell = document.createElement('button');
       cell.type = 'button';
       cell.className = 'aspect-video bg-black border-2 transition-all overflow-hidden ' +
@@ -3437,8 +3461,42 @@ function wireThumbnailPicker() {
     if (cells.length > 0) showState('grid');
   }
 
+  // Sync pickedThumb to whatever the active clip's saved thumb is —
+  // catalog first (cheap), disk fallback (durable). Called by
+  // resetThumbnailPicker when the clip changes. Async because the disk
+  // read is async; safe to call without awaiting since renderGrid will
+  // run again after autoGenerateThumbnails completes.
+  async function syncPickedThumbForActiveClip() {
+    pickedThumb = null;
+    if (!lastClipId) return;
+    const clips = getClips();
+    const clip = clips.find(c => c.id === lastClipId);
+    if (!clip) return;
+    if (clip.ytThumbnailDataUrl) {
+      pickedThumb = clip.ytThumbnailDataUrl;
+      return;
+    }
+    if (clip.filename && directoryHandle) {
+      const baseForThumb = clip.filename.replace(/\.(webm|mp4)$/, '');
+      try {
+        const fromDisk = await readYtThumbnailFromDisk(directoryHandle, baseForThumb);
+        if (fromDisk) {
+          pickedThumb = fromDisk;
+          // Re-render in case auto-gen already finished without us.
+          renderGrid();
+        }
+      } catch { /* no disk thumb, no pick */ }
+    }
+  }
+
   async function selectThumbnail(dataUrl) {
     if (!lastClipId) return;
+    // Update the highlight IMMEDIATELY before any awaits — even if
+    // the catalog write later trims this clip's heavy field under
+    // quota, the on-screen highlight stays correct because pickedThumb
+    // is the source of truth, not the catalog.
+    pickedThumb = dataUrl;
+    renderGrid();
     // ytThumbnailDataUrl is the full-res frame uploaded to YouTube; thumbnail
     // is the library-tile preview and has to stay tiny so the catalog fits in
     // localStorage. Both come from the same source frame so they stay in sync.
@@ -3453,7 +3511,6 @@ function wireThumbnailPicker() {
       console.warn('[thumb] disk save failed:', e.message);
     });
     refreshLibrary();
-    renderGrid();
   }
 
   async function generate() {
@@ -3476,8 +3533,15 @@ function wireThumbnailPicker() {
 
   function reset() {
     currentThumbnails = [];
+    pickedThumb = null;
     grid.innerHTML = '';
     showState('empty');
+    // Sync the active clip's saved pick (catalog OR disk) into
+    // pickedThumb so renderGrid puts it at top-left and highlights it
+    // once auto-gen completes. Fire-and-forget — generate() will
+    // re-render after frames arrive, picking up pickedThumb if the
+    // disk read finished by then.
+    syncPickedThumbForActiveClip().catch(() => {});
   }
   resetThumbnailPicker = reset;
   // Auto-generate is identical to manual generate — exposed at module level
@@ -3822,15 +3886,26 @@ async function uploadYouTubeThumbnail(videoId, accessToken, dataUrl, { useBridge
 // filename doesn't match our naming convention.
 function regenerateFilenameWithTitle(oldFilename, newTitle, nameFormat) {
   if (!oldFilename) return null;
-  const m = oldFilename.match(/^(.+?)_(\d{4}-\d{2}-\d{2})_(\d{4})\.(webm|mp4)$/);
+  // Match BOTH the new format (with _HHMM_HEX suffix) and the legacy
+  // format (just _HHMM, no hex) so renames work on clips recorded
+  // before the hex suffix landed. New rename always emits the new
+  // format with hex preserved if present, or freshly generated if not.
+  const newFmt = oldFilename.match(/^(.+?)_(\d{4}-\d{2}-\d{2})_(\d{4})_([0-9a-f]{4})\.(webm|mp4)$/i);
+  const legacy = !newFmt && oldFilename.match(/^(.+?)_(\d{4}-\d{2}-\d{2})_(\d{4})\.(webm|mp4)$/);
+  const m = newFmt || legacy;
   if (!m) return null;
-  const [, , date, time, ext] = m;
+  const date = m[2];
+  const time = m[3];
+  const hex = newFmt
+    ? newFmt[4].toLowerCase()
+    : Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0');
+  const ext = newFmt ? newFmt[5] : legacy[4];
   const trimmed = (newTitle || '').trim();
   if (nameFormat === 'timestamp' || !trimmed) {
-    return `VHS_Capture_${date}_${time}.${ext}`;
+    return `VHS_Capture_${date}_${time}_${hex}.${ext}`;
   }
   const sanitized = trimmed.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '_');
-  return `${sanitized}_${date}_${time}.${ext}`;
+  return `${sanitized}_${date}_${time}_${hex}.${ext}`;
 }
 
 // Rename a file in the user's save folder. Prefers the modern
@@ -4913,9 +4988,13 @@ function retryUpload(id) {
 // title/description/tags wipe so the next recording starts with a clean
 // per-clip slate. The action link is the opt-in for the rarer "this was
 // the last clip from this tape" full wipe.
+// Bumped from 3 → 5 seconds per Matt's feedback. Three seconds was
+// too short to read the row + click a button before it auto-fired.
+const COUNTDOWN_SECONDS = 5;
+
 function startCountdownForItem(item) {
   uploadQueue.countdownItemId = item.id;
-  let n = 3;
+  let n = COUNTDOWN_SECONDS;
   renderToast(item);
   const tick = () => {
     n -= 1;
@@ -4932,6 +5011,21 @@ function startCountdownForItem(item) {
     }
   };
   countdownTimerId = setTimeout(tick, 1000);
+}
+
+// Toast action: "Keep tape info" — explicit confirmation of the
+// default reset path (clip-only wipe). User clicked it to apply the
+// reset NOW instead of waiting out the countdown. Same effect as
+// letting the countdown finish, just faster.
+function endCountdownKeepingTape(item) {
+  if (uploadQueue.countdownItemId !== item.id) return;
+  if (countdownTimerId) {
+    clearTimeout(countdownTimerId);
+    countdownTimerId = null;
+  }
+  uploadQueue.countdownItemId = null;
+  renderToast(item); // strips the countdown row
+  clearClipForNewCapture();
 }
 
 // Toast action: "Reset everything" — opt-in for the full wipe (clip
@@ -4994,9 +5088,12 @@ function renderToast(item) {
     </div>
     ${showProgress ? `<div class="toast-progress-track"><div class="toast-progress-bar" style="width:${item.progress}%"></div></div>` : ''}
     ${showCountdown ? `
-      <div class="toast-meta-row">
-        <span>Starting next clip in <span data-countdown-num>3</span>…</span>
-        <button class="toast-secondary-link" data-action="wipe-all" title="Also clear tape info + sleeve photos (use when starting a new tape)">Reset everything</button>
+      <div class="toast-meta-row" style="flex-direction:column;align-items:stretch;gap:6px;">
+        <span style="text-align:center;">Resetting in <span data-countdown-num>${COUNTDOWN_SECONDS}</span>s…</span>
+        <div style="display:flex;gap:6px;">
+          <button class="toast-action-btn toast-action-btn--keep" data-action="keep-tape" title="Apply the default reset now (keeps tape info + sleeve photos)" style="flex:1;padding:6px 10px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.85);font-size:10px;text-transform:uppercase;letter-spacing:0.05em;cursor:pointer;font-family:'VCR',monospace;">Keep tape info</button>
+          <button class="toast-action-btn toast-action-btn--reset" data-action="wipe-all" title="Also clear tape info + sleeve photos (use when starting a new tape)" style="flex:1;padding:6px 10px;border:1px solid rgba(220,38,38,0.5);background:rgba(220,38,38,0.15);color:rgba(248,113,113,0.95);font-size:10px;text-transform:uppercase;letter-spacing:0.05em;cursor:pointer;font-family:'VCR',monospace;">Reset everything</button>
+        </div>
       </div>
     ` : ''}
     ${showViewLink ? `<div class="toast-meta-row"><a class="toast-link" href="${item.ytUrl}" target="_blank" rel="noopener">View on YouTube →</a></div>` : ''}
@@ -5008,6 +5105,7 @@ function renderToast(item) {
       const action = el.dataset.action;
       if (action === 'retry') retryUpload(item.id);
       else if (action === 'close') dismissToast(item.id);
+      else if (action === 'keep-tape') endCountdownKeepingTape(item);
       else if (action === 'wipe-all') endCountdownWithFullWipe(item);
     };
   });
@@ -5097,6 +5195,17 @@ function clearClipForNewCapture({ keepTapeInfo = true } = {}) {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+
+  // Always reset the thumbnail picker too — the picked thumb belongs
+  // to the just-uploaded clip, NOT to whatever the user records next.
+  // Without this, the next recording inherits the previous clip's
+  // pick visually until the user clicks somewhere else. The auto-gen
+  // step on the next recording will fill the grid with that clip's
+  // own random frames; resetThumbnailPicker just wipes the now-stale
+  // highlight and currentThumbnails so the transition is clean.
+  if (typeof resetThumbnailPicker === 'function') {
+    try { resetThumbnailPicker(); } catch {}
+  }
 
   if (!keepTapeInfo) {
     // Tape-level fields reset.

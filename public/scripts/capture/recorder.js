@@ -99,16 +99,29 @@ export function formatSize(bytes) {
   return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
 }
 
+// 4-char hex random suffix injected into every filename. Matt copy-pastes
+// the same title across many recordings ("1997, B&B local Austin" x20),
+// and pickUniqueFilename DID add _2/_3/etc. on filename collisions, but
+// the timestamp portion alone (HHMM precision) made same-minute recordings
+// look almost-identical at a glance — and on disk inspection it was hard
+// to tell which sidecar belonged to which clip. The hex makes uniqueness
+// VISUALLY obvious so the user can always tell two same-titled recordings
+// apart in their save folder.
+function randHex4() {
+  return Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0');
+}
+
 export function generateFilename(title, nameFormat, format) {
   const ext = format === 'webm' ? 'webm' : 'mp4';
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
   const time = String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
+  const hex = randHex4();
 
   if (nameFormat === 'timestamp' || !title.trim()) {
-    return `VHS_Capture_${date}_${time}.${ext}`;
+    return `VHS_Capture_${date}_${time}_${hex}.${ext}`;
   }
 
   const sanitized = title.trim().replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '_');
-  return `${sanitized}_${date}_${time}.${ext}`;
+  return `${sanitized}_${date}_${time}_${hex}.${ext}`;
 }
