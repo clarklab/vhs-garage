@@ -28,13 +28,9 @@ capture page. Inserted by `netlify/functions/log-upload.mjs`, which
 is called fire-and-forget by the client right after each upload's PUT
 completes.
 
-Captures both bridge uploads (allowlisted users → VHS Garage channel)
-and direct uploads (everyone else → their own channel). The
-`uploaded_via_bridge` boolean disambiguates.
-
 Columns:
 
-- **YouTube identity**: `video_id`, `video_url`, `visibility`, `uploaded_via_bridge`, `channel_handle`
+- **YouTube identity**: `video_id`, `video_url`, `visibility`, `channel_handle`, `uploaded_via_bridge` (always `false` now — kept for historical rows from when the bridge architecture was active)
 - **Verified caller**: `uploader_email` (from Google tokeninfo — never trusted from the body)
 - **Cross-reference**: `client_clip_id` (the local catalog ID — useful for finding the clip in a user's library)
 - **Per-clip**: `title`, `description`, `tags`, `duration_seconds`, `byte_size`, `mime_type`
@@ -43,15 +39,9 @@ Columns:
 
 ## Why a separate Node function?
 
-`@netlify/database` is Node-only. Our existing `youtube-bridge` is an
-Edge function (Deno runtime), so it can't import the package directly.
-The `log-upload.mjs` Node function exists specifically to bridge the
-gap — the client calls it independently after every successful upload.
-
-The bridge's existing `record-upload` action (which writes aggregate
-stats to Netlify Blobs for the admin dashboard) stays as-is. Both
-paths can coexist; a future cleanup could collapse blob stats into
-SQL queries against `upload_logs`.
+`@netlify/database` is Node-only and can't be imported from Edge
+Functions (Deno runtime). `log-upload.mjs` is a regular Node function
+the client calls independently after every successful upload.
 
 ## Querying ad-hoc
 

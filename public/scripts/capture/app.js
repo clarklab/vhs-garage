@@ -3817,32 +3817,7 @@ async function extractThumbnailsFromBlob(blobUrl, count = 6) {
 // channel to have custom-thumbnail privileges (post-verification); a 403
 // from an unverified channel surfaces as an error the caller should treat
 // as a soft failure (the video upload itself stays good).
-// `useBridge: true` routes the thumbnail through /api/youtube-bridge so it
-// hits the bridge account's videoId. Always pair this flag with the same
-// flag on the video upload — the videoId+token pair has to match the
-// account that owns the video.
-async function uploadYouTubeThumbnail(videoId, accessToken, dataUrl, { useBridge = false } = {}) {
-  if (useBridge) {
-    const res = await fetch('/api/youtube-bridge', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'upload-thumbnail',
-        accessToken,
-        videoId,
-        dataUrl,
-      }),
-    });
-    if (!res.ok) {
-      const detail = await res.json().catch(() => ({}));
-      const err = new Error(detail.error || `bridge thumbnail failed (${res.status})`);
-      err.status = detail.ytStatus || res.status;
-      throw err;
-    }
-    return res.json();
-  }
-
-  // Direct path — uploads to the user's own channel using their own token.
+async function uploadYouTubeThumbnail(videoId, accessToken, dataUrl) {
   const commaIdx = dataUrl.indexOf(',');
   if (commaIdx < 0) throw new Error('Invalid data URL');
   const meta = dataUrl.slice(0, commaIdx);
@@ -4282,161 +4257,74 @@ function ytUpdateAccountUI() {
   }
 }
 
-// "Uploading to" destination banner + upload-routing decision.
+// "Uploading to" destination banner.
 //
-// whoami is the SOURCE OF TRUTH for which channel a given user's upload
-// will land on. The publish UI shows it as a banner before they click
-// Upload, and runUploadItem reads the same cached value to make a HARD
-// BINARY decision: allowlisted → bridge only, no fallback ever; not
-// allowlisted → direct only, never even calls the bridge. This is the
-// architecture that prevents the silent-fallback bug where a transient
-// bridge failure could route an allowlisted user's upload to their
-// personal channel.
-//
-// Cached in module scope — first call hits the network, subsequent
-// calls (per token) return immediately.
-let cachedWhoami = null;          // { email, isAllowlisted, bridgeChannel }
-let cachedWhoamiToken = null;     // access token cachedWhoami was fetched with
-let inflightWhoami = null;        // dedupe concurrent fetches
-
-// Get the whoami result for the current access token. Returns the cached
-// payload when possible. Throws on error — the caller (upload code) MUST
-// know which channel it's targeting; uploading "blind" is what caused
-// the original wrong-channel bug.
-async function getWhoami() {
-  const token = currentToken || await fetchAccessTokenInBackground();
-  if (!token) throw new Error('Not signed in to YouTube.');
-  if (cachedWhoami && cachedWhoamiToken === token) return cachedWhoami;
-  if (inflightWhoami) return inflightWhoami;
-  inflightWhoami = (async () => {
-    const res = await fetch('/api/youtube-bridge', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'whoami', accessToken: token }),
-    });
-    if (!res.ok) {
-      const detail = await res.json().catch(() => ({}));
-      throw new Error(`Could not check upload destination (whoami ${res.status}: ${detail.error || 'unknown'}). Try again or sign in again.`);
-    }
-    const data = await res.json();
-    cachedWhoami = data;
-    cachedWhoamiToken = token;
-    return data;
-  })();
-  try {
-    return await inflightWhoami;
-  } finally {
-    inflightWhoami = null;
-  }
-}
-
+// Now that bridge auth is retired (Matt has Manager access on the VHS
+// Garage brand channel, so the brand shows up directly in Google's
+// channel chooser), there's no special routing decision to make.
+// Whatever channel the user OAuth'd as IS where the upload lands.
+// We just show the channel name + handle + thumbnail.
 async function refreshDestinationBanner() {
   const destEl = document.getElementById('yt-pub-destination');
   if (!destEl) return;
   const nameEl = document.getElementById('yt-pub-destination-name');
   const handleEl = document.getElementById('yt-pub-destination-handle');
   const thumbEl = document.getElementById('yt-pub-destination-thumb');
-  const badgeEl = document.getElementById('yt-pub-destination-badge');
 
   // No refresh token at all → user isn't signed in, hide the banner
   // (the sign-in panel is taking over). All other cases keep the
-  // banner visible so the Sign out button (which now lives inside
-  // it) is always reachable when the user IS signed in — even if
-  // whoami fails or the token isn't yet exchanged.
+  // banner visible so the Sign out button (which lives inside it)
+  // is always reachable when the user IS signed in.
   if (!ytGetRefreshToken()) {
     destEl.classList.add('hidden');
     return;
   }
 
-  const personal = ytGetChannel();
-
-  // Optimistic first paint from the cached personal channel info,
-  // BEFORE whoami resolves. Avoids a "flash of nothing" if whoami is
-  // slow or down. Bridge users will get overwritten with brand info
-  // once whoami returns.
-  const renderPersonal = () => {
-    if (personal) {
-      if (nameEl) nameEl.textContent = personal.title || 'Your channel';
-      if (handleEl) handleEl.textContent = personal.handle ? ' ' + (personal.handle.startsWith('@') ? personal.handle : '@' + personal.handle) : '';
-      if (thumbEl) { thumbEl.src = personal.thumbnail || ''; thumbEl.alt = personal.title || 'Your channel'; }
-    } else {
-      if (nameEl) nameEl.textContent = 'Your channel';
-      if (handleEl) handleEl.textContent = '';
-      if (thumbEl) { thumbEl.src = ''; thumbEl.alt = ''; }
-    }
-    if (badgeEl) badgeEl.classList.add('hidden');
-  };
-  renderPersonal();
+  const channel = ytGetChannel();
+  if (channel) {
+    if (nameEl) nameEl.textContent = channel.title || 'Your channel';
+    if (handleEl) handleEl.textContent = channel.handle
+      ? ' ' + (channel.handle.startsWith('@') ? channel.handle : '@' + channel.handle)
+      : '';
+    if (thumbEl) { thumbEl.src = channel.thumbnail || ''; thumbEl.alt = channel.title || 'Your channel'; }
+  } else {
+    if (nameEl) nameEl.textContent = 'Your channel';
+    if (handleEl) handleEl.textContent = '';
+    if (thumbEl) { thumbEl.src = ''; thumbEl.alt = ''; }
+  }
   destEl.classList.remove('hidden');
-
-  // No token-exchanged-yet → can't whoami. Personal-channel preview
-  // above is already showing; we'll re-render on the next call once
-  // a token's available.
-  if (!currentToken) return;
-
-  let whoami;
-  try {
-    whoami = await getWhoami();
-  } catch (e) {
-    // whoami failed (server hiccup, expired token, etc). Keep the
-    // personal-channel preview visible — better than a hidden banner
-    // that swallows the Sign out button.
-    console.warn('[whoami] banner refresh failed, keeping personal preview:', e.message);
-    return;
-  }
-
-  if (whoami.isAllowlisted && whoami.bridgeChannel) {
-    // Bridge upload — overwrite the personal preview with brand info.
-    const ch = whoami.bridgeChannel;
-    if (nameEl) nameEl.textContent = ch.name || 'VHS Garage';
-    if (handleEl) handleEl.textContent = ch.handle ? ' ' + (ch.handle.startsWith('@') ? ch.handle : '@' + ch.handle) : '';
-    if (thumbEl) {
-      thumbEl.src = ch.thumbnail || '';
-      thumbEl.alt = ch.name || 'VHS Garage';
-    }
-    if (badgeEl) badgeEl.classList.remove('hidden');
-  }
-  // Non-allowlisted: personal preview is already correct, leave it.
 }
 
 // Sign-out / token-clear paths call this so the next session starts
-// without stale whitelist state from a previous user.
+// without stale playlist cache from a previous user.
 function clearWhoamiCache() {
-  cachedWhoami = null;
-  cachedWhoamiToken = null;
-  inflightWhoami = null;
   cachedPlaylists = null;
   cachedPlaylistsToken = null;
 }
 
 // ---------------------------------------------------------------------------
-// Bridge playlists
+// Playlists (direct to YouTube)
 // ---------------------------------------------------------------------------
 //
-// The publish panel offers checkboxes to add the just-uploaded video to one
-// or more of the bridge channel's playlists (3 most recent, sorted by
-// creation date). Bridge-only feature; the section auto-hides when the
-// list is empty (non-allowlisted user, bridge token still on old scope, or
-// no playlists on the channel).
+// Pre-bridge-removal this went through the bridge edge function (which
+// used the bridge's stored token to talk to VHS Garage's playlists).
+// Now that Matt has Manager access on the brand channel, the user's
+// OWN OAuth token is brand-scoped when they pick VHS Garage at the
+// channel chooser — so we call YouTube directly.
 //
-// The fetch is cached per access token so we don't re-hit the bridge on
-// every panel open. Cleared by clearWhoamiCache (sign-out / token rotate).
+// We request `youtube.force-ssl` in YT_SCOPES, which covers both
+// reading and modifying playlists. Cached per access token so we
+// don't re-hit YouTube on every panel open; cleared by
+// clearWhoamiCache (sign-out / token rotate).
 let cachedPlaylists = null;        // [{id, title, itemCount}, ...] or [] when none
 let cachedPlaylistsToken = null;
 let inflightPlaylists = null;
 
-// Returns { status, playlists, error? } so the UI can distinguish:
-//   'ok'                — playlists is the array (possibly empty)
-//   'no-access'         — 403, user not allowlisted (V1 = bridge-only)
-//   'no-bridge-token'   — 503, admin needs to re-do /admin/connect-youtube
-//   'error'             — 5xx from upstream / network / parse failure
-//   'no-token'          — client doesn't have an access token yet
-//
-// Also logs every step under [playlists] so DevTools-watching admins can
-// see exactly what happened (cache hit, network call, response shape,
-// final count). Clark previously saw the section vanish with no clue why
-// — these logs make the silent-empty case diagnosable.
-async function fetchBridgePlaylists() {
+// Returns { status, playlists, error? }:
+//   'ok'         — playlists is the array (possibly empty)
+//   'error'      — YouTube returned non-OK / network / parse failure
+//   'no-token'   — client doesn't have an access token yet
+async function fetchUserPlaylists() {
   const token = currentToken || await fetchAccessTokenInBackground();
   if (!token) {
     console.info('[playlists] no access token yet — will retry on next panel open');
@@ -4448,31 +4336,39 @@ async function fetchBridgePlaylists() {
   }
   if (inflightPlaylists) return inflightPlaylists;
 
-  console.info('[playlists] fetching from bridge…');
+  console.info('[playlists] fetching from YouTube…');
   inflightPlaylists = (async () => {
     try {
-      const res = await fetch('/api/youtube-bridge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'list-playlists', accessToken: token }),
-      });
+      const res = await fetch(
+        'https://www.googleapis.com/youtube/v3/playlists?mine=true&part=snippet,contentDetails&maxResults=50',
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       if (!res.ok) {
-        const detail = await res.json().catch(() => ({}));
-        const status = res.status === 403 ? 'no-access'
-                     : res.status === 503 ? 'no-bridge-token'
-                     : 'error';
-        console.warn('[playlists] bridge returned', res.status, status, detail);
+        const detail = await res.text().catch(() => '');
+        console.warn('[playlists] YouTube returned', res.status, detail.slice(0, 200));
         cachedPlaylists = [];
         cachedPlaylistsToken = token;
-        return { status, playlists: [], error: detail.error || `HTTP ${res.status}` };
+        return { status: 'error', playlists: [], error: `HTTP ${res.status}` };
       }
       const data = await res.json();
-      const playlists = Array.isArray(data.playlists) ? data.playlists : [];
-      cachedPlaylists = playlists;
+      // Sort by creation date DESC and take the 3 most recent — same
+      // cap the bridge used to enforce server-side. Plenty for a
+      // checkbox list; if we want more later it's a one-line bump.
+      const PLAYLIST_LIMIT = 3;
+      const items = (data.items || [])
+        .map((p) => ({
+          id: p.id,
+          title: p.snippet?.title || '(untitled)',
+          itemCount: p.contentDetails?.itemCount || 0,
+          publishedAt: p.snippet?.publishedAt || '',
+        }))
+        .sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''))
+        .slice(0, PLAYLIST_LIMIT);
+      cachedPlaylists = items;
       cachedPlaylistsToken = token;
-      console.info('[playlists] got', playlists.length, 'playlist(s):',
-        playlists.map((p) => `"${p.title}" (${p.itemCount} videos)`).join(', ') || '(empty list — channel has no playlists)');
-      return { status: 'ok', playlists };
+      console.info('[playlists] got', items.length, 'playlist(s):',
+        items.map((p) => `"${p.title}" (${p.itemCount} videos)`).join(', ') || '(empty list — channel has no playlists)');
+      return { status: 'ok', playlists: items };
     } catch (e) {
       console.warn('[playlists] list threw:', e.message);
       return { status: 'error', playlists: [], error: e.message };
@@ -4483,7 +4379,7 @@ async function fetchBridgePlaylists() {
 }
 
 // Render the playlists section based on the structured result from
-// fetchBridgePlaylists. Three visible states:
+// fetchUserPlaylists. Three visible states:
 //   · checkboxes for each playlist (status=ok with items)
 //   · "No playlists yet on this channel" (status=ok with empty array —
 //     surfaces the feature so users with 0 playlists know it's alive
@@ -4668,109 +4564,34 @@ async function runUploadItem(item) {
       },
     };
 
-    // CHANNEL ROUTING — hard binary, NO fallback path.
-    //
-    // The end-goal contract:
-    //   - Allowlisted users upload ONLY to the bridge (VHS Garage). If
-    //     the bridge fails for ANY reason — quota, network, missing
-    //     token — the upload fails loudly. We do NOT silently route to
-    //     their personal channel. That bug burned us before.
-    //   - Non-allowlisted users upload ONLY to their own OAuth-selected
-    //     channel. We never even ping the bridge for them.
-    //
-    // whoami is the single source of truth for which path to take. It's
-    // cached at module scope (per access token) so this is usually a
-    // pointer read, not a network round-trip.
-    let whoami;
-    try {
-      whoami = await getWhoami();
-    } catch (e) {
-      throw new Error('Could not verify YouTube destination: ' + e.message);
-    }
-
+    // Direct YouTube upload — whatever channel the user OAuth'd as
+    // is where this lands. The old bridge-routing dance was retired
+    // once Matt got Manager access on the VHS Garage brand: he (and
+    // anyone else with access) can now pick VHS Garage at Google's
+    // channel chooser, and their token is brand-scoped from there on.
     let uploadUrl;
-    let uploadedViaBridge = false;
-
-    if (whoami.isAllowlisted) {
-      // BRIDGE ONLY — no fallback. Bridge failure = upload failure.
-      const bridgeRes = await fetch('/api/youtube-bridge', {
+    const initRes = await fetch(
+      'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+      {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'init-upload',
-          accessToken: item.token,
-          contentType,
-          fileSize: file.size,
-          snippet: uploadMeta.snippet,
-          status: uploadMeta.status,
-        }),
-      });
-      if (!bridgeRes.ok) {
-        const detail = await bridgeRes.json().catch(() => ({}));
-        const channelName = whoami.bridgeChannel?.name || 'VHS Garage';
-        // The bridge wraps every upstream YouTube failure in
-        //   { error: 'YouTube init failed', detail: <raw YT body>, ytStatus: <code> }
-        // detail.detail is the actual YouTube error body — usually JSON like
-        //   {"error":{"code":403,"message":"...","errors":[{"reason":"uploadLimitExceeded"}]}}
-        // Run it through parseYouTubeError so the user sees the friendly
-        // mapped message (e.g. uploadLimitExceeded → "YouTube's daily upload
-        // limit hit. The cap is per-channel and resets at midnight Pacific…")
-        // instead of the opaque "YouTube init failed (YT 403)" wrapper.
-        let headline;
-        let limitHit = false;
-        if (detail.detail) {
-          const parsed = parseYouTubeError(detail.detail, detail.ytStatus || bridgeRes.status);
-          headline = parsed.display || parsed.headline;
-          // Tag the error so the toast knows to surface a "Reset count"
-          // action — only fires for the actual cap-hit, not other 403s.
-          if (parsed.reason === 'uploadLimitExceeded') limitHit = true;
-        } else {
-          // Bridge failure that didn't come from YouTube (503 missing token,
-          // 401 verify failed, etc.) — surface the bridge's own error string.
-          headline = detail.error || `HTTP ${bridgeRes.status}`;
-        }
-        // Always log the full raw detail to console so power users (and us
-        // when a tester reports an issue) can dig in via DevTools.
-        console.warn('[bridge upload] failed:', {
-          status: bridgeRes.status,
-          ytStatus: detail.ytStatus,
-          bridgeError: detail.error,
-          ytDetail: detail.detail,
-        });
-        const err = new Error(`Upload to ${channelName} failed.\n${headline}\nThe video was NOT uploaded.`);
-        err.uploadLimitExceeded = limitHit;
-        throw err;
+        headers: {
+          'Authorization': `Bearer ${item.token}`,
+          'Content-Type': 'application/json',
+          'X-Upload-Content-Type': contentType,
+          'X-Upload-Content-Length': String(file.size),
+        },
+        body: JSON.stringify(uploadMeta),
       }
-      const bridgeData = await bridgeRes.json();
-      uploadUrl = bridgeData.uploadUrl;
-      uploadedViaBridge = true;
-    } else {
-      // DIRECT UPLOAD ONLY — to the user's own OAuth-selected channel.
-      // Never call the bridge for non-allowlisted users.
-      const initRes = await fetch(
-        'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${item.token}`,
-            'Content-Type': 'application/json',
-            'X-Upload-Content-Type': contentType,
-            'X-Upload-Content-Length': String(file.size),
-          },
-          body: JSON.stringify(uploadMeta),
-        }
-      );
-      if (!initRes.ok) {
-        const errBody = await initRes.text();
-        const parsed = parseYouTubeError(errBody, initRes.status);
-        console.warn('[upload] direct init failed:', parsed.reason || initRes.status, parsed.apiMessage);
-        const err = new Error(parsed.display);
-        if (parsed.reason === 'uploadLimitExceeded') err.uploadLimitExceeded = true;
-        throw err;
-      }
-      uploadUrl = initRes.headers.get('location');
+    );
+    if (!initRes.ok) {
+      const errBody = await initRes.text();
+      const parsed = parseYouTubeError(errBody, initRes.status);
+      console.warn('[upload] init failed:', parsed.reason || initRes.status, parsed.apiMessage);
+      const err = new Error(parsed.display);
+      if (parsed.reason === 'uploadLimitExceeded') err.uploadLimitExceeded = true;
+      throw err;
     }
-    item.uploadedViaBridge = uploadedViaBridge;
+    uploadUrl = initRes.headers.get('location');
 
     // PUT the file with progress events feeding the toast.
     await new Promise((resolve, reject) => {
@@ -4817,39 +4638,18 @@ async function runUploadItem(item) {
                 thumbDataUrl = await readYtThumbnailFromDisk(directoryHandle, baseForThumb);
               }
               if (thumbDataUrl) {
-                uploadYouTubeThumbnail(result.id, item.token, thumbDataUrl, { useBridge: item.uploadedViaBridge })
+                uploadYouTubeThumbnail(result.id, item.token, thumbDataUrl)
                   .catch((e) => console.warn('[upload] thumbnail failed:', e.message));
               }
             })();
-            // If the video went through the bridge, record stats (count +
-            // duration + size) so the admin dashboard has something to show.
-            // Fire-and-forget — failure to record stats never affects the
-            // user-facing success state.
-            if (item.uploadedViaBridge && clipAfter) {
-              fetch('/api/youtube-bridge', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  action: 'record-upload',
-                  accessToken: item.token,
-                  durationSeconds: clipAfter.duration || 0,
-                  byteSize: clipAfter.fileSize || 0,
-                  videoId: result.id,
-                }),
-              }).catch(() => {});
-            }
-            // Centralized upload log — every successful upload (bridge AND
-            // direct) gets a row in the upload_logs table. Lives in a
-            // separate Node function because @netlify/database is Node-only
-            // (Edge runs Deno + can't import the package). Fire-and-forget
-            // for the same reason as the bridge stats above: a network
-            // hiccup here shouldn't make the user think their YouTube
-            // upload failed (it already succeeded — we're just logging).
+            // Centralized upload log — every successful upload gets a row
+            // in the upload_logs table. Lives in a separate Node function
+            // because @netlify/database is Node-only (Edge runs Deno + can't
+            // import the package). Fire-and-forget — a network hiccup here
+            // shouldn't make the user think their YouTube upload failed
+            // (it already succeeded — we're just logging).
             if (clipAfter) {
-              const personalCh = ytGetChannel();
-              const channelHandle = item.uploadedViaBridge
-                ? (cachedWhoami?.bridgeChannel?.handle || null)
-                : (personalCh?.handle || null);
+              const ch = ytGetChannel();
               fetch('/.netlify/functions/log-upload', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -4858,8 +4658,7 @@ async function runUploadItem(item) {
                   videoId: result.id,
                   videoUrl: item.ytUrl,
                   visibility: item.snippet?.privacyStatus || null,
-                  uploadedViaBridge: !!item.uploadedViaBridge,
-                  channelHandle,
+                  channelHandle: ch?.handle || null,
                   clientClipId: clipAfter.id,
                   title: clipAfter.title || null,
                   description: clipAfter.description || null,
@@ -4879,22 +4678,28 @@ async function runUploadItem(item) {
               }).catch(() => {});
             }
             // Add the new video to each playlist the user checked at
-            // queue-time. Bridge-only — direct uploads can't add to
-            // VHS Garage's playlists. Fire-and-forget per playlist
-            // (parallel); the add operation isn't critical to the
-            // user-facing success state. Failures land in the bridge's
-            // console.warn for debugging.
-            if (item.uploadedViaBridge && Array.isArray(item.playlistIds) && item.playlistIds.length > 0) {
+            // queue-time. Direct call to YouTube — the user's OAuth
+            // token has youtube.force-ssl scope which covers playlist
+            // writes. Fire-and-forget per playlist (parallel); the add
+            // operation isn't critical to the user-facing success state.
+            if (Array.isArray(item.playlistIds) && item.playlistIds.length > 0) {
               for (const playlistId of item.playlistIds) {
-                fetch('/api/youtube-bridge', {
+                fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet', {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
+                  headers: {
+                    'Authorization': `Bearer ${item.token}`,
+                    'Content-Type': 'application/json',
+                  },
                   body: JSON.stringify({
-                    action: 'add-to-playlist',
-                    accessToken: item.token,
-                    videoId: result.id,
-                    playlistId,
+                    snippet: {
+                      playlistId,
+                      resourceId: { kind: 'youtube#video', videoId: result.id },
+                    },
                   }),
+                }).then((res) => {
+                  if (!res.ok) {
+                    console.warn('[upload] playlistItems.insert failed', { status: res.status, playlistId, videoId: result.id });
+                  }
                 }).catch((e) => {
                   console.warn('[upload] add-to-playlist threw:', e.message, { playlistId });
                 });
@@ -5495,7 +5300,7 @@ function wireYouTubePublish() {
       // a no-op on subsequent clips. populatePlaylistsUI hides the
       // section gracefully when the list is empty (non-allowlisted
       // user, scope mismatch, no playlists on the channel).
-      fetchBridgePlaylists().then(populatePlaylistsUI);
+      fetchUserPlaylists().then(populatePlaylistsUI);
     });
   }
   publishStateForClip_external = publishStateForClip;
