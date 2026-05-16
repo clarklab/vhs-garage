@@ -4264,21 +4264,21 @@ function ytUpdateAccountUI() {
 // channel chooser), there's no special routing decision to make.
 // Whatever channel the user OAuth'd as IS where the upload lands.
 // We just show the channel name + handle + thumbnail.
+//
+// Always REVEALS the banner — never hides. The publishStateForClip
+// caller already gates this function behind a refresh-token check
+// (shows the sign-in panel when not signed in), so by the time we
+// get here the user is signed in and the banner should always be
+// visible. Even when ytGetChannel returns null (transient localStorage
+// hiccup, fresh sign-in race), we show a fallback "Your channel"
+// label so the wrapper stays visible — critical because the Sign
+// out button lives inside this banner.
 async function refreshDestinationBanner() {
   const destEl = document.getElementById('yt-pub-destination');
   if (!destEl) return;
   const nameEl = document.getElementById('yt-pub-destination-name');
   const handleEl = document.getElementById('yt-pub-destination-handle');
   const thumbEl = document.getElementById('yt-pub-destination-thumb');
-
-  // No refresh token at all → user isn't signed in, hide the banner
-  // (the sign-in panel is taking over). All other cases keep the
-  // banner visible so the Sign out button (which lives inside it)
-  // is always reachable when the user IS signed in.
-  if (!ytGetRefreshToken()) {
-    destEl.classList.add('hidden');
-    return;
-  }
 
   const channel = ytGetChannel();
   if (channel) {
