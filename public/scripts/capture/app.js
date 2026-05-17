@@ -198,6 +198,7 @@ async function startApp() {
   wireLibraryBatchUpload();
   wireLibraryFilter();
   wireLibraryResync();
+  wireCatalogSaveFailureToast();
   wireCharCounters();
   wireCustomScrollbars();
   wireKeyboardShortcuts();
@@ -2975,38 +2976,112 @@ function wireLibraryFilter() {
 // --- Library: resync from disk ---
 //
 // Catalog lives in localStorage which can be cleared (browser cleanup,
-// quota, dev tools, switching browsers). The on-disk .json sidecars are
-// the durable source of truth. checkLibraryResyncBanner scans the save
-// folder for sidecars whose basename isn't in the catalog and reveals a
-// banner offering to import the missing entries. Hidden when catalog
-// and disk agree (no need to clutter the library when nothing's wrong).
+// quota, dev tools, switching browsers). The on-disk files are the durable
+// source of truth. Two recovery paths run on every library refresh:
+//
+//   (A) Orphan SIDECARS — {basename}.json exists, catalog missing. Parse
+//       the sidecar and re-add the entry. This is the common recovery
+//       path after a localStorage wipe (cross-browser, dev-tools clear).
+//
+//   (B) Orphan VIDEOS  — {basename}.mp4/.webm exists with NO sidecar AND
+//       no catalog entry. This is the path that was missing — when a
+//       recording or trim wrote the file to disk but the catalog write
+//       silently failed (quota explosion), there was no way to get the
+//       clip back into the library. We synthesize a minimal entry from
+//       the file's metadata and write a sidecar so it survives going
+//       forward.
+//
+// We never delete catalog entries whose file is missing on disk (no zombie
+// hunting); the per-clip toast in loadClipIntoEditor surfaces that case.
 
-async function findOrphanedSidecarsOnDisk() {
-  if (!directoryHandle) return [];
+async function probeVideoDuration(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.muted = true;
+    let done = false;
+    const finish = (d) => {
+      if (done) return;
+      done = true;
+      try { URL.revokeObjectURL(url); } catch {}
+      resolve(d);
+    };
+    v.onloadedmetadata = () => {
+      const d = isFinite(v.duration) ? Math.round(v.duration) : 0;
+      finish(d);
+    };
+    v.onerror = () => finish(0);
+    setTimeout(() => finish(0), 4000);
+    v.src = url;
+  });
+}
+
+// Walk the save folder once and bucket every file we find. Returns
+// { sidecarOrphans, videoOrphans } where sidecarOrphans are parsed
+// sidecar objects (case A) and videoOrphans are { name, file } (case B).
+async function findOrphansOnDisk() {
+  const empty = { sidecarOrphans: [], videoOrphans: [] };
+  if (!directoryHandle) return empty;
   const catalog = getClips();
   const knownBasenames = new Set(
     catalog.map(c => c.filename || '').filter(Boolean)
       .map(f => f.replace(/\.(webm|mp4)$/, ''))
   );
-  const orphans = [];
+
+  const sidecarBasenames = new Set();
+  const videoFiles = [];
+  const sidecarOrphans = [];
+
   try {
     for await (const [name, handle] of directoryHandle.entries()) {
       if (handle.kind !== 'file') continue;
-      if (!name.endsWith('.json')) continue;
       if (name === 'catalog.json') continue; // exported aggregate, skip
-      const basename = name.replace(/\.json$/, '');
-      if (knownBasenames.has(basename)) continue;
-      try {
-        const file = await handle.getFile();
-        const text = await file.text();
-        const parsed = JSON.parse(text);
-        if (parsed && parsed.id) orphans.push(parsed);
-      } catch {}
+
+      if (name.endsWith('.json')) {
+        const basename = name.replace(/\.json$/, '');
+        sidecarBasenames.add(basename);
+        if (knownBasenames.has(basename)) continue;
+        try {
+          const file = await handle.getFile();
+          const text = await file.text();
+          const parsed = JSON.parse(text);
+          if (parsed && parsed.id) sidecarOrphans.push(parsed);
+        } catch {
+          // Corrupt sidecar — let the video-orphan pass pick it up
+          // from the .mp4/.webm sibling instead.
+        }
+        continue;
+      }
+
+      if (name.endsWith('.mp4') || name.endsWith('.webm')) {
+        videoFiles.push({ name, handle });
+        continue;
+      }
     }
   } catch (e) {
     console.warn('[resync] could not scan folder:', e.message);
+    return empty;
   }
-  return orphans;
+
+  // Sleeve photos and YouTube thumbnails share a basename root with their
+  // parent clip (e.g. `clip_xxx_front.jpg`, `clip_xxx_youtube.jpg`). They
+  // are NOT standalone videos and must not be promoted to library tiles.
+  const SLEEVE_SUFFIX_RE = /_(front|back|youtube)$/;
+
+  const videoOrphans = [];
+  for (const { name, handle } of videoFiles) {
+    const basename = name.replace(/\.(webm|mp4)$/, '');
+    if (SLEEVE_SUFFIX_RE.test(basename)) continue;
+    if (knownBasenames.has(basename)) continue;
+    if (sidecarBasenames.has(basename)) continue;
+    try {
+      const file = await handle.getFile();
+      videoOrphans.push({ name, file });
+    } catch {}
+  }
+
+  return { sidecarOrphans, videoOrphans };
 }
 
 async function checkLibraryResyncBanner() {
@@ -3017,35 +3092,147 @@ async function checkLibraryResyncBanner() {
     banner.classList.add('hidden');
     return;
   }
-  const orphans = await findOrphanedSidecarsOnDisk();
-  if (orphans.length === 0) {
+  const { sidecarOrphans, videoOrphans } = await findOrphansOnDisk();
+  const total = sidecarOrphans.length + videoOrphans.length;
+  if (total === 0) {
     banner.classList.add('hidden');
     return;
   }
-  countEl.textContent = String(orphans.length);
+  countEl.textContent = String(total);
   banner.classList.remove('hidden');
+}
+
+// Convert an orphan video file into a catalog entry + sidecar. Title is
+// derived from the filename so the user can recognize it; duration is
+// probed from the file (best-effort) so the library tile shows the right
+// thing. No thumbnail — opening the clip in the editor will give the user
+// a chance to re-capture one if they want.
+async function recoverVideoOrphan(name, file) {
+  const basename = name.replace(/\.(webm|mp4)$/, '');
+  const duration = await probeVideoDuration(file);
+  // Friendlier title than the raw filename — strip the timestamp-y
+  // prefix that generateFilename emits and fall back to the basename
+  // if nothing readable remains.
+  const friendly = basename.replace(/^vhsg[_-]?/i, '').replace(/[_-]+/g, ' ').trim();
+  const title = friendly || basename;
+  const entry = createClipEntry(
+    title || 'Recovered clip',
+    name,
+    duration || 0,
+    file.size || 0,
+    0,
+  );
+  // Anchor the entry's timestamp to the file's mtime when available so
+  // the library ordering matches when the file was actually written,
+  // not when the user happened to click Resync.
+  if (file.lastModified) {
+    entry.date = new Date(file.lastModified).toISOString();
+  }
+  const ok = addClip(entry);
+  if (!ok) return false;
+  // Write a sidecar so we don't have to recover this same orphan again
+  // next time. Best-effort — failure here is logged inside saveSidecarFiles
+  // wrapper below.
+  try {
+    await saveSidecarFiles(directoryHandle, basename, entry);
+  } catch (e) {
+    console.warn('[resync] could not write sidecar for recovered orphan:', e);
+  }
+  return true;
+}
+
+async function runLibraryResync(btn) {
+  if (!directoryHandle) {
+    showInfoToast(
+      'Pick your drive folder first',
+      'VHS Garage needs to know where your recordings are. Use "Choose folder…" in the library to point at your drive folder, then try again.'
+    );
+    return;
+  }
+  const wasDisabled = btn ? btn.disabled : false;
+  const wasLabel = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Scanning…';
+  }
+  try {
+    const { sidecarOrphans, videoOrphans } = await findOrphansOnDisk();
+    let added = 0;
+    let failed = 0;
+    for (const entry of sidecarOrphans) {
+      // Re-add to catalog using the sidecar as-is; sidecars store the same
+      // shape as the catalog entry (minus the heavy image fields).
+      if (addClip(entry)) added++; else failed++;
+    }
+    for (const { name, file } of videoOrphans) {
+      if (await recoverVideoOrphan(name, file)) added++; else failed++;
+    }
+    refreshLibrary();
+    await checkLibraryResyncBanner();
+    if (added > 0) {
+      showInfoToast(
+        `Added ${added} clip${added === 1 ? '' : 's'} to your library`,
+        failed > 0
+          ? `${failed} couldn't be added (catalog full). Try removing some older clips and rescanning.`
+          : 'Your missing recordings are back. Click any tile to open.'
+      );
+    } else if (failed === 0) {
+      showInfoToast(
+        'Nothing to recover',
+        "We didn't find any clips on your drive that aren't already in the library."
+      );
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = wasDisabled;
+      btn.textContent = wasLabel || 'Resync';
+    }
+  }
+}
+
+// Library.js dispatches `catalog-save-failed` when a localStorage write
+// hits an unrecoverable error (almost always quota exhaustion). Surfacing
+// this is what fixes the "clip vanished" class of bug — the file is on
+// disk, the user thinks the save worked, but the library never got the
+// tile. Now they see a toast immediately and can rescan to recover.
+function wireCatalogSaveFailureToast() {
+  if (typeof window === 'undefined') return;
+  let lastShownAt = 0;
+  window.addEventListener('catalog-save-failed', (e) => {
+    // Debounce — a single user action can trigger many saves
+    // (addClip → updateClip → updateClip), don't stack five toasts.
+    const now = Date.now();
+    if (now - lastShownAt < 2000) return;
+    lastShownAt = now;
+    const reason = e?.detail?.reason;
+    if (reason === 'quota') {
+      showErrorToast(
+        'Library storage full',
+        "Your browser's storage limit is hit, so the latest clip didn't save into the library. " +
+        "The video file itself is safe on your drive — click Rescan in the library footer to add it back."
+      );
+    } else {
+      showErrorToast(
+        "Couldn't update library",
+        (e?.detail?.error || 'Unknown error') + '. Try clicking Rescan in the library footer.'
+      );
+    }
+  });
 }
 
 function wireLibraryResync() {
   const btn = document.getElementById('library-resync-btn');
-  if (!btn) return;
-  btn.addEventListener('click', async () => {
-    btn.disabled = true;
-    btn.textContent = 'Resyncing…';
-    try {
-      const orphans = await findOrphanedSidecarsOnDisk();
-      for (const entry of orphans) {
-        // Re-add to catalog using the sidecar as-is; sidecars store the same
-        // shape as the catalog entry (minus the heavy image fields).
-        addClip(entry);
-      }
-      refreshLibrary();
-      await checkLibraryResyncBanner();
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Resync';
-    }
-  });
+  if (btn) {
+    btn.addEventListener('click', () => runLibraryResync(btn));
+  }
+  // Always-on rescan link in the library footer — gives Matt (and any
+  // other non-technical user) a button to poke even when no banner is
+  // visible. "I don't know what to do to get it working again" → click
+  // this and we re-check the folder from scratch.
+  const footerBtn = document.getElementById('library-rescan-footer');
+  if (footerBtn) {
+    footerBtn.addEventListener('click', () => runLibraryResync(footerBtn));
+  }
 }
 
 // --- Char counters with enforcement ---
@@ -4932,22 +5119,31 @@ function escapeHtml(s) {
 // alongside upload toasts, persists until the X is clicked, and lets
 // the user keep using the app while it's there.
 function showErrorToast(title, message) {
+  return showSimpleToast(title, message, { kind: 'error' });
+}
+
+function showInfoToast(title, message) {
+  return showSimpleToast(title, message, { kind: 'info' });
+}
+
+// Lightweight one-shot toast — distinct from the upload-pipeline toasts
+// in renderToastItem, which carry state machines for retries and YouTube
+// links. This one is fire-and-forget: title + body + close button.
+function showSimpleToast(title, message, { kind = 'info' } = {}) {
   const stack = document.getElementById('toast-stack');
   if (!stack) {
-    // Fallback if the stack hasn't been rendered yet (very early init
-    // or some pages without it). Keep alert as a last resort so the
-    // error isn't completely silent.
     alert(`${title}\n\n${message}`);
     return;
   }
-  const id = 'err_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+  const id = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
   const card = document.createElement('div');
   card.id = 'toast-' + id;
-  card.className = 'toast-card is-error';
+  card.className = 'toast-card' + (kind === 'error' ? ' is-error' : kind === 'success' ? ' is-success' : '');
+  const stateLabel = kind === 'error' ? '✗ Error' : kind === 'success' ? '✓ Done' : 'Info';
   card.innerHTML = `
     <div class="toast-title-row">
       <span class="toast-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
-      <span class="toast-state-label">✗ Error</span>
+      <span class="toast-state-label">${stateLabel}</span>
       <button class="toast-close-btn" data-action="close" title="Dismiss">×</button>
     </div>
     <p class="toast-error-msg">${escapeHtml(message)}</p>
@@ -4958,6 +5154,15 @@ function showErrorToast(title, message) {
     card.classList.remove('is-visible');
     setTimeout(() => card.remove(), 200);
   });
+  // Auto-dismiss info/success after 8s so the stack doesn't pile up;
+  // errors stick around until the user closes them.
+  if (kind !== 'error') {
+    setTimeout(() => {
+      if (!card.isConnected) return;
+      card.classList.remove('is-visible');
+      setTimeout(() => card.remove(), 200);
+    }, 8000);
+  }
 }
 
 // Reset the editor back to "ready to record" state. Runs at the end of the

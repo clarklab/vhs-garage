@@ -26,15 +26,31 @@ function isQuotaError(e) {
   return e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014);
 }
 
+// Surface a hard catalog failure to the rest of the app. Listeners in app.js
+// turn this into a user-facing toast so a quota explosion stops being silent
+// (which is how clips have been "vanishing" — catalog write fails, file gets
+// written to disk, but the library never gets the tile).
+function emitCatalogSaveFailed(detail) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(new CustomEvent('catalog-save-failed', { detail }));
+  } catch {}
+}
+
 // Persist clips, recovering from QuotaExceededError by stripping heavy image
 // fields from the oldest clips first. Mutates `clips` in place when a trim
-// happens so the caller's array reflects what actually got saved.
+// happens so the caller's array reflects what actually got saved. Returns
+// true on success, false on permanent failure.
 function saveClips(clips) {
   try {
     localStorage.setItem(CATALOG_KEY, JSON.stringify(clips));
     return true;
   } catch (e) {
-    if (!isQuotaError(e)) throw e;
+    if (!isQuotaError(e)) {
+      console.error('[catalog] save failed:', e);
+      emitCatalogSaveFailed({ reason: 'error', error: e.message || String(e) });
+      return false;
+    }
   }
 
   const trimmed = clips.map(c => ({ ...c }));
@@ -48,32 +64,36 @@ function saveClips(clips) {
         clips.splice(0, clips.length, ...trimmed);
         return true;
       } catch (e) {
-        if (!isQuotaError(e)) throw e;
+        if (!isQuotaError(e)) {
+          console.error('[catalog] save failed mid-trim:', e);
+          emitCatalogSaveFailed({ reason: 'error', error: e.message || String(e) });
+          return false;
+        }
       }
     }
   }
   console.error('[catalog] save failed: quota exhausted even after trim');
+  emitCatalogSaveFailed({ reason: 'quota' });
   return false;
 }
 
 export function addClip(entry) {
   const clips = getClips();
   clips.unshift(entry);
-  saveClips(clips);
+  return saveClips(clips);
 }
 
 export function updateClip(id, fields) {
   const clips = getClips();
   const idx = clips.findIndex(c => c.id === id);
-  if (idx !== -1) {
-    clips[idx] = { ...clips[idx], ...fields };
-    saveClips(clips);
-  }
+  if (idx === -1) return false;
+  clips[idx] = { ...clips[idx], ...fields };
+  return saveClips(clips);
 }
 
 export function deleteClip(id) {
   const clips = getClips().filter(c => c.id !== id);
-  saveClips(clips);
+  return saveClips(clips);
 }
 
 // 6-char random suffix on top of Date.now() ensures two clips created
