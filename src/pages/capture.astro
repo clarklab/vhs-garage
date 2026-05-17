@@ -1707,13 +1707,16 @@ import { BUILD_ID } from '../utils/build-id.js';
           <button id="library-pick-dir" class="px-4 py-2 border border-white/30 text-white/80 hover:text-white hover:border-white text-xs transition-colors">Choose folder…</button>
         </div>
 
-        <!-- Resync banner — only shown when checkLibraryResyncBanner finds
-             clips on disk (with a .json sidecar) that aren't in the catalog.
-             One click rebuilds the missing entries from the sidecars. Hidden
-             when catalog and disk agree. -->
+        <!-- Resync banner — shown when checkLibraryResyncBanner finds clips
+             on disk that aren't in the catalog. Covers both orphan sidecars
+             (case A: catalog cleared) and orphan video files (case B: catalog
+             write failed silently after recording or trim). One click recovers
+             them. Hidden when catalog and disk agree. The always-on rescan
+             button in the footer covers the case where a user wants to
+             double-check even though the banner is hidden. -->
         <div id="library-resync-banner" class="hidden flex items-center gap-2 px-3 py-2 border-b border-yellow-500/30" style="background: rgba(202, 138, 4, 0.12);">
           <span class="text-yellow-300/85 text-[11px] flex-1">
-            Found <span id="library-resync-count" class="font-bold">0</span> clip(s) on disk not in your library.
+            <span id="library-resync-count" class="font-bold">0</span> recording(s) on your drive aren't in the library yet. Click Resync to bring them back.
           </span>
           <button id="library-resync-btn" class="px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-white text-[10px] uppercase tracking-wider transition-colors">Resync</button>
         </div>
@@ -1724,6 +1727,7 @@ import { BUILD_ID } from '../utils/build-id.js';
 
       <!-- Footer — small action strip -->
       <div class="flex items-center justify-end gap-3 px-3 py-1.5 border-t border-white/15 bg-white/5">
+        <button id="library-rescan-footer" class="text-[10px] text-white/40 hover:text-white/70 transition-colors uppercase tracking-wider" title="Re-check your drive folder for any recordings missing from the library">Rescan folder</button>
         <button id="export-catalog-btn" class="text-[10px] text-white/40 hover:text-white/70 transition-colors uppercase tracking-wider">Export catalog.json</button>
       </div>
     </div>
