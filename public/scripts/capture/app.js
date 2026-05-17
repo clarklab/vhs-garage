@@ -4757,19 +4757,46 @@ async function runUploadItem(item) {
     // anyone else with access) can now pick VHS Garage at Google's
     // channel chooser, and their token is brand-scoped from there on.
     let uploadUrl;
-    const initRes = await fetch(
-      'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${item.token}`,
-          'Content-Type': 'application/json',
-          'X-Upload-Content-Type': contentType,
-          'X-Upload-Content-Length': String(file.size),
-        },
-        body: JSON.stringify(uploadMeta),
-      }
-    );
+    // fetch() throws TypeError on network/CORS/extension failures BEFORE
+    // a response exists — distinct from a 4xx/5xx (which lands in the
+    // !ok branch with a YouTube error payload to parse). Without this
+    // try/catch the raw "TypeError: Failed to fetch" string bubbled all
+    // the way up to the toast, giving the user no idea what to do.
+    let initRes;
+    try {
+      initRes = await fetch(
+        'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${item.token}`,
+            'Content-Type': 'application/json',
+            'X-Upload-Content-Type': contentType,
+            'X-Upload-Content-Length': String(file.size),
+          },
+          body: JSON.stringify(uploadMeta),
+        }
+      );
+    } catch (fetchErr) {
+      // Diagnostics — enough to tell network blip from CORS-blocker from
+      // empty-token without leaking the token itself. Logged on every
+      // throw so when a user reports the bug we can ask for their
+      // console output.
+      console.warn('[upload] init fetch threw before response', {
+        errName: fetchErr?.name,
+        errMessage: fetchErr?.message,
+        filename: clip.filename,
+        fileSize: file.size,
+        contentType,
+        tokenLength: typeof item.token === 'string' ? item.token.length : 0,
+        online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+      });
+      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      const friendly = offline
+        ? "You're offline. Reconnect to the internet, then click retry."
+        : "Couldn't reach YouTube. This is usually a network hiccup, a VPN, or a browser extension (ad/privacy blocker) blocking googleapis.com. Try again, and if it keeps happening, pause your ad blocker for this site.";
+      throw new Error(friendly);
+    }
     if (!initRes.ok) {
       const errBody = await initRes.text();
       const parsed = parseYouTubeError(errBody, initRes.status);
@@ -4905,6 +4932,14 @@ async function runUploadItem(item) {
         }
       });
       xhr.addEventListener('error', () => {
+        console.warn('[upload] PUT xhr error event', {
+          readyState: xhr.readyState,
+          status: xhr.status,
+          filename: clip.filename,
+          fileSize: file.size,
+          progressPct: item.progress,
+          online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+        });
         reject(new Error('Network error during upload. Check your connection and click retry.'));
       });
       xhr.send(file);
