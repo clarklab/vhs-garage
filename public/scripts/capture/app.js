@@ -4757,24 +4757,37 @@ async function runUploadItem(item) {
     // anyone else with access) can now pick VHS Garage at Google's
     // channel chooser, and their token is brand-scoped from there on.
     let uploadUrl;
-    const initRes = await fetch(
-      'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${item.token}`,
-          'Content-Type': 'application/json',
-          'X-Upload-Content-Type': contentType,
-          'X-Upload-Content-Length': String(file.size),
-        },
-        body: JSON.stringify(uploadMeta),
-      }
-    );
+    let initRes;
+    try {
+      initRes = await fetch(
+        'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${item.token}`,
+            'Content-Type': 'application/json',
+            'X-Upload-Content-Type': contentType,
+            'X-Upload-Content-Length': String(file.size),
+          },
+          body: JSON.stringify(uploadMeta),
+        }
+      );
+    } catch (e) {
+      // Bare-network failure: fetch() rejected before we got any
+      // response. Tag the stage so the outer catch can log it cleanly,
+      // then rethrow — the outer catch translates "Failed to fetch"
+      // into a message the user can actually act on.
+      e.uploadStage = 'init';
+      throw e;
+    }
     if (!initRes.ok) {
       const errBody = await initRes.text();
       const parsed = parseYouTubeError(errBody, initRes.status);
       console.warn('[upload] init failed:', parsed.reason || initRes.status, parsed.apiMessage);
       const err = new Error(parsed.display);
+      err.uploadStage = 'init';
+      err.httpStatus = initRes.status;
+      err.youtubeReason = parsed.reason || null;
       if (parsed.reason === 'uploadLimitExceeded') err.uploadLimitExceeded = true;
       throw err;
     }
@@ -4894,18 +4907,26 @@ async function runUploadItem(item) {
             }
             resolve();
           } catch (e) {
-            reject(new Error('Upload succeeded but response was unparseable.'));
+            const err = new Error('Upload succeeded but response was unparseable.');
+            err.uploadStage = 'parse';
+            err.httpStatus = xhr.status;
+            reject(err);
           }
         } else {
           const parsed = parseYouTubeError(xhr.responseText, xhr.status);
           console.warn('[upload] PUT failed:', parsed.reason || xhr.status, parsed.apiMessage);
           const err = new Error(parsed.display);
+          err.uploadStage = 'put';
+          err.httpStatus = xhr.status;
+          err.youtubeReason = parsed.reason || null;
           if (parsed.reason === 'uploadLimitExceeded') err.uploadLimitExceeded = true;
           reject(err);
         }
       });
       xhr.addEventListener('error', () => {
-        reject(new Error('Network error during upload. Check your connection and click retry.'));
+        const err = new Error('Network error during upload. Check your connection and click retry.');
+        err.uploadStage = 'put';
+        reject(err);
       });
       xhr.send(file);
     });
@@ -4919,7 +4940,22 @@ async function runUploadItem(item) {
   } catch (e) {
     console.warn('[upload] item failed:', e.message);
     item.state = 'error';
-    item.errorMsg = e.message || 'Upload failed.';
+    // Bare-network TypeError from fetch() means the browser never got
+    // a response — Chromium: "Failed to fetch"; Firefox: "NetworkError
+    // when attempting to fetch resource."; Safari: "Load failed". The
+    // raw browser string is useless to non-technical users, so we
+    // translate it into something they can actually act on. Anything
+    // with a real headline (parseYouTubeError display, "Network error
+    // during upload. Check your connection…", etc.) passes through.
+    const msg = e?.message || '';
+    const isBareNetwork = e?.name === 'TypeError' && (
+      /failed to fetch/i.test(msg) ||
+      /networkerror/i.test(msg) ||
+      /^load failed$/i.test(msg)
+    );
+    item.errorMsg = isBareNetwork
+      ? "Couldn't reach YouTube. Check your internet connection (Wi-Fi, VPN, or an ad-blocker can block googleapis.com) and click Retry."
+      : (msg || 'Upload failed.');
     item.xhr = null;
     // Auto-reset the manual upload counter when YouTube refuses with
     // uploadLimitExceeded. The error itself IS the calibration moment
@@ -4928,6 +4964,41 @@ async function runUploadItem(item) {
     // back at 0; the next successful upload bumps it to 1, giving
     // the user a fresh "Uploaded today" running total against the cap.
     if (e.uploadLimitExceeded) resetUploadCount();
+    // Fire-and-forget failure beacon → upload_failures table. Without
+    // this we have no server-side visibility into errors, because the
+    // failing init fetch goes browser → googleapis.com and never
+    // touches our infra. Wrap the whole thing in a try so a beacon
+    // bug can't mask the original failure.
+    try {
+      const clipsForFailure = getClips();
+      const clipForFailure = clipsForFailure.find(c => c.id === item.clipId);
+      const failureMime = clipForFailure?.filename?.endsWith('.webm')
+        ? 'video/webm'
+        : clipForFailure?.filename?.endsWith('.mp4')
+          ? 'video/mp4'
+          : null;
+      fetch('/.netlify/functions/log-upload-failure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessToken: item.token || null,
+          clientClipId: item.clipId || null,
+          clipTitle: clipForFailure?.title || item.title || null,
+          clipByteSize: clipForFailure?.fileSize || null,
+          clipDurationSeconds: clipForFailure?.duration || null,
+          clipMimeType: failureMime,
+          stage: e.uploadStage || (isBareNetwork ? 'init' : 'unknown'),
+          httpStatus: e.httpStatus ?? null,
+          youtubeReason: e.youtubeReason ?? null,
+          errorName: e.name || null,
+          errorMessage: msg || null,
+          navigatorOnline: typeof navigator !== 'undefined' ? navigator.onLine : null,
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+        }),
+      }).catch(() => {});
+    } catch (beaconErr) {
+      console.warn('[upload] failure beacon threw:', beaconErr.message);
+    }
     renderToast(item);
     // Catalog stays untouched (no youtubeUrl set) so the clip remains
     // "not uploaded" in the library and is re-queueable.

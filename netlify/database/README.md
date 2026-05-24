@@ -23,10 +23,13 @@ be applied automatically on the next `netlify deploy` (or via
 
 ## What's in the DB
 
-A single `upload_logs` table — one row per successful upload from the
-capture page. Inserted by `netlify/functions/log-upload.mjs`, which
-is called fire-and-forget by the client right after each upload's PUT
-completes.
+Two tables, both written fire-and-forget from the capture page:
+
+### `upload_logs`
+
+One row per **successful** upload. Inserted by
+`netlify/functions/log-upload.mjs`, called right after each upload's
+PUT completes.
 
 Columns:
 
@@ -36,6 +39,38 @@ Columns:
 - **Per-clip**: `title`, `description`, `tags`, `duration_seconds`, `byte_size`, `mime_type`
 - **Per-tape**: `year`, `tape_title`, `distributor`, `tape_length`, `recording_speed`, `condition`, `cassette_notes`
 - **Pipeline**: `ai_model` (which AI model was selected when this was uploaded)
+
+### `upload_failures`
+
+One row per **failed** upload attempt. Inserted by
+`netlify/functions/log-upload-failure.mjs` from `runUploadItem()`'s
+catch handler. Exists because the resumable-upload init fetch goes
+browser → `googleapis.com` directly, so bare-network failures
+("Failed to fetch") otherwise never touch our infra and we'd have no
+way to see them.
+
+Columns:
+
+- **Verified caller**: `uploader_email` (same tokeninfo flow; NULL if no token)
+- **Clip context**: `client_clip_id`, `clip_title`, `clip_byte_size`, `clip_duration_seconds`, `clip_mime_type`
+- **Failure shape**: `stage` (`init` / `put` / `parse` / `unknown`), `http_status`, `youtube_reason`
+- **Raw error**: `error_name`, `error_message`
+- **Client context**: `navigator_online`, `user_agent`
+
+Useful queries:
+
+```sql
+-- "Where are uploads dying most this week?"
+SELECT stage, COUNT(*) FROM upload_failures
+WHERE created_at > NOW() - INTERVAL '7 days'
+GROUP BY stage ORDER BY 2 DESC;
+
+-- "What's Matt been hitting?"
+SELECT created_at, stage, http_status, error_message
+FROM upload_failures
+WHERE uploader_email = 'matt@example.com'
+ORDER BY created_at DESC LIMIT 50;
+```
 
 ## Why a separate Node function?
 
