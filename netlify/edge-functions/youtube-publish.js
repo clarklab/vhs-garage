@@ -78,7 +78,7 @@ export default async (req) => {
   const { metadata, action, refreshToken, model: requestedModel } = body;
   const model = pickModel(requestedModel, DEFAULT_MODEL);
 
-  if (!refreshToken) {
+  if (!refreshToken && action !== 'init-upload') {
     return json({ error: 'Not signed in' }, 401);
   }
 
@@ -90,6 +90,73 @@ export default async (req) => {
     });
     if (!token) return json({ error: 'Could not get access token — please sign in again' }, 401);
     return json({ accessToken: token });
+  }
+
+  // Proxy the resumable-upload init through the edge function so the
+  // browser never hits googleapis.com directly for this step. YouTube's
+  // error responses (especially 429) omit CORS headers, which makes the
+  // browser mask the real status as a generic "Failed to fetch" — the user
+  // sees "Couldn't reach YouTube" when the actual problem is rate limiting.
+  // Server-to-server has no CORS, so we can relay the real status + body.
+  if (action === 'init-upload') {
+    const { uploadMeta, contentType, contentLength, accessToken } = body;
+    if (!accessToken || !uploadMeta) {
+      return json({ error: 'Missing accessToken or uploadMeta' }, 400);
+    }
+
+    const MAX_RETRIES = 3;
+    const BASE_DELAY = 1000;
+    let lastRes = null;
+    let lastErrBody = null;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const delay = BASE_DELAY * Math.pow(2, attempt - 1);
+        await new Promise(r => setTimeout(r, delay));
+      }
+
+      try {
+        lastRes = await fetch(
+          'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+              ...(contentType ? { 'X-Upload-Content-Type': contentType } : {}),
+              ...(contentLength ? { 'X-Upload-Content-Length': String(contentLength) } : {}),
+            },
+            body: JSON.stringify(uploadMeta),
+          }
+        );
+      } catch (e) {
+        if (attempt < MAX_RETRIES) continue;
+        return json({ error: 'Network error reaching YouTube: ' + e.message }, 502);
+      }
+
+      if (lastRes.status === 429 && attempt < MAX_RETRIES) {
+        lastErrBody = await lastRes.text().catch(() => '');
+        continue;
+      }
+      break;
+    }
+
+    if (!lastRes.ok) {
+      const errBody = lastErrBody || await lastRes.text().catch(() => '');
+      let errParsed = null;
+      try { errParsed = JSON.parse(errBody); } catch {}
+      return json({
+        error: 'YouTube rejected the upload init',
+        httpStatus: lastRes.status,
+        youtubeError: errParsed || errBody,
+      }, lastRes.status >= 500 ? 502 : lastRes.status);
+    }
+
+    const uploadUrl = lastRes.headers.get('location');
+    if (!uploadUrl) {
+      return json({ error: 'YouTube did not return an upload URL' }, 502);
+    }
+    return json({ uploadUrl });
   }
 
   if (action === 'prepare') {
@@ -137,7 +204,7 @@ export default async (req) => {
     });
   }
 
-  return json({ error: 'Unknown action. Use "prepare", "rewrite", or "token".' }, 400);
+  return json({ error: 'Unknown action. Use "prepare", "rewrite", "token", or "init-upload".' }, 400);
 };
 
 export const config = { path: '/api/youtube-publish' };

@@ -4751,47 +4751,44 @@ async function runUploadItem(item) {
       },
     };
 
-    // Direct YouTube upload — whatever channel the user OAuth'd as
-    // is where this lands. The old bridge-routing dance was retired
-    // once Matt got Manager access on the VHS Garage brand: he (and
-    // anyone else with access) can now pick VHS Garage at Google's
-    // channel chooser, and their token is brand-scoped from there on.
+    // Proxy the resumable-upload init through our edge function so
+    // CORS can't mask the real YouTube error (e.g. 429 responses from
+    // Google omit Access-Control-Allow-Origin, turning a rate-limit
+    // into a misleading "Failed to fetch"). The edge function retries
+    // transient 429s with backoff and relays the real status.
     let uploadUrl;
     let initRes;
     try {
-      initRes = await fetch(
-        'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${item.token}`,
-            'Content-Type': 'application/json',
-            'X-Upload-Content-Type': contentType,
-            'X-Upload-Content-Length': String(file.size),
-          },
-          body: JSON.stringify(uploadMeta),
-        }
-      );
+      initRes = await fetch('/api/youtube-publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'init-upload',
+          accessToken: item.token,
+          uploadMeta,
+          contentType,
+          contentLength: file.size,
+          refreshToken: (typeof ytGetRefreshToken === 'function' ? ytGetRefreshToken() : null),
+        }),
+      });
     } catch (e) {
-      // Bare-network failure: fetch() rejected before we got any
-      // response. Tag the stage so the outer catch can log it cleanly,
-      // then rethrow — the outer catch translates "Failed to fetch"
-      // into a message the user can actually act on.
       e.uploadStage = 'init';
       throw e;
     }
-    if (!initRes.ok) {
-      const errBody = await initRes.text();
-      const parsed = parseYouTubeError(errBody, initRes.status);
-      console.warn('[upload] init failed:', parsed.reason || initRes.status, parsed.apiMessage);
+    const initData = await initRes.json().catch(() => ({}));
+    if (!initRes.ok || !initData.uploadUrl) {
+      const ytErr = initData.youtubeError || {};
+      const httpStatus = initData.httpStatus || initRes.status;
+      const parsed = parseYouTubeError(ytErr, httpStatus);
+      console.warn('[upload] init failed:', parsed.reason || httpStatus, parsed.apiMessage);
       const err = new Error(parsed.display);
       err.uploadStage = 'init';
-      err.httpStatus = initRes.status;
+      err.httpStatus = httpStatus;
       err.youtubeReason = parsed.reason || null;
       if (parsed.reason === 'uploadLimitExceeded') err.uploadLimitExceeded = true;
       throw err;
     }
-    uploadUrl = initRes.headers.get('location');
+    uploadUrl = initData.uploadUrl;
 
     // PUT the file with progress events feeding the toast.
     await new Promise((resolve, reject) => {
