@@ -2754,6 +2754,17 @@ function wireLibraryBatchUpload() {
   });
 }
 
+function buildPlaylistCheckboxesHtml(playlists, prefix) {
+  return playlists.map((p) => `
+    <label class="flex items-center gap-2 text-[11px] text-white/70 hover:text-white/90 cursor-pointer">
+      <input type="checkbox" data-playlist-id="${escapeHtml(p.id)}" data-prefix="${prefix}"
+             class="accent-red-600 cursor-pointer" />
+      <span class="flex-1 truncate">${escapeHtml(p.title)}</span>
+      <span class="text-white/30 tabular-nums">${p.itemCount || 0}</span>
+    </label>
+  `).join('');
+}
+
 function openBatchReviewModal() {
   const modal = document.getElementById('batch-review-modal');
   const list = document.getElementById('batch-review-list');
@@ -2767,6 +2778,41 @@ function openBatchReviewModal() {
 
   if (count) count.textContent = `${selected.length} clip${selected.length === 1 ? '' : 's'}`;
 
+  // Populate master playlist picker
+  const masterWrapper = document.getElementById('batch-master-playlists');
+  const masterList = document.getElementById('batch-master-playlists-list');
+  const playlists = (cachedPlaylists && cachedPlaylists.length > 0) ? cachedPlaylists : [];
+
+  if (masterWrapper && masterList) {
+    if (playlists.length > 0) {
+      masterList.innerHTML = buildPlaylistCheckboxesHtml(playlists, 'batch-master');
+      masterWrapper.classList.remove('hidden');
+      // Wire master → per-card sync
+      masterList.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', () => {
+          const pid = cb.dataset.playlistId;
+          const checked = cb.checked;
+          list.querySelectorAll(`input[data-playlist-id="${CSS.escape(pid)}"][data-prefix="batch-card"]`).forEach(cardCb => {
+            cardCb.checked = checked;
+          });
+        });
+      });
+    } else {
+      masterWrapper.classList.add('hidden');
+      masterList.innerHTML = '';
+    }
+  }
+
+  // Kick off a playlist fetch in case they haven't been loaded yet
+  if (playlists.length === 0) {
+    fetchUserPlaylists().then(result => {
+      if (!result || result.status !== 'ok' || !result.playlists.length) return;
+      if (document.getElementById('batch-review-modal')?.classList.contains('hidden')) return;
+      // Re-open to pick up newly fetched playlists
+      openBatchReviewModal();
+    });
+  }
+
   list.innerHTML = '';
   selected.forEach(clip => {
     const row = document.createElement('div');
@@ -2774,6 +2820,12 @@ function openBatchReviewModal() {
     row.dataset.clipId = clip.id;
     const titleVal = clip.title || '';
     const descVal = clip.description || '';
+    const playlistHtml = playlists.length > 0
+      ? `<div class="batch-card-playlists mt-1.5 pt-1.5 border-t border-white/10">
+           <p class="text-white/40 text-[10px] uppercase tracking-widest mb-1">Playlists</p>
+           <div class="space-y-0.5">${buildPlaylistCheckboxesHtml(playlists, 'batch-card')}</div>
+         </div>`
+      : '';
     row.innerHTML = `
       <div class="shrink-0 w-20 aspect-video bg-black border border-white/10 overflow-hidden flex items-center justify-center">
         ${clip.thumbnail
@@ -2786,18 +2838,16 @@ function openBatchReviewModal() {
           class="w-full bg-black border border-white/15 text-white text-[12px] px-2 py-1 focus:outline-none focus:border-white/40">
         <textarea data-field="description" rows="3" placeholder="(no description)" maxlength="5000"
           class="w-full bg-black border border-white/15 text-white text-[11px] px-2 py-1 resize-none focus:outline-none focus:border-white/40">${escapeHtml(descVal)}</textarea>
+        ${playlistHtml}
       </div>
       <button type="button" data-action="remove" title="Remove from batch"
         class="shrink-0 w-5 h-5 flex items-center justify-center text-white/40 hover:text-red-400 text-sm leading-none">×</button>
     `;
-    // Per-row remove button — drops the clip from this batch (selection set
-    // also updates so on Cancel you can see the new state).
     const removeBtn = row.querySelector('[data-action=remove]');
     if (removeBtn) removeBtn.addEventListener('click', () => {
       batchSelection.ids.delete(clip.id);
       updateBatchCounterButton();
       refreshLibrary();
-      // Re-render or close the modal if no clips remain.
       if (batchSelection.ids.size === 0) {
         closeBatchReviewModal();
       } else {
@@ -2857,14 +2907,22 @@ async function confirmBatchUpload() {
   // not the catalog — see snapshotPublishForm). Since the form is keyed
   // to a single active clip, easiest is to populate the form per enqueue
   // before calling.
+  // Snapshot per-card playlist selections before we close the modal.
+  const perCardPlaylists = new Map();
+  if (rows) {
+    rows.forEach(row => {
+      const clipId = row.dataset.clipId;
+      const checked = Array.from(row.querySelectorAll('input[data-prefix="batch-card"][type="checkbox"]:checked'))
+        .map(cb => cb.dataset.playlistId)
+        .filter(Boolean);
+      perCardPlaylists.set(clipId, checked);
+    });
+  }
+
   const orderedIds = rows ? Array.from(rows).map(r => r.dataset.clipId)
                           : Array.from(batchSelection.ids);
 
   for (const id of orderedIds) {
-    // Make snapshotPublishForm see this clip's saved values by writing
-    // them into the form briefly. Restore the form values we just
-    // overwrote at the very end so the editor doesn't mutate behind
-    // the user's back if they happen to be editing a different clip.
     const clips = getClips();
     const clip = clips.find(c => c.id === id);
     if (!clip) continue;
@@ -2877,8 +2935,7 @@ async function confirmBatchUpload() {
     if (titleEl) titleEl.value = clip.title || '';
     if (descEl) descEl.value = clip.description || '';
     if (tagsEl) tagsEl.value = clip.tags || '';
-    enqueueUpload(id, token);
-    // Restore on the next microtask so enqueueUpload has time to snapshot.
+    enqueueUpload(id, token, perCardPlaylists.get(id));
     if (titleEl) titleEl.value = prevTitle;
     if (descEl) descEl.value = prevDesc;
     if (tagsEl) tagsEl.value = prevTags;
@@ -4662,10 +4719,7 @@ function snapshotPublishForm() {
   };
 }
 
-function enqueueUpload(clipId, token) {
-  // Dedupe — if the same clip is already queued or uploading, ignore the
-  // double-click. Successful/errored items can be re-queued (retry path)
-  // because they're not in queued/uploading state.
+function enqueueUpload(clipId, token, playlistIdsOverride) {
   if (uploadQueue.items.some(it => it.clipId === clipId &&
       (it.state === 'queued' || it.state === 'uploading'))) {
     return null;
@@ -4685,11 +4739,7 @@ function enqueueUpload(clipId, token) {
     errorMsg: null,
     token,
     snippet: snapshotPublishForm(),
-    // Snapshot which playlists were checked at upload-click time. Frozen
-    // onto the queue item so the user can navigate / open other panels
-    // without changing where this video lands. Empty array if no
-    // playlists picked or the section was hidden.
-    playlistIds: getCheckedPlaylistIds(),
+    playlistIds: Array.isArray(playlistIdsOverride) ? playlistIdsOverride : getCheckedPlaylistIds(),
     queuePosition: 1,
     queueLength: 1,
   };
