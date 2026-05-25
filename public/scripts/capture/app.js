@@ -4835,7 +4835,7 @@ async function runUploadItem(item) {
       err.uploadStage = 'init';
       err.httpStatus = httpStatus;
       err.youtubeReason = parsed.reason || null;
-      if (parsed.reason === 'uploadLimitExceeded') err.uploadLimitExceeded = true;
+      if (parsed.isDailyLimit) err.uploadLimitExceeded = true;
       throw err;
     }
     uploadUrl = initData.uploadUrl;
@@ -4966,7 +4966,7 @@ async function runUploadItem(item) {
           err.uploadStage = 'put';
           err.httpStatus = xhr.status;
           err.youtubeReason = parsed.reason || null;
-          if (parsed.reason === 'uploadLimitExceeded') err.uploadLimitExceeded = true;
+          if (parsed.isDailyLimit) err.uploadLimitExceeded = true;
           reject(err);
         }
       });
@@ -5010,7 +5010,17 @@ async function runUploadItem(item) {
     // redundant, since YouTube already told us so. Counter starts
     // back at 0; the next successful upload bumps it to 1, giving
     // the user a fresh "Uploaded today" running total against the cap.
-    if (e.uploadLimitExceeded) resetUploadCount();
+    if (e.uploadLimitExceeded) {
+      resetUploadCount();
+      // Drain remaining queued items — they'll all hit the same daily cap.
+      uploadQueue.items.forEach(qi => {
+        if (qi.state === 'queued') {
+          qi.state = 'error';
+          qi.errorMsg = "Skipped — YouTube's daily upload limit was already reached. Try again tomorrow.";
+          renderToast(qi);
+        }
+      });
+    }
     // Fire-and-forget failure beacon → upload_failures table. Without
     // this we have no server-side visibility into errors, because the
     // failing init fetch goes browser → googleapis.com and never
@@ -5436,7 +5446,14 @@ function parseYouTubeError(body, httpStatus) {
 
   let headline;
   if (reason && YT_ERROR_MESSAGES[reason]) {
-    headline = YT_ERROR_MESSAGES[reason];
+    // YouTube overloads rateLimitExceeded for both short-window throttling
+    // AND daily upload caps. Disambiguate by inspecting the API message —
+    // the daily cap includes "Uploads per day" or "Video Uploads".
+    if (reason === 'rateLimitExceeded' && /uploads?\s+per\s+day|video\s+uploads/i.test(apiMessage)) {
+      headline = YT_ERROR_MESSAGES.uploadLimitExceeded;
+    } else {
+      headline = YT_ERROR_MESSAGES[reason];
+    }
   } else if (apiMessage) {
     headline = apiMessage;
   } else if (httpStatus === 401) {
@@ -5455,7 +5472,9 @@ function parseYouTubeError(body, httpStatus) {
   if (reason && apiMessage && headline !== apiMessage) {
     display = headline + '\n\nYouTube said: "' + apiMessage + '"';
   }
-  return { headline, reason, apiMessage, display, raw: parsed };
+  const isDailyLimit = reason === 'uploadLimitExceeded'
+    || (reason === 'rateLimitExceeded' && /uploads?\s+per\s+day|video\s+uploads/i.test(apiMessage));
+  return { headline, reason, apiMessage, display, raw: parsed, isDailyLimit };
 }
 
 function wireYouTubePublish() {
