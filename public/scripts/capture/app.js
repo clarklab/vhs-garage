@@ -5386,6 +5386,12 @@ function clearClipForNewCapture({ keepTapeInfo = true } = {}) {
 const YT_ERROR_MESSAGES = {
   uploadLimitExceeded:
     "YouTube's daily upload limit hit. The cap is per-channel and resets at midnight Pacific. Try again tomorrow, or in the meantime save the file and upload manually.",
+  // SYNTHETIC reason. YouTube returns rateLimitExceeded for BOTH true
+  // short-window throttles AND project-level daily upload caps; the
+  // message text is the only way to tell. parseYouTubeError promotes
+  // matching messages to this reason so users get accurate guidance.
+  projectQuotaExceeded:
+    "Project-level YouTube API quota exhausted for the day (the OAuth project's \"Video Uploads per day\" cap — separate from the per-channel 50/day limit). Resets at midnight Pacific. Permanent fix: request a quota increase at console.cloud.google.com → APIs & Services → YouTube Data API v3 → Quotas.",
   quotaExceeded:
     "YouTube API quota exceeded for the day. The quota resets at midnight Pacific.",
   dailyLimitExceeded:
@@ -5429,10 +5435,26 @@ function parseYouTubeError(body, httpStatus) {
     try { parsed = JSON.parse(body); } catch { /* not JSON */ }
   }
   const errObj = parsed && parsed.error ? parsed.error : null;
-  const reason = errObj && Array.isArray(errObj.errors) && errObj.errors[0]
+  let reason = errObj && Array.isArray(errObj.errors) && errObj.errors[0]
     ? errObj.errors[0].reason
     : null;
   const apiMessage = (errObj && errObj.message) || (errObj && errObj.errors && errObj.errors[0] && errObj.errors[0].message) || '';
+
+  // Disambiguate rateLimitExceeded — YouTube uses the same reason code
+  // for short-window throttles AND project-level daily quota hits. The
+  // message text is the only tell. Promote to projectQuotaExceeded
+  // when it matches so the user gets accurate guidance ("request
+  // higher quota at Cloud Console") instead of "wait a minute".
+  if (reason === 'rateLimitExceeded' && apiMessage) {
+    const m = apiMessage.toLowerCase();
+    if (
+      m.includes('video uploads per day') ||
+      m.includes("'video uploads'") ||
+      (m.includes('quota exceeded') && m.includes('project_number'))
+    ) {
+      reason = 'projectQuotaExceeded';
+    }
+  }
 
   let headline;
   if (reason && YT_ERROR_MESSAGES[reason]) {
