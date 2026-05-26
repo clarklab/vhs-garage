@@ -4851,114 +4851,170 @@ async function runUploadItem(item) {
         item.progress = Math.round((e.loaded / e.total) * 100);
         renderToast(item);
       });
+
+      // runSuccess — invoked once we have a parsed video resource from
+      // YouTube, whether that came from the normal xhr.load response or
+      // from the recovery status query below. All post-upload side
+      // effects live here: catalog update, counter bump, thumbnail PUT,
+      // upload_logs insert, playlist-item adds.
+      const runSuccess = (result) => {
+        item.ytUrl = 'https://youtube.com/watch?v=' + result.id;
+        updateClip(item.clipId, { youtubeUrl: item.ytUrl, youtubeId: result.id });
+        // Bump the manual upload counter (see UPLOAD_COUNT_KEY).
+        // Counts both bridge AND direct uploads — for the typical
+        // single-channel user this is the right number; for someone
+        // straddling two channels the counter slightly over-counts
+        // either side, which is fine for a "rough where am I"
+        // indicator. User resets explicitly when they hit the cap.
+        incrementUploadCount();
+        // Fire-and-forget thumbnail upload. If the video went via the
+        // bridge, the thumbnail must too — otherwise it'd attempt a
+        // thumbnails.set on a videoId that belongs to the bridge
+        // account using the user's own token, which 403s.
+        //
+        // The catalog ytThumbnailDataUrl can be missing here even when
+        // the user picked one earlier — HEAVY_FIELDS evicts it under
+        // localStorage pressure, which is exactly what happens to older
+        // clips in a multi-upload batch. Fall back to {basename}_youtube.jpg
+        // on disk so the originally-picked frame still gets uploaded
+        // instead of letting YouTube auto-pick a random one.
+        const clipsAfter = getClips();
+        const clipAfter = clipsAfter.find(c => c.id === item.clipId);
+        (async () => {
+          if (!clipAfter) return;
+          let thumbDataUrl = clipAfter.ytThumbnailDataUrl;
+          if (!thumbDataUrl && clipAfter.filename && directoryHandle) {
+            const baseForThumb = clipAfter.filename.replace(/\.(webm|mp4)$/, '');
+            thumbDataUrl = await readYtThumbnailFromDisk(directoryHandle, baseForThumb);
+          }
+          if (thumbDataUrl) {
+            uploadYouTubeThumbnail(result.id, item.token, thumbDataUrl)
+              .catch((e) => console.warn('[upload] thumbnail failed:', e.message));
+          }
+        })();
+        // Centralized upload log — every successful upload gets a row
+        // in the upload_logs table. Lives in a separate Node function
+        // because @netlify/database is Node-only (Edge runs Deno + can't
+        // import the package). Fire-and-forget — a network hiccup here
+        // shouldn't make the user think their YouTube upload failed
+        // (it already succeeded — we're just logging).
+        if (clipAfter) {
+          const ch = ytGetChannel();
+          fetch('/.netlify/functions/log-upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              accessToken: item.token,
+              videoId: result.id,
+              videoUrl: item.ytUrl,
+              visibility: item.snippet?.privacyStatus || null,
+              channelHandle: ch?.handle || null,
+              clientClipId: clipAfter.id,
+              title: clipAfter.title || null,
+              description: clipAfter.description || null,
+              tags: clipAfter.tags || null,
+              durationSeconds: clipAfter.duration || 0,
+              byteSize: clipAfter.fileSize || 0,
+              mimeType: contentType,
+              year: clipAfter.year || null,
+              tapeTitle: clipAfter.tape || null,
+              distributor: clipAfter.distributor || null,
+              tapeLength: clipAfter.tapeLength || null,
+              recordingSpeed: clipAfter.recordingSpeed || null,
+              condition: clipAfter.condition || null,
+              cassetteNotes: clipAfter.cassetteNotes || null,
+              aiModel: typeof getAiModel === 'function' ? getAiModel() : null,
+            }),
+          }).catch(() => {});
+        }
+        // Add the new video to each playlist the user checked at
+        // queue-time. Direct call to YouTube — the user's OAuth
+        // token has youtube.force-ssl scope which covers playlist
+        // writes. Fire-and-forget per playlist (parallel); the add
+        // operation isn't critical to the user-facing success state.
+        if (Array.isArray(item.playlistIds) && item.playlistIds.length > 0) {
+          for (const playlistId of item.playlistIds) {
+            fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${item.token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                snippet: {
+                  playlistId,
+                  resourceId: { kind: 'youtube#video', videoId: result.id },
+                },
+              }),
+            }).then((res) => {
+              if (!res.ok) {
+                console.warn('[upload] playlistItems.insert failed', { status: res.status, playlistId, videoId: result.id });
+              }
+            }).catch((e) => {
+              console.warn('[upload] add-to-playlist threw:', e.message, { playlistId });
+            });
+          }
+        }
+        resolve();
+      };
+
+      // recoverOrReject — when the PUT's response was lost to the browser
+      // (CORS-dropped 200, transient network glitch, unparseable body),
+      // ask YouTube via the edge function whether the upload actually
+      // finalized server-side. The original failure mode this protects
+      // against: progress reaches 100%, YouTube ingests every byte and
+      // returns 200 + the video resource, but the response carries no
+      // Access-Control-Allow-Origin (because init went server-to-server),
+      // so the browser blocks the body, xhr.error fires, and the user
+      // sees "upload failed" while the video sits on the channel with no
+      // thumbnail, no playlist membership, and no upload_logs row.
+      // The status query runs server-side so the same CORS problem
+      // doesn't bite us a second time.
+      const recoverOrReject = async (fallbackErr) => {
+        try {
+          const recRes = await fetch('/api/youtube-publish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'status-upload',
+              uploadUrl,
+              contentLength: file.size,
+              accessToken: item.token,
+            }),
+          });
+          const recData = await recRes.json().catch(() => ({}));
+          if (recRes.ok && recData.finalized && recData.video && recData.video.id) {
+            console.warn('[upload] recovered lost response via status query, videoId=' + recData.video.id);
+            runSuccess(recData.video);
+            return;
+          }
+          console.warn('[upload] recovery query says not finalized:', recData);
+        } catch (e) {
+          console.warn('[upload] recovery query threw:', e.message);
+        }
+        reject(fallbackErr);
+      };
+
       xhr.addEventListener('load', () => {
         if (xhr.status >= 200 && xhr.status < 300) {
+          let result = null;
           try {
-            const result = JSON.parse(xhr.responseText);
-            item.ytUrl = 'https://youtube.com/watch?v=' + result.id;
-            updateClip(item.clipId, { youtubeUrl: item.ytUrl, youtubeId: result.id });
-            // Bump the manual upload counter (see UPLOAD_COUNT_KEY).
-            // Counts both bridge AND direct uploads — for the typical
-            // single-channel user this is the right number; for someone
-            // straddling two channels the counter slightly over-counts
-            // either side, which is fine for a "rough where am I"
-            // indicator. User resets explicitly when they hit the cap.
-            incrementUploadCount();
-            // Fire-and-forget thumbnail upload. If the video went via the
-            // bridge, the thumbnail must too — otherwise it'd attempt a
-            // thumbnails.set on a videoId that belongs to the bridge
-            // account using the user's own token, which 403s.
-            //
-            // The catalog ytThumbnailDataUrl can be missing here even when
-            // the user picked one earlier — HEAVY_FIELDS evicts it under
-            // localStorage pressure, which is exactly what happens to older
-            // clips in a multi-upload batch. Fall back to {basename}_youtube.jpg
-            // on disk so the originally-picked frame still gets uploaded
-            // instead of letting YouTube auto-pick a random one.
-            const clipsAfter = getClips();
-            const clipAfter = clipsAfter.find(c => c.id === item.clipId);
-            (async () => {
-              if (!clipAfter) return;
-              let thumbDataUrl = clipAfter.ytThumbnailDataUrl;
-              if (!thumbDataUrl && clipAfter.filename && directoryHandle) {
-                const baseForThumb = clipAfter.filename.replace(/\.(webm|mp4)$/, '');
-                thumbDataUrl = await readYtThumbnailFromDisk(directoryHandle, baseForThumb);
-              }
-              if (thumbDataUrl) {
-                uploadYouTubeThumbnail(result.id, item.token, thumbDataUrl)
-                  .catch((e) => console.warn('[upload] thumbnail failed:', e.message));
-              }
-            })();
-            // Centralized upload log — every successful upload gets a row
-            // in the upload_logs table. Lives in a separate Node function
-            // because @netlify/database is Node-only (Edge runs Deno + can't
-            // import the package). Fire-and-forget — a network hiccup here
-            // shouldn't make the user think their YouTube upload failed
-            // (it already succeeded — we're just logging).
-            if (clipAfter) {
-              const ch = ytGetChannel();
-              fetch('/.netlify/functions/log-upload', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  accessToken: item.token,
-                  videoId: result.id,
-                  videoUrl: item.ytUrl,
-                  visibility: item.snippet?.privacyStatus || null,
-                  channelHandle: ch?.handle || null,
-                  clientClipId: clipAfter.id,
-                  title: clipAfter.title || null,
-                  description: clipAfter.description || null,
-                  tags: clipAfter.tags || null,
-                  durationSeconds: clipAfter.duration || 0,
-                  byteSize: clipAfter.fileSize || 0,
-                  mimeType: contentType,
-                  year: clipAfter.year || null,
-                  tapeTitle: clipAfter.tape || null,
-                  distributor: clipAfter.distributor || null,
-                  tapeLength: clipAfter.tapeLength || null,
-                  recordingSpeed: clipAfter.recordingSpeed || null,
-                  condition: clipAfter.condition || null,
-                  cassetteNotes: clipAfter.cassetteNotes || null,
-                  aiModel: typeof getAiModel === 'function' ? getAiModel() : null,
-                }),
-              }).catch(() => {});
-            }
-            // Add the new video to each playlist the user checked at
-            // queue-time. Direct call to YouTube — the user's OAuth
-            // token has youtube.force-ssl scope which covers playlist
-            // writes. Fire-and-forget per playlist (parallel); the add
-            // operation isn't critical to the user-facing success state.
-            if (Array.isArray(item.playlistIds) && item.playlistIds.length > 0) {
-              for (const playlistId of item.playlistIds) {
-                fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet', {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': `Bearer ${item.token}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    snippet: {
-                      playlistId,
-                      resourceId: { kind: 'youtube#video', videoId: result.id },
-                    },
-                  }),
-                }).then((res) => {
-                  if (!res.ok) {
-                    console.warn('[upload] playlistItems.insert failed', { status: res.status, playlistId, videoId: result.id });
-                  }
-                }).catch((e) => {
-                  console.warn('[upload] add-to-playlist threw:', e.message, { playlistId });
-                });
-              }
-            }
-            resolve();
+            result = JSON.parse(xhr.responseText);
           } catch (e) {
             const err = new Error('Upload succeeded but response was unparseable.');
             err.uploadStage = 'parse';
             err.httpStatus = xhr.status;
-            reject(err);
+            recoverOrReject(err);
+            return;
           }
+          if (!result || !result.id) {
+            const err = new Error('Upload succeeded but response had no video ID.');
+            err.uploadStage = 'parse';
+            err.httpStatus = xhr.status;
+            recoverOrReject(err);
+            return;
+          }
+          runSuccess(result);
         } else {
           const parsed = parseYouTubeError(xhr.responseText, xhr.status);
           console.warn('[upload] PUT failed:', parsed.reason || xhr.status, parsed.apiMessage);
@@ -4967,13 +5023,15 @@ async function runUploadItem(item) {
           err.httpStatus = xhr.status;
           err.youtubeReason = parsed.reason || null;
           if (parsed.reason === 'uploadLimitExceeded') err.uploadLimitExceeded = true;
+          // Don't try recovery on a real non-2xx — YouTube actively
+          // refused, so there's nothing to recover.
           reject(err);
         }
       });
       xhr.addEventListener('error', () => {
         const err = new Error('Network error during upload. Check your connection and click retry.');
         err.uploadStage = 'put';
-        reject(err);
+        recoverOrReject(err);
       });
       xhr.send(file);
     });

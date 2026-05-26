@@ -78,7 +78,7 @@ export default async (req) => {
   const { metadata, action, refreshToken, model: requestedModel } = body;
   const model = pickModel(requestedModel, DEFAULT_MODEL);
 
-  if (!refreshToken && action !== 'init-upload') {
+  if (!refreshToken && action !== 'init-upload' && action !== 'status-upload') {
     return json({ error: 'Not signed in' }, 401);
   }
 
@@ -98,11 +98,28 @@ export default async (req) => {
   // browser mask the real status as a generic "Failed to fetch" — the user
   // sees "Couldn't reach YouTube" when the actual problem is rate limiting.
   // Server-to-server has no CORS, so we can relay the real status + body.
+  //
+  // CORS gotcha on the *follow-up* PUT: YouTube ties the resumable session
+  // URL it returns to the Origin of the init request. If init has no
+  // browser-friendly Origin, the final PUT response (200 OK with the video
+  // resource) comes back with no Access-Control-Allow-Origin header, the
+  // browser drops it, xhr.error fires, and the client thinks the upload
+  // failed even though YouTube has the video. Forward the caller's Origin
+  // (falling back to the canonical site) so the session URL is browser-
+  // readable on completion. See also the status-upload action below, which
+  // is the safety net if YouTube ever stops honoring this.
   if (action === 'init-upload') {
     const { uploadMeta, contentType, contentLength, accessToken } = body;
     if (!accessToken || !uploadMeta) {
       return json({ error: 'Missing accessToken or uploadMeta' }, 400);
     }
+
+    const ALLOWED_ORIGINS = new Set([
+      'https://vhsgarage.com',
+      'https://www.vhsgarage.com',
+    ]);
+    const reqOrigin = req.headers.get('origin') || '';
+    const forwardOrigin = ALLOWED_ORIGINS.has(reqOrigin) ? reqOrigin : 'https://vhsgarage.com';
 
     const MAX_RETRIES = 3;
     const BASE_DELAY = 1000;
@@ -123,6 +140,7 @@ export default async (req) => {
             headers: {
               'Authorization': `Bearer ${accessToken}`,
               'Content-Type': 'application/json',
+              'Origin': forwardOrigin,
               ...(contentType ? { 'X-Upload-Content-Type': contentType } : {}),
               ...(contentLength ? { 'X-Upload-Content-Length': String(contentLength) } : {}),
             },
@@ -157,6 +175,55 @@ export default async (req) => {
       return json({ error: 'YouTube did not return an upload URL' }, 502);
     }
     return json({ uploadUrl });
+  }
+
+  // Server-side status query for a resumable upload session. Used by the
+  // client's recovery path when the PUT's response was lost (CORS-dropped
+  // 200, transient network glitch, parse failure on an empty body, etc.).
+  // YouTube's resumable-upload protocol lets you ask "is this session
+  // finalized?" by re-sending the PUT with Content-Range: bytes */<SIZE>
+  // and no body. Responses:
+  //   - 200/201 + video JSON  → finalized; we relay the video so the client
+  //                              can run its success branch (thumbnail,
+  //                              playlist add, log-upload).
+  //   - 308 + Range header    → partial; client should fall back to its
+  //                              normal error path.
+  //   - 4xx/5xx               → genuinely failed; same.
+  // We do this server-side because the original session URL also lacks
+  // CORS for the recovery query (same root cause as the bug we're fixing),
+  // so doing it from the browser would just reproduce the issue.
+  if (action === 'status-upload') {
+    const { uploadUrl, contentLength, accessToken } = body;
+    if (!uploadUrl || !contentLength) {
+      return json({ error: 'Missing uploadUrl or contentLength' }, 400);
+    }
+
+    let res;
+    try {
+      res = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Length': '0',
+          'Content-Range': `bytes */${contentLength}`,
+          ...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {}),
+        },
+      });
+    } catch (e) {
+      return json({ finalized: false, error: 'Network error: ' + e.message }, 502);
+    }
+
+    if (res.status === 200 || res.status === 201) {
+      const text = await res.text().catch(() => '');
+      let video = null;
+      try { video = JSON.parse(text); } catch {}
+      if (video && video.id) {
+        return json({ finalized: true, video });
+      }
+      return json({ finalized: false, status: res.status, reason: 'no-video-id' });
+    }
+
+    // 308 = incomplete; anything else = genuine failure.
+    return json({ finalized: false, status: res.status });
   }
 
   if (action === 'prepare') {
@@ -204,7 +271,7 @@ export default async (req) => {
     });
   }
 
-  return json({ error: 'Unknown action. Use "prepare", "rewrite", "token", or "init-upload".' }, 400);
+  return json({ error: 'Unknown action. Use "prepare", "rewrite", "token", "init-upload", or "status-upload".' }, 400);
 };
 
 export const config = { path: '/api/youtube-publish' };
