@@ -14,6 +14,7 @@ import {
 } from './sleeve.js';
 import { startDetection, stopDetection, pauseDetection, resumeDetection } from './detector.js';
 import { initMeter, initMeterFromElement, pauseMeter, stopMeter } from './meter.js';
+import { buildProcessedStream } from './audio-chain.js';
 import {
   saveDirectoryHandle, loadDirectoryHandle, clearDirectoryHandle,
   queryHandlePermission, tryRequestHandlePermission,
@@ -915,6 +916,22 @@ function wireRecordButton() {
     }
 
     const settings = loadSettings();
+    // Live audio processing — boosts loudness and cuts hum at the
+    // Web Audio level before MediaRecorder sees the stream. Default
+    // on; user toggle in the settings popover. See audio-chain.js.
+    const audioProcessingEnabled = settings.audioProcessingEnabled !== false;
+    let processedDispose = null;
+    let recordStream = captureStream;
+    if (audioProcessingEnabled) {
+      try {
+        const built = buildProcessedStream(captureStream);
+        recordStream = built.stream;
+        processedDispose = built.dispose;
+      } catch (e) {
+        console.warn('[audio-chain] failed to build, recording raw:', e.message);
+        // Fall through — record unprocessed rather than block the user.
+      }
+    }
     const title = titleInput.value;
     const videoFormat = settings.videoFormat || 'mp4';
     currentFilename = generateFilename(title, settings.nameFormat || 'title', videoFormat);
@@ -959,7 +976,7 @@ function wireRecordButton() {
     // resets via × Reset Sleeve / × Reset info / the toast's "Reset
     // everything" link when they swap to a new tape.)
 
-    await startRecording(captureStream, directoryHandle, currentFilename, bitrate, videoFormat, {
+    await startRecording(recordStream, directoryHandle, currentFilename, bitrate, videoFormat, {
       onTick: ({ elapsed, bytes }) => {
         const timeStr = formatTime(elapsed);
         timerEl.textContent = timeStr;
@@ -967,6 +984,15 @@ function wireRecordButton() {
         document.getElementById('rec-overlay-timer').textContent = timeStr;
       },
       onStop: async ({ duration, fileSize }) => {
+        // Always tear down the audio chain when recording ends, even
+        // if the post-record bookkeeping below throws.
+        const finalizeProcessedAudio = () => {
+          if (processedDispose) {
+            try { processedDispose(); } catch {}
+            processedDispose = null;
+          }
+        };
+        try {
         timerEl.textContent = formatTime(duration);
         sizeEl.textContent = formatSize(fileSize);
 
@@ -1140,6 +1166,9 @@ function wireRecordButton() {
         }
 
         currentFilename = null;
+        } finally {
+          finalizeProcessedAudio();
+        }
       },
       onError: (err) => {
         btn.classList.remove('recording');
