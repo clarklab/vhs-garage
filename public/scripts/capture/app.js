@@ -922,13 +922,25 @@ function wireRecordButton() {
     const audioProcessingEnabled = settings.audioProcessingEnabled !== false;
     let processedDispose = null;
     let recordStream = captureStream;
+    // Idempotent teardown for the audio chain. Defined here (not
+    // inside onStop) so it's reachable from all the failure paths:
+    // onStop's finally, onError, and the catch around startRecording
+    // itself. Without this hoist, an exception thrown before
+    // mediaRecorder is created would leak the AudioContext for the
+    // rest of the page session.
+    const finalizeProcessedAudio = () => {
+      if (processedDispose) {
+        try { processedDispose(); } catch {}
+        processedDispose = null;
+      }
+    };
     if (audioProcessingEnabled) {
       try {
         const built = buildProcessedStream(captureStream);
         recordStream = built.stream;
         processedDispose = built.dispose;
       } catch (e) {
-        console.warn('[audio-chain] failed to build, recording raw:', e.message);
+        console.warn('[audio-chain] failed to build, recording raw:', e);
         // Fall through — record unprocessed rather than block the user.
       }
     }
@@ -976,7 +988,8 @@ function wireRecordButton() {
     // resets via × Reset Sleeve / × Reset info / the toast's "Reset
     // everything" link when they swap to a new tape.)
 
-    await startRecording(recordStream, directoryHandle, currentFilename, bitrate, videoFormat, {
+    try {
+      await startRecording(recordStream, directoryHandle, currentFilename, bitrate, videoFormat, {
       onTick: ({ elapsed, bytes }) => {
         const timeStr = formatTime(elapsed);
         timerEl.textContent = timeStr;
@@ -984,14 +997,6 @@ function wireRecordButton() {
         document.getElementById('rec-overlay-timer').textContent = timeStr;
       },
       onStop: async ({ duration, fileSize }) => {
-        // Always tear down the audio chain when recording ends, even
-        // if the post-record bookkeeping below throws.
-        const finalizeProcessedAudio = () => {
-          if (processedDispose) {
-            try { processedDispose(); } catch {}
-            processedDispose = null;
-          }
-        };
         try {
         timerEl.textContent = formatTime(duration);
         sizeEl.textContent = formatSize(fileSize);
@@ -1171,12 +1176,24 @@ function wireRecordButton() {
         }
       },
       onError: (err) => {
+        finalizeProcessedAudio();
         btn.classList.remove('recording');
         document.getElementById('preview-container').classList.remove('recording-active');
         document.getElementById('rec-overlay-timer').classList.add('hidden');
         alert('Recording error: ' + err.message);
       },
     });
+    } catch (e) {
+      // startRecording itself threw (e.g., disk permission revoked
+      // between the pre-check and createWritable). Tear down the
+      // audio chain so the AudioContext doesn't leak, then surface
+      // the failure the same way onError does.
+      finalizeProcessedAudio();
+      btn.classList.remove('recording');
+      document.getElementById('preview-container').classList.remove('recording-active');
+      document.getElementById('rec-overlay-timer').classList.add('hidden');
+      alert('Recording error: ' + (e?.message || e));
+    }
   });
 }
 
