@@ -155,6 +155,7 @@ async function startApp() {
     if (settings.bitrate) document.getElementById('setting-quality').value = String(settings.bitrate);
     if (settings.videoFormat) document.getElementById('setting-format').value = settings.videoFormat;
     if (settings.nameFormat) document.getElementById('setting-name-format').value = settings.nameFormat;
+    document.getElementById('setting-audio-process').checked = settings.audioProcessingEnabled !== false;
   } catch (err) {
     console.warn('Could not open capture stream:', err);
   }
@@ -1330,6 +1331,7 @@ function applyQualitySettings() {
   settings.bitrate = parseInt(document.getElementById('setting-quality').value);
   settings.videoFormat = document.getElementById('setting-format').value;
   settings.nameFormat = document.getElementById('setting-name-format').value;
+  settings.audioProcessingEnabled = document.getElementById('setting-audio-process').checked;
   saveSettings(settings);
 }
 
