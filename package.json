@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@astrojs/mdx": "^5.0.4",
+    "@ffmpeg/core": "0.11.0",
+    "@ffmpeg/ffmpeg": "0.11.6",
     "@hackernoon/pixel-icon-library": "^1.1.0",
     "@netlify/blobs": "^10.7.4",
     "@netlify/database": "^1.0.0",
