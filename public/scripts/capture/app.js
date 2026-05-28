@@ -15,6 +15,7 @@ import {
 import { startDetection, stopDetection, pauseDetection, resumeDetection } from './detector.js';
 import { initMeter, initMeterFromElement, pauseMeter, stopMeter } from './meter.js';
 import { buildProcessedStream } from './audio-chain.js';
+import { processClipAudio } from './audio-processor.js';
 import {
   saveDirectoryHandle, loadDirectoryHandle, clearDirectoryHandle,
   queryHandlePermission, tryRequestHandlePermission,
@@ -4846,6 +4847,42 @@ async function runUploadItem(item) {
     const file = await fh.getFile();
     const contentType = clip.filename.endsWith('.webm') ? 'video/webm' : 'video/mp4';
 
+    // Heavy audio pass — when the user opted into 'Clean audio' in
+    // the batch review modal, run ffmpeg.wasm over the file before
+    // upload. afftdn knocks down tape hiss; loudnorm brings the
+    // clip to YouTube's -14 LUFS target so it matches other channels.
+    //
+    // We surface progress via a new 'processing' state on the toast
+    // (renderToast handles the label). On failure we fall back to
+    // uploading the original file with a non-blocking warning — a
+    // bad ffmpeg pass shouldn't block the user's upload.
+    let uploadFile = file;
+    if (item.cleanAudio) {
+      item.state = 'processing';
+      item.progress = 0;
+      renderToast(item);
+      try {
+        uploadFile = await processClipAudio(file, {
+          onProgress: (pct) => {
+            item.progress = pct;
+            renderToast(item);
+          },
+        });
+        // Reset progress for the upload stage — the toast UI reuses
+        // item.progress for both processing and uploading bars.
+        item.progress = 0;
+      } catch (e) {
+        console.warn('[upload] audio cleanup failed, uploading original:', e);
+        uploadFile = file;
+        // Surface a one-time warning in the toast so the user knows
+        // the loudness-match step didn't happen for this clip. Doesn't
+        // block the upload itself — we continue with raw bytes.
+        item.cleanAudioFailed = true;
+      }
+      item.state = 'uploading';
+      renderToast(item);
+    }
+
     const uploadMeta = {
       snippet: {
         title: item.snippet.title,
@@ -4875,7 +4912,7 @@ async function runUploadItem(item) {
           accessToken: item.token,
           uploadMeta,
           contentType,
-          contentLength: file.size,
+          contentLength: uploadFile.size,
           refreshToken: (typeof ytGetRefreshToken === 'function' ? ytGetRefreshToken() : null),
         }),
       });
@@ -5036,7 +5073,7 @@ async function runUploadItem(item) {
             body: JSON.stringify({
               action: 'status-upload',
               uploadUrl,
-              contentLength: file.size,
+              contentLength: uploadFile.size,
               accessToken: item.token,
             }),
           });
@@ -5091,7 +5128,7 @@ async function runUploadItem(item) {
         err.uploadStage = 'put';
         recoverOrReject(err);
       });
-      xhr.send(file);
+      xhr.send(uploadFile);
     });
 
     item.state = 'success';
@@ -5287,6 +5324,8 @@ function renderToast(item) {
   const stateLabel = (
     item.state === 'queued'
       ? `Queued · ${item.queuePosition} of ${item.queueLength}` :
+    item.state === 'processing'
+      ? `Cleaning audio · ${item.progress}%` :
     item.state === 'uploading'
       ? `Uploading · ${item.progress}%` :
     item.state === 'success'
@@ -5296,7 +5335,7 @@ function renderToast(item) {
     ''
   );
 
-  const showProgress = item.state === 'uploading' || item.state === 'success';
+  const showProgress = item.state === 'processing' || item.state === 'uploading' || item.state === 'success';
   const showCountdown = uploadQueue.countdownItemId === item.id && item.state !== 'error';
   const showRetry = item.state === 'error';
   const showClose = item.state === 'success' || item.state === 'error';
@@ -5323,6 +5362,7 @@ function renderToast(item) {
       </div>
     ` : ''}
     ${showViewLink ? `<div class="toast-meta-row"><a class="toast-link" href="${item.ytUrl}" target="_blank" rel="noopener">View on YouTube →</a></div>` : ''}
+    ${item.cleanAudioFailed && item.state === 'success' ? `<p class="toast-error-msg" style="color:#fbbf24;">Audio cleanup unavailable — uploaded original file.</p>` : ''}
     ${item.state === 'error' ? `<p class="toast-error-msg">${escapeHtml(item.errorMsg || '')}</p>` : ''}
   `;
 
