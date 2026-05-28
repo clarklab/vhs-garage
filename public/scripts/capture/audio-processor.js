@@ -98,15 +98,35 @@ export async function loadFFmpeg() {
 export async function processClipAudio(file, { onProgress } = {}) {
   const ffmpeg = await loadFFmpeg();
 
-  // Pick container + audio codec based on input. webm → opus, mp4 → aac.
-  const isWebm = (file.type && file.type.includes('webm')) ||
-                 (file.name && file.name.toLowerCase().endsWith('.webm'));
+  // Pick container + codec based on input. webm → opus, mp4 → aac.
+  // Require either a known MIME or a recognizable filename — if we
+  // can't tell, throw early instead of silently corrupting the file
+  // by attempting to mux a webm into mp4.
+  const typeStr = (file.type || '').toLowerCase();
+  const nameStr = (file.name || '').toLowerCase();
+  if (!typeStr && !nameStr) {
+    throw new Error('audio-processor: cannot determine container — file has no type or name');
+  }
+  const isWebm = typeStr.includes('webm') || nameStr.endsWith('.webm');
+  const isMp4 = typeStr.includes('mp4') || nameStr.endsWith('.mp4');
+  if (!isWebm && !isMp4) {
+    throw new Error(`audio-processor: unsupported container (type='${file.type}', name='${file.name}') — expected webm or mp4`);
+  }
   const ext = isWebm ? 'webm' : 'mp4';
   const audioCodec = isWebm ? 'libopus' : 'aac';
   const audioBitrate = '192k';
 
-  const inputName = `in.${ext}`;
-  const outputName = `out.${ext}`;
+  // Unique per-call filenames in the virtual FS. The cached ffmpeg
+  // instance is shared across all callers, so hardcoding 'in.${ext}'
+  // would let a future parallel call cross-contaminate (the second
+  // call's finally{} unlink would race with the first call's run).
+  // Today the queue is serial so this won't happen, but baking that
+  // invariant into this module would be fragile. UUIDs decouple it.
+  const callId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const inputName = `in-${callId}.${ext}`;
+  const outputName = `out-${callId}.${ext}`;
 
   // Progress reporting — ffmpeg.wasm 0.11 exposes setProgress(({ratio}))
   // which fires as the filter pipeline advances. ratio is 0..1.
