@@ -2826,6 +2826,11 @@ function openBatchReviewModal() {
 
   if (count) count.textContent = `${selected.length} clip${selected.length === 1 ? '' : 's'}`;
 
+  // Reset the heavy-audio opt-in for each batch — user re-decides
+  // every time (no persistence, see spec §4 publish-modal).
+  const cleanAudioBox = document.getElementById('batch-clean-audio');
+  if (cleanAudioBox) cleanAudioBox.checked = false;
+
   // Populate master playlist picker
   const masterWrapper = document.getElementById('batch-master-playlists');
   const masterList = document.getElementById('batch-master-playlists-list');
@@ -2970,6 +2975,7 @@ async function confirmBatchUpload() {
   const orderedIds = rows ? Array.from(rows).map(r => r.dataset.clipId)
                           : Array.from(batchSelection.ids);
 
+  const cleanAudio = document.getElementById('batch-clean-audio')?.checked === true;
   for (const id of orderedIds) {
     const clips = getClips();
     const clip = clips.find(c => c.id === id);
@@ -2983,7 +2989,7 @@ async function confirmBatchUpload() {
     if (titleEl) titleEl.value = clip.title || '';
     if (descEl) descEl.value = clip.description || '';
     if (tagsEl) tagsEl.value = clip.tags || '';
-    enqueueUpload(id, token, perCardPlaylists.get(id));
+    enqueueUpload(id, token, perCardPlaylists.get(id), cleanAudio);
     if (titleEl) titleEl.value = prevTitle;
     if (descEl) descEl.value = prevDesc;
     if (tagsEl) tagsEl.value = prevTags;
@@ -4767,7 +4773,7 @@ function snapshotPublishForm() {
   };
 }
 
-function enqueueUpload(clipId, token, playlistIdsOverride) {
+function enqueueUpload(clipId, token, playlistIdsOverride, cleanAudio = false) {
   if (uploadQueue.items.some(it => it.clipId === clipId &&
       (it.state === 'queued' || it.state === 'uploading'))) {
     return null;
@@ -4790,6 +4796,10 @@ function enqueueUpload(clipId, token, playlistIdsOverride) {
     playlistIds: Array.isArray(playlistIdsOverride) ? playlistIdsOverride : getCheckedPlaylistIds(),
     queuePosition: 1,
     queueLength: 1,
+    // Heavy audio pass — opt-in per batch via the batch-review
+    // checkbox. When true, runUploadItem runs the file through
+    // ffmpeg.wasm before the upload PUT. See audio-processor.js.
+    cleanAudio: cleanAudio === true,
   };
   uploadQueue.items.push(item);
   renderToast(item);
