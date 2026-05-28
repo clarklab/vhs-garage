@@ -25,6 +25,17 @@
 let ffmpegInstance = null;
 let loadPromise = null;
 
+// Serialization chain for processClipAudio calls. The cached
+// ffmpegInstance is non-reentrant — ffmpeg.wasm v0.11 throws
+// "ffmpeg.wasm can only run one command at a time" if a second run
+// starts while the first is in flight. The upload queue's
+// concurrencyLimit (2) means two clips can both reach the cleanAudio
+// block before either enters the 'processing' state visible to
+// tryStartNext, so the queue-level guard isn't sufficient on its own.
+// This chain ensures FFmpeg calls execute back-to-back even when
+// callers fire in parallel.
+let processingChain = Promise.resolve();
+
 /**
  * Load the ffmpeg.wasm module. Idempotent — repeated calls share the
  * same in-flight promise / cached instance.
@@ -95,7 +106,19 @@ export async function loadFFmpeg() {
  * @returns {Promise<Blob>} processed file, same container as input.
  * @throws if loading ffmpeg fails or processing fails for any reason.
  */
-export async function processClipAudio(file, { onProgress } = {}) {
+export async function processClipAudio(file, options = {}) {
+  // Queue this call onto the global processing chain so two concurrent
+  // callers don't both call ffmpeg.run on the shared instance. The
+  // .catch(() => {}) on the chain assignment ensures one caller's
+  // failure doesn't poison every future caller — each caller awaits
+  // its OWN promise (with the real reject) but the chain continues
+  // with a resolved state.
+  const myTurn = processingChain.then(() => doProcessClipAudio(file, options));
+  processingChain = myTurn.catch(() => {});
+  return myTurn;
+}
+
+async function doProcessClipAudio(file, { onProgress } = {}) {
   const ffmpeg = await loadFFmpeg();
 
   // Pick container + codec based on input. webm → opus, mp4 → aac.
