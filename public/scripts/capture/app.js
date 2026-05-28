@@ -4776,7 +4776,7 @@ function snapshotPublishForm() {
 
 function enqueueUpload(clipId, token, playlistIdsOverride, cleanAudio = false) {
   if (uploadQueue.items.some(it => it.clipId === clipId &&
-      (it.state === 'queued' || it.state === 'uploading'))) {
+      (it.state === 'queued' || it.state === 'uploading' || it.state === 'processing'))) {
     return null;
   }
   const clips = getClips();
@@ -4817,7 +4817,7 @@ function enqueueUpload(clipId, token, playlistIdsOverride, cleanAudio = false) {
 }
 
 function tryStartNext() {
-  const active = uploadQueue.items.filter(it => it.state === 'uploading').length;
+  const active = uploadQueue.items.filter(it => it.state === 'uploading' || it.state === 'processing').length;
   if (active >= uploadQueue.concurrencyLimit) return;
   const next = uploadQueue.items.find(it => it.state === 'queued');
   if (!next) return;
@@ -5231,6 +5231,7 @@ function retryUpload(id) {
   item.progress = 0;
   item.errorMsg = null;
   item.xhr = null;
+  item.cleanAudioFailed = false;
   // Refresh the access token (the previous one might be stale, especially
   // for a "auth expired"-class failure).
   fetchAccessTokenInBackground().then((tok) => {
