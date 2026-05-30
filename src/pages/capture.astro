@@ -627,6 +627,7 @@ import { BUILD_ID } from '../utils/build-id.js';
              as a plain header strip (was a fieldset legend before). -->
         <div id="preview-legend" class="text-[11px] tracking-wider leading-none flex items-center gap-3 mb-3">
           <button id="tab-live" type="button" class="text-white/70 transition-colors leading-none">░ Live Feed ░</button>
+          <button id="stream-info-btn" type="button" class="text-white/30 hover:text-white/70 transition-colors leading-none text-[11px]" title="Show stream info">ⓘ</button>
           <button id="tab-playback" type="button" class="hidden text-white/30 hover:text-white/70 transition-colors leading-none">░ Last Recording ░</button>
         </div>
           <!-- Preview -->
@@ -1787,6 +1788,19 @@ import { BUILD_ID } from '../utils/build-id.js';
         </button>
       </div>
     </div>
+  </div>
+
+  <!-- Stream info popover — opened by the ⓘ icon next to the Live
+       Feed tab. Shows what the active capture card is actually
+       delivering (size, aspect, declared+measured fps, the card's
+       reported max capability). Populated by wireStreamInfo() in
+       app.js; positioning is set in JS relative to the trigger. -->
+  <div id="stream-info-popover" class="hidden fixed z-30 bg-black/95 border border-white/20 p-3 text-[10px] font-mono uppercase tracking-wider" style="min-width: 240px; max-width: 320px;">
+    <div class="flex items-center justify-between mb-2">
+      <span class="text-white/85">░ Stream Info ░</span>
+      <button id="stream-info-close" type="button" class="text-white/40 hover:text-white/80 leading-none px-1">×</button>
+    </div>
+    <div id="stream-info-body" class="space-y-1.5 text-white/70"></div>
   </div>
 
   <!-- Welcome / Quick-start modal. Shown on first visit (before permissions
