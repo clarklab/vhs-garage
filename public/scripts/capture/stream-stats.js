@@ -129,3 +129,45 @@ export function startFpsMeter(videoEl, onTick) {
 
   return () => { stopped = true; };
 }
+
+/**
+ * Read the aspect ratio of a video file via a hidden <video> element.
+ * Uses HTMLVideoElement.videoWidth/videoHeight which reflect the
+ * intrinsic dimensions from the file's container metadata.
+ *
+ * Used by the upload path to decide whether to apply the 4:3 aspect
+ * tag — we read from the FILE rather than the live captureStream
+ * because the stream may have been swapped since recording, and the
+ * file is the source of truth at upload time.
+ *
+ * @param {File | Blob} file
+ * @returns {Promise<number | null>} width / height, or null if the
+ *   file can't be probed (corrupt, unsupported codec, etc.). Callers
+ *   should treat null as "skip the aspect fix" rather than fail.
+ */
+export function readFileAspect(file) {
+  return new Promise((resolve) => {
+    if (!file) { resolve(null); return; }
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    let done = false;
+    const finish = (val) => {
+      if (done) return;
+      done = true;
+      try { URL.revokeObjectURL(url); } catch {}
+      resolve(val);
+    };
+    video.onloadedmetadata = () => {
+      const w = video.videoWidth, h = video.videoHeight;
+      finish((w > 0 && h > 0) ? w / h : null);
+    };
+    video.onerror = () => finish(null);
+    // Safety timeout — some malformed files leave loadedmetadata
+    // hanging indefinitely. 5s is generous; this only runs once
+    // per upload anyway.
+    setTimeout(() => finish(null), 5000);
+    video.src = url;
+  });
+}
