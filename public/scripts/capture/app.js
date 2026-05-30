@@ -401,6 +401,16 @@ async function applyWelcomeDevices() {
       document.getElementById('no-signal').classList.add('hidden');
       stopMeter();
       initMeter(captureStream);
+      // Refresh the Stream Info popup if it's open — same trick
+      // the hot-plug onDeviceChange handler uses (close+reopen
+      // via synthetic click to restart the fps meter against
+      // the new track).
+      const infoPopover = document.getElementById('stream-info-popover');
+      const infoBtn = document.getElementById('stream-info-btn');
+      if (infoPopover && infoBtn && !infoPopover.classList.contains('hidden')) {
+        infoBtn.click(); // close
+        infoBtn.click(); // reopen
+      }
       updateStatus('video', { deviceId: videoId, label: videoLabel });
       updateStatus('audio', { deviceId: audioId, label: audioLabel });
     } catch (e) {
@@ -493,7 +503,7 @@ function wireKeyboardShortcuts() {
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
   };
   const isModalOpen = () => {
-    const ids = ['clip-player-modal', 'settings-popover', 'device-popover', 'welcome-modal'];
+    const ids = ['clip-player-modal', 'settings-popover', 'device-popover', 'welcome-modal', 'stream-info-popover'];
     return ids.some(id => {
       const el = document.getElementById(id);
       return el && !el.classList.contains('hidden');
@@ -566,6 +576,16 @@ function wireDeviceSelectors() {
       selector.classList.add('hidden');
       stopMeter();
       initMeter(captureStream);
+      // Refresh the Stream Info popup if it's open — same trick
+      // the hot-plug onDeviceChange handler uses (close+reopen
+      // via synthetic click to restart the fps meter against
+      // the new track).
+      const infoPopover = document.getElementById('stream-info-popover');
+      const infoBtn = document.getElementById('stream-info-btn');
+      if (infoPopover && infoBtn && !infoPopover.classList.contains('hidden')) {
+        infoBtn.click(); // close
+        infoBtn.click(); // reopen
+      }
 
       saveSettings({
         ...loadSettings(),
@@ -1422,6 +1442,16 @@ function wireDevicePopover() {
         document.getElementById('no-signal').classList.add('hidden');
         stopMeter();
         initMeter(captureStream);
+        // Refresh the Stream Info popup if it's open — same trick
+        // the hot-plug onDeviceChange handler uses (close+reopen
+        // via synthetic click to restart the fps meter against
+        // the new track).
+        const infoPopover = document.getElementById('stream-info-popover');
+        const infoBtn = document.getElementById('stream-info-btn');
+        if (infoPopover && infoBtn && !infoPopover.classList.contains('hidden')) {
+          infoBtn.click(); // close
+          infoBtn.click(); // reopen
+        }
         updateStatus('video', { label: videoLabel });
         updateStatus('audio', { label: audioLabel });
       } catch (err) {
@@ -1584,6 +1614,16 @@ async function selectVideoDevice(videoId, videoLabel) {
     document.getElementById('no-signal').classList.add('hidden');
     stopMeter();
     initMeter(captureStream);
+    // Refresh the Stream Info popup if it's open — same trick
+    // the hot-plug onDeviceChange handler uses (close+reopen
+    // via synthetic click to restart the fps meter against
+    // the new track).
+    const infoPopover = document.getElementById('stream-info-popover');
+    const infoBtn = document.getElementById('stream-info-btn');
+    if (infoPopover && infoBtn && !infoPopover.classList.contains('hidden')) {
+      infoBtn.click(); // close
+      infoBtn.click(); // reopen
+    }
     updateStatus('video', { label: videoLabel });
     if (settings.audioDeviceLabel) updateStatus('audio', { label: settings.audioDeviceLabel });
   } catch (err) {
@@ -1608,6 +1648,16 @@ async function selectAudioDevice(audioId, audioLabel) {
     document.getElementById('no-signal').classList.add('hidden');
     stopMeter();
     initMeter(captureStream);
+    // Refresh the Stream Info popup if it's open — same trick
+    // the hot-plug onDeviceChange handler uses (close+reopen
+    // via synthetic click to restart the fps meter against
+    // the new track).
+    const infoPopover = document.getElementById('stream-info-popover');
+    const infoBtn = document.getElementById('stream-info-btn');
+    if (infoPopover && infoBtn && !infoPopover.classList.contains('hidden')) {
+      infoBtn.click(); // close
+      infoBtn.click(); // reopen
+    }
     updateStatus('audio', { label: audioLabel });
     if (settings.videoDeviceLabel) updateStatus('video', { label: settings.videoDeviceLabel });
   } catch (err) {
