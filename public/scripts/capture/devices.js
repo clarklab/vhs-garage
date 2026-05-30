@@ -47,7 +47,7 @@ export async function openStream(videoDeviceId, audioDeviceId) {
   // issues where Chrome drops audio when negotiating both in one call
   const [videoStream, audioStream] = await Promise.all([
     navigator.mediaDevices.getUserMedia({
-      video: { deviceId: { exact: videoDeviceId }, width: { ideal: 720 }, height: { ideal: 480 } },
+      video: { deviceId: { exact: videoDeviceId } },
       audio: false,
     }),
     navigator.mediaDevices.getUserMedia({
