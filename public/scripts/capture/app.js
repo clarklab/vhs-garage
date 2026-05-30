@@ -16,6 +16,7 @@ import { startDetection, stopDetection, pauseDetection, resumeDetection } from '
 import { initMeter, initMeterFromElement, pauseMeter, stopMeter } from './meter.js';
 import { buildProcessedStream } from './audio-chain.js';
 import { processClipAudio } from './audio-processor.js';
+import { readStreamStats, startFpsMeter } from './stream-stats.js';
 import {
   saveDirectoryHandle, loadDirectoryHandle, clearDirectoryHandle,
   queryHandlePermission, tryRequestHandlePermission,
@@ -172,6 +173,17 @@ async function startApp() {
       stopRecording();
       alert('Capture card disconnected. Recording saved.');
     }
+
+    // If the Stream Info popup is open, refresh it so the new
+    // device's stats render. The popup's own renderBody isn't
+    // exposed; fire a synthetic click on the close+open sequence
+    // by dispatching from the trigger if the popup is visible.
+    const infoPopover = document.getElementById('stream-info-popover');
+    const infoBtn = document.getElementById('stream-info-btn');
+    if (infoPopover && infoBtn && !infoPopover.classList.contains('hidden')) {
+      infoBtn.click(); // close
+      infoBtn.click(); // reopen — restarts fps meter against new track
+    }
   });
 
   // Wire up all UI
@@ -190,6 +202,7 @@ async function startApp() {
   wireShorts();
   wireResetButtons();
   wireYouTubePublish();
+  wireStreamInfo();
   // Sync the "Uploaded today: N" indicators to whatever's in
   // localStorage when the page first paints. Subsequent updates flow
   // through setUploadCount → updateUploadCountUI on every increment
@@ -1232,6 +1245,116 @@ function wireViewToggle() {
   toCapture.addEventListener('click', closeLibrary);
   // Backdrop click dismisses (standard modal pattern).
   if (backdrop) backdrop.addEventListener('click', closeLibrary);
+}
+
+// Stream Info popover — small diagnostic UI accessible via the ⓘ
+// icon next to the ░ Live Feed ░ tab. Shows what the active capture
+// card is actually delivering: size, aspect, declared+measured fps,
+// and the card's reported max capability. Useful for the Reddit-
+// style "is this 480p?" / "is this 4:3?" diagnostics.
+function wireStreamInfo() {
+  const btn = document.getElementById('stream-info-btn');
+  const popover = document.getElementById('stream-info-popover');
+  const closeBtn = document.getElementById('stream-info-close');
+  const body = document.getElementById('stream-info-body');
+  if (!btn || !popover || !body) return;
+
+  let stopFpsMeter = null;
+  let lastMeasuredFps = null;
+
+  const escapeHtml = (s) => String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const renderBody = () => {
+    const stats = readStreamStats(captureStream);
+    if (!stats) {
+      body.innerHTML = `<div class="text-white/50">No live stream. Pick a device first.</div>`;
+      return;
+    }
+
+    const sizeStr = (stats.width > 0 && stats.height > 0)
+      ? `${stats.width} × ${stats.height}`
+      : 'unknown';
+
+    const declared = (stats.declaredFps != null)
+      ? stats.declaredFps.toFixed(2)
+      : 'unknown';
+    const measured = (lastMeasuredFps != null)
+      ? lastMeasuredFps.toFixed(1)
+      : 'measuring…';
+
+    let capRow = '';
+    if (stats.capabilities) {
+      const c = stats.capabilities;
+      const dim = (c.maxWidth && c.maxHeight)
+        ? `${c.maxWidth} × ${c.maxHeight}` : '—';
+      const fps = c.maxFrameRate ? `@ ${Math.round(c.maxFrameRate)}` : '';
+      capRow = `<div class="flex gap-3"><span class="text-white/40 w-20 shrink-0">Card Max</span><span>${escapeHtml(dim)} ${escapeHtml(fps)}</span></div>`;
+    }
+
+    body.innerHTML = `
+      <div class="flex gap-3"><span class="text-white/40 w-20 shrink-0">Device</span><span class="break-all">${escapeHtml(stats.deviceLabel)}</span></div>
+      <div class="flex gap-3"><span class="text-white/40 w-20 shrink-0">Size</span><span>${escapeHtml(sizeStr)}</span></div>
+      <div class="flex gap-3"><span class="text-white/40 w-20 shrink-0">Aspect</span><span>${escapeHtml(stats.aspectLabel)}</span></div>
+      <div class="flex gap-3"><span class="text-white/40 w-20 shrink-0">Fps</span><span>${escapeHtml(declared)} declared / ${escapeHtml(measured)} measured</span></div>
+      ${capRow}
+    `;
+  };
+
+  const positionPopover = () => {
+    // Anchor under the trigger, aligned to its left edge. Use fixed
+    // positioning (matches the class on the popover) so scroll
+    // doesn't desync.
+    const rect = btn.getBoundingClientRect();
+    popover.style.top = `${rect.bottom + 6}px`;
+    popover.style.left = `${rect.left}px`;
+  };
+
+  const openPopover = () => {
+    positionPopover();
+    popover.classList.remove('hidden');
+    renderBody();
+    // Start measuring frames so the row updates live. Re-render on
+    // each tick to swap the 'measuring…' text for the fresh value.
+    const previewEl = document.getElementById('preview');
+    if (previewEl) {
+      stopFpsMeter = startFpsMeter(previewEl, (fps) => {
+        lastMeasuredFps = fps;
+        renderBody();
+      });
+    }
+  };
+
+  const closePopover = () => {
+    popover.classList.add('hidden');
+    if (stopFpsMeter) { stopFpsMeter(); stopFpsMeter = null; }
+    lastMeasuredFps = null;
+  };
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (popover.classList.contains('hidden')) openPopover();
+    else closePopover();
+  });
+
+  if (closeBtn) closeBtn.addEventListener('click', closePopover);
+
+  // Outside-click dismiss — same pattern as the settings popover
+  // (see line ~1318). Ignore clicks on the trigger itself; its own
+  // handler above toggles.
+  document.addEventListener('click', (e) => {
+    if (popover.classList.contains('hidden')) return;
+    if (popover.contains(e.target) || btn.contains(e.target)) return;
+    closePopover();
+  });
+
+  // Escape dismiss.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !popover.classList.contains('hidden')) {
+      closePopover();
+    }
+  });
 }
 
 // --- Device popover (triggered by clicking status bar) ---
