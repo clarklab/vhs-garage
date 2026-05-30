@@ -138,7 +138,27 @@ export async function processClipAudio(file, options = {}) {
   return myTurn;
 }
 
-async function doProcessClipAudio(file, { onProgress } = {}) {
+/**
+ * Apply a 4:3 aspect-ratio tag to the file's container metadata.
+ * No re-encoding — both streams are copied through; only the
+ * container's display-aspect-ratio box is updated. Fast (~1-3 sec
+ * for a typical clip after ffmpeg.wasm is loaded).
+ *
+ * Used by the upload path when the source is anamorphic SD but the
+ * user didn't opt into the heavy 'Clean audio' pass. Composes with
+ * processClipAudio via the same internal serialization chain.
+ */
+export async function applyAspectMetadata(file, options = {}) {
+  const myTurn = processingChain.then(() => doProcessClipAudio(file, {
+    onProgress: options.onProgress,
+    cleanAudio: false,
+    aspect4_3: true,
+  }));
+  processingChain = myTurn.catch(() => {});
+  return myTurn;
+}
+
+async function doProcessClipAudio(file, { onProgress, cleanAudio = true, aspect4_3 = false } = {}) {
   const ffmpeg = await loadFFmpeg();
 
   // Pick container + codec based on input. webm → opus, mp4 → aac.
@@ -197,16 +217,32 @@ async function doProcessClipAudio(file, { onProgress } = {}) {
     //                          a reasonable loudness range; TP=-1.5
     //                          true peak ceiling keeps a bit of
     //                          headroom below clipping.
-    const filterChain = 'afftdn=nr=12:nf=-25,loudnorm=I=-14:LRA=11:TP=-1.5';
+    // Build ffmpeg args based on what processing is requested:
+    //   cleanAudio  → run afftdn + loudnorm via -af
+    //   aspect4_3   → add -aspect 4:3 metadata to the output container
+    //   neither     → caller shouldn't have invoked us; defensive no-op
+    //                  via -c copy with no filters (safe re-mux)
+    const args = ['-i', inputName, '-c:v', 'copy'];
 
-    await ffmpeg.run(
-      '-i', inputName,
-      '-c:v', 'copy',           // copy video stream unchanged
-      '-c:a', audioCodec,       // re-encode audio (filters output PCM)
-      '-b:a', audioBitrate,
-      '-af', filterChain,
-      outputName,
-    );
+    if (cleanAudio) {
+      const filterChain = 'afftdn=nr=12:nf=-25,loudnorm=I=-14:LRA=11:TP=-1.5';
+      args.push('-c:a', audioCodec, '-b:a', audioBitrate, '-af', filterChain);
+    } else {
+      // No audio filters — copy audio stream too. Aspect-only path.
+      args.push('-c:a', 'copy');
+    }
+
+    if (aspect4_3) {
+      // Tag the container's display-aspect-ratio metadata as 4:3.
+      // YouTube reads this and renders the video unstretched even
+      // though the pixel dimensions stay anamorphic. -c copy means
+      // no video bytes are re-encoded.
+      args.push('-aspect', '4:3');
+    }
+
+    args.push(outputName);
+
+    await ffmpeg.run(...args);
 
     const outData = ffmpeg.FS('readFile', outputName);
     const outBlob = new Blob([outData.buffer], {
