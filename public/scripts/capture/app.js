@@ -5564,7 +5564,7 @@ function renderToast(item) {
       <span class="toast-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
       <span class="toast-state-label">${stateLabel}</span>
       ${showRetry ? `<button class="toast-retry-btn" data-action="retry" title="Retry upload">${retryIcon}</button>` : ''}
-      ${showCancel ? `<button class="toast-close-btn" data-action="cancel" title="Cancel audio cleanup">×</button>` : ''}
+      ${showCancel ? `<button class="toast-close-btn" data-action="cancel" title="Cancel ${(item.processingLabel || 'audio cleanup').toLowerCase()}">×</button>` : ''}
       ${showClose ? `<button class="toast-close-btn" data-action="close" title="Dismiss">×</button>` : ''}
     </div>
     ${showProgress ? `<div class="toast-progress-track"><div class="toast-progress-bar" style="width:${item.progress}%"></div></div>` : ''}
