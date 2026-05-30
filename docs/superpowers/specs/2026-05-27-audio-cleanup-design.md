@@ -105,21 +105,28 @@ object, default `true`. Toggle takes effect on the next recording.
 
 ### Heavy upload pass
 
-`ffmpeg.wasm` runs a three-stage chain on the recorded file before it
+`ffmpeg.wasm` runs a two-stage chain on the recorded file before it
 gets PUT to YouTube:
 
 ```
-afftdn=nr=12:nf=-25  →  arnndn=m=cb.rnnn  →  loudnorm=I=-14:LRA=11:TP=-1.5
+afftdn=nr=12:nf=-25  →  loudnorm=I=-14:LRA=11:TP=-1.5
 ```
 
 - **`afftdn`** — FFT-based noise reduction. Kills the steady tape-hiss
   floor amplified by the live chain's +10dB boost.
-- **`arnndn`** — RNNoise-based denoiser tuned for speech. Cleans the
-  residual crackle/pops around dialog that `afftdn` can't catch.
-  Pre-trained model `cb.rnnn` ships with ffmpeg.
 - **`loudnorm`** — EBU R128 loudness normalization to −14 LUFS
   (YouTube's target). This is what makes the published video match
   other channels in perceived loudness.
+
+**Deferred:** An earlier draft of this spec included an `arnndn`
+RNN-based denoiser stage between `afftdn` and `loudnorm`. It was
+dropped during the slice 2 plan because the RNN model file (`cb.rnnn`)
+isn't bundled in `@ffmpeg/core@0.11.0` — adding it would require
+shipping the model separately and writing it to ffmpeg's virtual
+filesystem at load time. `afftdn` alone handles the steady-state
+tape hiss that's the headline noise problem; we can revisit
+`arnndn` if user feedback shows residual dialog crackle that
+warrants the added complexity.
 
 ffmpeg.wasm loading:
 
