@@ -94,6 +94,26 @@ export async function loadFFmpeg() {
 }
 
 /**
+ * Tear down the cached ffmpeg.wasm instance. Used by the cancel-
+ * mid-processing path: the in-flight ffmpeg.run() inside
+ * doProcessClipAudio will reject when its worker is killed, the
+ * processingChain catch swallows the rejection, and the next
+ * processClipAudio caller goes through loadFFmpeg() again to
+ * re-create the instance. (Wasm + JS are in the browser HTTP cache
+ * so the second load is fast.)
+ *
+ * Safe to call when no instance exists (no-op).
+ */
+export function releaseFFmpeg() {
+  const inst = ffmpegInstance;
+  ffmpegInstance = null;
+  loadPromise = null;
+  if (inst && typeof inst.exit === 'function') {
+    try { inst.exit(); } catch {}
+  }
+}
+
+/**
  * Process the audio of a video file. Video stream is copied through
  * unchanged; audio is filtered with afftdn (denoise) + loudnorm
  * (loudness match).

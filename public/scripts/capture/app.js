@@ -15,7 +15,7 @@ import {
 import { startDetection, stopDetection, pauseDetection, resumeDetection } from './detector.js';
 import { initMeter, initMeterFromElement, pauseMeter, stopMeter } from './meter.js';
 import { buildProcessedStream } from './audio-chain.js';
-import { processClipAudio } from './audio-processor.js';
+import { processClipAudio, releaseFFmpeg } from './audio-processor.js';
 import { readStreamStats, startFpsMeter } from './stream-stats.js';
 import {
   saveDirectoryHandle, loadDirectoryHandle, clearDirectoryHandle,
@@ -5045,13 +5045,24 @@ async function runUploadItem(item) {
         // item.progress for both processing and uploading bars.
         item.progress = 0;
       } catch (e) {
-        console.warn('[upload] audio cleanup failed, uploading original:', e);
-        uploadFile = file;
-        // Surface a one-time warning in the toast so the user knows
-        // the loudness-match step didn't happen for this clip. Doesn't
-        // block the upload itself — we continue with raw bytes.
-        item.cleanAudioFailed = true;
+        // If the user cancelled mid-processing, ffmpeg.exit() above
+        // caused this rejection. Don't log a failure or flip the
+        // cleanAudioFailed flag — the cancel handler set state to
+        // 'cancelled' and dismissed the toast already.
+        if (item.state !== 'cancelled') {
+          console.warn('[upload] audio cleanup failed, uploading original:', e);
+          uploadFile = file;
+          // Surface a one-time warning in the toast so the user knows
+          // the loudness-match step didn't happen for this clip. Doesn't
+          // block the upload itself — we continue with raw bytes.
+          item.cleanAudioFailed = true;
+        }
       }
+      // If user cancelled (either during processing or during the
+      // sliver between processing finishing and upload starting),
+      // skip the upload entirely. Queue continues to next item via
+      // the existing .finally(tryStartNext) chain.
+      if (item.state === 'cancelled') return;
       item.state = 'uploading';
       renderToast(item);
     }
@@ -5397,6 +5408,20 @@ function dismissToast(id) {
   refreshQueuePositions();
 }
 
+// Cancel the ffmpeg pass currently running for this item. Called
+// from the Cancel button visible on the toast during 'processing'
+// state. Tears down the ffmpeg worker so the in-flight run rejects;
+// the runUploadItem function's catch block sees item.state === 'cancelled'
+// and bails out cleanly without uploading. Queue continues to the
+// next item naturally via the existing .finally(tryStartNext).
+function cancelClipProcessing(id) {
+  const item = uploadQueue.items.find(it => it.id === id);
+  if (!item || item.state !== 'processing') return;
+  item.state = 'cancelled';
+  releaseFFmpeg();
+  dismissToast(id);
+}
+
 function retryUpload(id) {
   const item = uploadQueue.items.find(it => it.id === id);
   if (!item || item.state !== 'error') return;
@@ -5513,6 +5538,7 @@ function renderToast(item) {
   const showCountdown = uploadQueue.countdownItemId === item.id && item.state !== 'error';
   const showRetry = item.state === 'error';
   const showClose = item.state === 'success' || item.state === 'error';
+  const showCancel = item.state === 'processing';
   const showViewLink = item.state === 'success' && item.ytUrl;
 
   // Pixel-style retry icon (rotating arrow, similar feel to other UI).
@@ -5523,6 +5549,7 @@ function renderToast(item) {
       <span class="toast-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
       <span class="toast-state-label">${stateLabel}</span>
       ${showRetry ? `<button class="toast-retry-btn" data-action="retry" title="Retry upload">${retryIcon}</button>` : ''}
+      ${showCancel ? `<button class="toast-close-btn" data-action="cancel" title="Cancel audio cleanup">×</button>` : ''}
       ${showClose ? `<button class="toast-close-btn" data-action="close" title="Dismiss">×</button>` : ''}
     </div>
     ${showProgress ? `<div class="toast-progress-track"><div class="toast-progress-bar" style="width:${item.progress}%"></div></div>` : ''}
@@ -5545,6 +5572,7 @@ function renderToast(item) {
       const action = el.dataset.action;
       if (action === 'retry') retryUpload(item.id);
       else if (action === 'close') dismissToast(item.id);
+      else if (action === 'cancel') cancelClipProcessing(item.id);
       else if (action === 'keep-tape') endCountdownKeepingTape(item);
       else if (action === 'wipe-all') endCountdownWithFullWipe(item);
     };
