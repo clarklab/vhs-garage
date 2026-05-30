@@ -15,8 +15,8 @@ import {
 import { startDetection, stopDetection, pauseDetection, resumeDetection } from './detector.js';
 import { initMeter, initMeterFromElement, pauseMeter, stopMeter } from './meter.js';
 import { buildProcessedStream } from './audio-chain.js';
-import { processClipAudio, releaseFFmpeg } from './audio-processor.js';
-import { readStreamStats, startFpsMeter } from './stream-stats.js';
+import { processClipAudio, applyAspectMetadata, releaseFFmpeg } from './audio-processor.js';
+import { readStreamStats, startFpsMeter, readFileAspect } from './stream-stats.js';
 import {
   saveDirectoryHandle, loadDirectoryHandle, clearDirectoryHandle,
   queryHandlePermission, tryRequestHandlePermission,
@@ -5020,48 +5020,63 @@ async function runUploadItem(item) {
     const file = await fh.getFile();
     const contentType = clip.filename.endsWith('.webm') ? 'video/webm' : 'video/mp4';
 
-    // Heavy audio pass — when the user opted into 'Clean audio' in
-    // the batch review modal, run ffmpeg.wasm over the file before
-    // upload. afftdn knocks down tape hiss; loudnorm brings the
-    // clip to YouTube's -14 LUFS target so it matches other channels.
+    // Pre-upload pass — runs ffmpeg.wasm over the file when either:
+    //   - the user opted into 'Clean audio' in the batch review modal
+    //     (afftdn denoise + loudnorm to -14 LUFS), OR
+    //   - the source is anamorphic SD (~1.5 NTSC or ~1.25 PAL), in
+    //     which case we add -aspect 4:3 metadata so YouTube renders
+    //     it unstretched. No video re-encode for the aspect-only
+    //     path — just a container remux, ~1-3 sec.
     //
-    // We surface progress via a new 'processing' state on the toast
-    // (renderToast handles the label). On failure we fall back to
-    // uploading the original file with a non-blocking warning — a
-    // bad ffmpeg pass shouldn't block the user's upload.
+    // The two fixes compose: if both apply, one ffmpeg pass handles
+    // both via the cleanAudio + aspect4_3 flags on processClipAudio.
+    //
+    // On failure: fall back to uploading the original file with a
+    // non-blocking warning flag. A bad ffmpeg pass shouldn't block
+    // the user's upload.
     let uploadFile = file;
-    if (item.cleanAudio) {
+    const sourceAspect = await readFileAspect(file);
+    const needsAspectFix =
+      sourceAspect != null &&
+      (Math.abs(sourceAspect - 1.5) <= 0.02 ||
+       Math.abs(sourceAspect - 1.25) <= 0.02);
+    const willCleanAudio = !!item.cleanAudio;
+    const willFixAspect = needsAspectFix;
+
+    if (willCleanAudio || willFixAspect) {
       item.state = 'processing';
       item.progress = 0;
+      // Label the toast based on which pass is actually running.
+      // 'Cleaning audio' wins if audio cleanup is on, since the
+      // aspect tag is invisibly piggybacked into the same pass.
+      item.processingLabel = willCleanAudio
+        ? 'Cleaning audio'
+        : 'Fixing aspect';
       renderToast(item);
       try {
-        uploadFile = await processClipAudio(file, {
-          onProgress: (pct) => {
-            item.progress = pct;
-            renderToast(item);
-          },
-        });
-        // Reset progress for the upload stage — the toast UI reuses
-        // item.progress for both processing and uploading bars.
+        const processFn = willCleanAudio ? processClipAudio : applyAspectMetadata;
+        const opts = willCleanAudio
+          ? {
+              onProgress: (pct) => { item.progress = pct; renderToast(item); },
+              cleanAudio: true,
+              aspect4_3: willFixAspect,
+            }
+          : {
+              onProgress: (pct) => { item.progress = pct; renderToast(item); },
+            };
+        uploadFile = await processFn(file, opts);
         item.progress = 0;
       } catch (e) {
         // If the user cancelled mid-processing, ffmpeg.exit() above
         // caused this rejection. Don't log a failure or flip the
-        // cleanAudioFailed flag — the cancel handler set state to
+        // prepFailed flag — the cancel handler set state to
         // 'cancelled' and dismissed the toast already.
         if (item.state !== 'cancelled') {
-          console.warn('[upload] audio cleanup failed, uploading original:', e);
+          console.warn('[upload] pre-upload processing failed, uploading original:', e);
           uploadFile = file;
-          // Surface a one-time warning in the toast so the user knows
-          // the loudness-match step didn't happen for this clip. Doesn't
-          // block the upload itself — we continue with raw bytes.
-          item.cleanAudioFailed = true;
+          item.prepFailed = true;
         }
       }
-      // If user cancelled (either during processing or during the
-      // sliver between processing finishing and upload starting),
-      // skip the upload entirely. Queue continues to next item via
-      // the existing .finally(tryStartNext) chain.
       if (item.state === 'cancelled') return;
       item.state = 'uploading';
       renderToast(item);
@@ -5429,7 +5444,7 @@ function retryUpload(id) {
   item.progress = 0;
   item.errorMsg = null;
   item.xhr = null;
-  item.cleanAudioFailed = false;
+  item.prepFailed = false;
   // Refresh the access token (the previous one might be stale, especially
   // for a "auth expired"-class failure).
   fetchAccessTokenInBackground().then((tok) => {
@@ -5524,7 +5539,7 @@ function renderToast(item) {
     item.state === 'queued'
       ? `Queued · ${item.queuePosition} of ${item.queueLength}` :
     item.state === 'processing'
-      ? `Cleaning audio · ${item.progress}%` :
+      ? `${item.processingLabel || 'Cleaning audio'} · ${item.progress}%` :
     item.state === 'uploading'
       ? `Uploading · ${item.progress}%` :
     item.state === 'success'
@@ -5563,7 +5578,7 @@ function renderToast(item) {
       </div>
     ` : ''}
     ${showViewLink ? `<div class="toast-meta-row"><a class="toast-link" href="${item.ytUrl}" target="_blank" rel="noopener">View on YouTube →</a></div>` : ''}
-    ${item.cleanAudioFailed && item.state === 'success' ? `<p class="toast-error-msg" style="color:#fbbf24;">Audio cleanup unavailable — uploaded original file.</p>` : ''}
+    ${item.prepFailed && item.state === 'success' ? `<p class="toast-error-msg" style="color:#fbbf24;">Pre-upload processing failed — uploaded original file.</p>` : ''}
     ${item.state === 'error' ? `<p class="toast-error-msg">${escapeHtml(item.errorMsg || '')}</p>` : ''}
   `;
 
