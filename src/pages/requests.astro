@@ -1,0 +1,261 @@
+---
+import Base from '../layouts/Base.astro';
+import Footer from '../components/Footer.astro';
+
+// /requests — a public tape wishlist.
+//
+// Anyone can drop a request (a single free-form textarea) for a tape
+// they want us to record, and anyone — submitter or not — sees the
+// running list of everything that's been asked for. No accounts, no
+// auth: just ask, and watch the list grow.
+//
+// Data lives in Netlify Database (Neon Postgres); the page talks to
+// netlify/functions/tape-requests.mjs (GET to list, POST to add). We
+// render the list client-side on load rather than at build time so a
+// fresh request shows up on the next visit without a redeploy.
+
+// Keep in sync with MAX_LEN in netlify/functions/tape-requests.mjs.
+const MAX_LEN = 500;
+---
+
+<Base
+  title="Tape Requests"
+  description="Ask us to record a specific VHS tape — and see what everyone else has requested."
+>
+  <div class="min-h-screen flex flex-col">
+    <main class="flex-1 w-full max-w-2xl mx-auto px-6 py-12 sm:py-16">
+
+      <!-- Header -->
+      <div class="flex items-start gap-3 mb-8">
+        <span
+          class="inline-block w-2 h-2 mt-2 bg-red-500 shrink-0"
+          style="box-shadow: 0 0 6px rgba(229,57,53,0.6);"
+        ></span>
+        <div>
+          <h1 class="text-white text-2xl sm:text-3xl uppercase tracking-[0.12em] font-bold leading-none">
+            Tape Requests
+          </h1>
+          <p class="text-white/50 text-sm mt-3 leading-relaxed max-w-xl">
+            Looking for something specific? Tell us what you want us to
+            record and we'll add it to the pile. Every request lands on
+            the public list below — so you (and everyone else) can see
+            what the Garage is hunting for.
+          </p>
+        </div>
+      </div>
+
+      <!-- Request form -->
+      <form id="request-form" class="mb-4">
+        <label for="request-text" class="block text-white/40 text-xs uppercase tracking-widest mb-3">
+          What tape do you want?
+        </label>
+        <textarea
+          id="request-text"
+          name="text"
+          rows="4"
+          maxlength={MAX_LEN}
+          required
+          placeholder="e.g. The entire Disney Sing-Along Songs run, any Goosebumps, my local news from 1994…"
+          class="w-full px-4 py-3 bg-black border border-white/30 text-white text-base placeholder-gray-600 focus:outline-none focus:border-white resize-y"
+        ></textarea>
+        <div class="flex items-center justify-between mt-2">
+          <span id="request-count" class="text-white/30 text-[11px]">0 / {MAX_LEN}</span>
+        </div>
+        <button
+          id="request-submit"
+          type="submit"
+          class="w-full h-14 mt-3 bg-white text-black text-base font-medium hover:bg-gray-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+        >
+          Add Request
+        </button>
+        <p id="request-message" class="hidden text-base mt-3 text-red-400"></p>
+      </form>
+
+      <!-- List -->
+      <section aria-labelledby="list-heading" class="mt-12 pt-10 border-t border-white/10">
+        <div class="flex items-baseline justify-between mb-6">
+          <h2 id="list-heading" class="text-white/85 text-xs uppercase tracking-wider">
+            Requested so far
+          </h2>
+          <span id="list-count" class="text-white/30 text-[11px]"></span>
+        </div>
+
+        <p id="list-status" class="text-white/40 text-sm">Loading the list…</p>
+
+        <ul id="request-list" class="hidden flex flex-col"></ul>
+      </section>
+
+      <a href="/" class="inline-block text-white/30 text-xs mt-16 hover:text-white/50 transition-colors">
+        ← vhsgarage.com
+      </a>
+    </main>
+
+    <Footer />
+  </div>
+
+  <script is:inline define:vars={{ MAX_LEN }}>
+    (() => {
+      const ENDPOINT = '/.netlify/functions/tape-requests';
+
+      const form = document.getElementById('request-form');
+      const textarea = document.getElementById('request-text');
+      const counter = document.getElementById('request-count');
+      const btn = document.getElementById('request-submit');
+      const message = document.getElementById('request-message');
+      const listEl = document.getElementById('request-list');
+      const listStatus = document.getElementById('list-status');
+      const listCount = document.getElementById('list-count');
+
+      // ── Loader animation, matching the signup form's VHS shimmer ──
+      const frames = ['░░░', '▒░░', '▓▒░', '▓▓▒', '▓▓▓', '▓▓▒', '▓▒░', '▒░░'];
+      let tick;
+      function startLoader() {
+        let i = 0;
+        btn.disabled = true;
+        btn.dataset.label = btn.textContent;
+        btn.textContent = frames[0];
+        tick = setInterval(() => {
+          i = (i + 1) % frames.length;
+          btn.textContent = frames[i];
+        }, 120);
+      }
+      function stopLoader() {
+        clearInterval(tick);
+        btn.disabled = false;
+        btn.textContent = btn.dataset.label || 'Add Request';
+      }
+
+      function showMessage(msg, isError = true) {
+        message.textContent = msg;
+        message.classList.remove('hidden', 'text-red-400', 'text-white');
+        message.classList.add(isError ? 'text-red-400' : 'text-white');
+      }
+      function clearMessage() {
+        message.classList.add('hidden');
+        message.textContent = '';
+      }
+
+      // ── Render helpers ──
+      // Relative-ish timestamp: today/yesterday/Nd ago, else a date.
+      function formatWhen(iso) {
+        const then = new Date(iso);
+        if (isNaN(then)) return '';
+        const days = Math.floor((Date.now() - then.getTime()) / 86400000);
+        if (days <= 0) return 'today';
+        if (days === 1) return 'yesterday';
+        if (days < 7) return days + 'd ago';
+        return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      }
+
+      function makeRow(req) {
+        const li = document.createElement('li');
+        li.className = 'py-4 border-b border-white/10 flex gap-3';
+
+        const dot = document.createElement('span');
+        dot.setAttribute('aria-hidden', 'true');
+        dot.className = 'text-white/25 select-none shrink-0';
+        dot.textContent = '▸';
+
+        const body = document.createElement('div');
+        body.className = 'min-w-0 flex-1';
+
+        const text = document.createElement('p');
+        // textContent — never innerHTML — so request text can't inject markup.
+        text.className = 'text-white/90 text-base leading-relaxed whitespace-pre-wrap break-words';
+        text.textContent = req.text;
+
+        const when = document.createElement('p');
+        when.className = 'text-white/30 text-[11px] mt-1';
+        when.textContent = formatWhen(req.createdAt);
+
+        body.appendChild(text);
+        body.appendChild(when);
+        li.appendChild(dot);
+        li.appendChild(body);
+        return li;
+      }
+
+      function renderEmpty() {
+        listStatus.textContent = 'No requests yet — be the first to ask.';
+        listStatus.classList.remove('hidden');
+        listEl.classList.add('hidden');
+        listCount.textContent = '';
+      }
+
+      function renderList(requests) {
+        if (!requests.length) {
+          renderEmpty();
+          return;
+        }
+        listEl.innerHTML = '';
+        for (const req of requests) listEl.appendChild(makeRow(req));
+        listStatus.classList.add('hidden');
+        listEl.classList.remove('hidden');
+        listCount.textContent = requests.length + (requests.length === 1 ? ' request' : ' requests');
+      }
+
+      async function loadList() {
+        try {
+          const res = await fetch(ENDPOINT, { headers: { Accept: 'application/json' } });
+          if (!res.ok) throw new Error('bad status ' + res.status);
+          const data = await res.json();
+          renderList(Array.isArray(data.requests) ? data.requests : []);
+        } catch {
+          listStatus.textContent = "Couldn't load the list right now. Try refreshing.";
+          listStatus.classList.remove('hidden');
+        }
+      }
+
+      // ── Char counter ──
+      function updateCount() {
+        counter.textContent = textarea.value.length + ' / ' + MAX_LEN;
+      }
+      textarea.addEventListener('input', updateCount);
+      updateCount();
+
+      // ── Submit ──
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const text = textarea.value.trim();
+        if (!text) {
+          showMessage('░ Type what tape you want first.');
+          return;
+        }
+        clearMessage();
+        startLoader();
+        try {
+          const res = await fetch(ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+          });
+          stopLoader();
+          if (res.status === 201) {
+            const data = await res.json();
+            // Optimistically drop the new request at the top of the list.
+            if (data.request) {
+              if (listEl.classList.contains('hidden')) {
+                // First-ever request: swap the empty/loading state out.
+                renderList([data.request]);
+              } else {
+                listEl.insertBefore(makeRow(data.request), listEl.firstChild);
+                const n = listEl.children.length;
+                listCount.textContent = n + (n === 1 ? ' request' : ' requests');
+              }
+            }
+            textarea.value = '';
+            updateCount();
+            showMessage('▓ Got it. Added to the list below.', false);
+          } else {
+            showMessage('░ Something went wrong. Try again.');
+          }
+        } catch {
+          stopLoader();
+          showMessage('░ Network error. Try again.');
+        }
+      });
+
+      loadList();
+    })();
+  </script>
+</Base>
