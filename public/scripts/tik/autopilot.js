@@ -24,7 +24,7 @@ export async function runAutopilot(video, filename, { makeId, onProgress = () =>
     onProgress(`Grabbing frame ${i + 1}/${suggestions.length}…`);
     await seekAndSettle(video, suggestions[i].timecode);
     const bitmap = await grabFrame(video);
-    slides.push({ id: makeId(), bitmap, caption: suggestions[i].caption });
+    slides.push({ id: makeId(), bitmap, caption: suggestions[i].caption, timecode: suggestions[i].timecode });
   }
   return slides;
 }

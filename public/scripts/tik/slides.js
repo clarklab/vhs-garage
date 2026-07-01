@@ -1,4 +1,4 @@
-// Pure reducers over the slide array. A slide is { id, bitmap?, caption }.
+// Pure reducers over the slide array. A slide is { id, bitmap?, caption, timecode? }.
 // bitmap is irrelevant to ordering/captioning, so these functions never read it.
 
 // TikTok allows up to 35 images per photo post.
@@ -27,4 +27,10 @@ export function reorderSlide(slides, fromIndex, toIndex) {
 
 export function editCaption(slides, id, caption) {
   return slides.map(x => (x.id === id ? { ...x, caption } : x));
+}
+
+// Replace a slide's grabbed frame (and the timecode it came from), leaving its
+// caption and everything else intact. Used by the "re-grab this frame" flow.
+export function updateSlideFrame(slides, id, bitmap, timecode) {
+  return slides.map(x => (x.id === id ? { ...x, bitmap, timecode } : x));
 }
