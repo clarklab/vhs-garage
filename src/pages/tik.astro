@@ -1,0 +1,73 @@
+---
+import Base from '../layouts/Base.astro';
+import { BUILD_ID } from '../utils/build-id.js';
+---
+<Base title="/tik" description="Movie-trivia TikTok slideshow maker">
+  <meta slot="head" name="robots" content="noindex" />
+
+  <div class="min-h-screen bg-neutral-950 text-neutral-100">
+    <header class="flex items-center gap-3 px-4 py-3 border-b border-neutral-800">
+      <span class="text-xl">🎬 → 📱</span>
+      <h1 class="text-lg font-bold">/tik</h1>
+      <span class="text-xs text-neutral-500">movie-trivia slideshow maker</span>
+      <div class="ml-auto flex items-center gap-2">
+        <span id="auth-status" class="text-xs text-neutral-400">not signed in</span>
+        <button id="auth-btn" class="rounded bg-neutral-800 px-3 py-1.5 text-xs font-semibold">Sign in to TikTok</button>
+      </div>
+    </header>
+
+    <main class="grid gap-4 p-4 lg:grid-cols-2">
+      <!-- Capture pane -->
+      <section class="flex flex-col gap-3">
+        <label class="block">
+          <span class="text-xs uppercase tracking-wide text-neutral-500">Video file</span>
+          <input id="file-input" type="file" accept="video/*"
+                 class="mt-1 block w-full text-sm file:mr-3 file:rounded file:border-0 file:bg-red-600 file:px-3 file:py-2 file:text-white" />
+        </label>
+
+        <button id="autopilot-btn"
+                class="rounded bg-gradient-to-r from-fuchsia-600 to-red-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
+                disabled title="Load a video first">
+          🤖 Autopilot — preload 5 trivia slides
+        </button>
+
+        <video id="video" class="w-full rounded-lg bg-black" playsinline muted></video>
+
+        <!-- Chunky scrubber -->
+        <div id="scrubber" class="select-none">
+          <input id="scrub-range" type="range" min="0" max="1000" value="0"
+                 class="h-7 w-full cursor-pointer accent-red-600" />
+          <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
+            <span id="timecode" class="tabular-nums text-neutral-300">00:00.000</span>
+            <button id="step-back" class="rounded bg-neutral-800 px-2 py-1">⏮ −1f</button>
+            <button id="step-fwd" class="rounded bg-neutral-800 px-2 py-1">+1f ⏭</button>
+            <button id="grab-btn" class="ml-auto rounded bg-red-600 px-4 py-2 font-bold text-white">＋ Grab frame</button>
+          </div>
+        </div>
+
+        <label class="flex items-center gap-2 text-sm text-neutral-400">
+          <input id="title-toggle" type="checkbox" class="accent-red-600" />
+          Prefix every slide with a title
+          <input id="movie-title" type="text" placeholder="e.g. Jaws (1975)"
+                 class="ml-1 flex-1 rounded bg-neutral-900 px-2 py-1 text-neutral-100" disabled />
+        </label>
+      </section>
+
+      <!-- Slides pane -->
+      <section class="flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm uppercase tracking-wide text-neutral-500">
+            Slides (<span id="slide-count">0</span>/35)
+          </h2>
+          <button id="post-btn" class="rounded bg-red-600 px-4 py-2 font-bold text-white disabled:opacity-40" disabled>
+            Post to TikTok ▲
+          </button>
+        </div>
+        <p id="post-status" class="text-xs text-neutral-400"></p>
+        <ol id="slide-list" class="flex flex-col gap-2"></ol>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src={`/scripts/tik/app.js?v=${BUILD_ID}`}></script>
+</Base>

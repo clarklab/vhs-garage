@@ -19,3 +19,6 @@ video/edits/
 
 # Local Netlify folder
 .netlify
+
+# Superpowers brainstorm scratch
+.superpowers/
