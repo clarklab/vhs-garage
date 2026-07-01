@@ -63,6 +63,7 @@ els.file.addEventListener('change', async (e) => {
     await loadVideoFile(file, els.video);
     els.status.textContent = 'Loaded. Scrub and grab frames.';
   } catch (err) {
+    console.error('[tik] failed to load video file:', err);
     els.status.textContent = err.message;
   }
 });
@@ -85,7 +86,7 @@ els.grab.addEventListener('click', async () => {
     const bitmap = await grabFrame(els.video);
     slides = addSlide(slides, { id: String(nextId++), bitmap, caption: '' });
     render();
-  } catch (err) { els.status.textContent = err.message; }
+  } catch (err) { console.error('[tik] grab failed:', err); els.status.textContent = err.message; }
 });
 
 // ---- Autopilot ----
@@ -103,6 +104,7 @@ els.autopilot.addEventListener('click', async () => {
     render();
     els.status.textContent = `🤖 Added ${added} AI-suggested slide${added === 1 ? '' : 's'} — verify the trivia, tweak captions & frames, then post.`;
   } catch (err) {
+    console.error('[tik] autopilot failed:', err);
     els.status.textContent = '⚠️ ' + err.message;
   } finally {
     els.autopilot.disabled = false;
@@ -195,6 +197,7 @@ els.post.addEventListener('click', async () => {
       els.status.textContent = '⏳ Uploaded — still processing. Check your TikTok inbox shortly.';
     }
   } catch (err) {
+    console.error('[tik] post failed:', err);
     if (err.reauth) { clearLocalToken(); refreshAuthUI(); } // token dead → back to signed-out
     els.status.textContent = '⚠️ ' + err.message;
   } finally {
@@ -206,7 +209,7 @@ els.post.addEventListener('click', async () => {
 (async () => {
   try {
     if (await handleRedirect()) els.status.textContent = 'Signed in to TikTok ✓';
-  } catch (e) { els.status.textContent = e.message; }
+  } catch (e) { console.error('[tik] sign-in failed:', e); els.status.textContent = e.message; }
   if (!isPublicOrigin()) {
     els.status.textContent = 'ℹ️ Grab & caption work here; posting to TikTok needs the deployed site (TikTok can’t fetch images from a local address).';
   }

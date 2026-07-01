@@ -10,9 +10,12 @@ const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
 
-const DEFAULT_MODEL = process.env.TIK_AUTOPILOT_MODEL || 'gemini-2.5-flash';
+// Default to Claude for trivia quality. Override with TIK_AUTOPILOT_MODEL
+// (must be in the allowlist and provisioned in the AI Gateway).
+const DEFAULT_MODEL = process.env.TIK_AUTOPILOT_MODEL || 'claude-haiku-4-5';
 const ALLOWED_MODELS = new Set([
-  'gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gpt-4.1-nano', 'claude-haiku-4-5',
+  'claude-haiku-4-5', 'claude-sonnet-4-6',
+  'gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gpt-4.1-nano',
 ]);
 function pickModel(requested) {
   return requested && ALLOWED_MODELS.has(requested) ? requested : DEFAULT_MODEL;
@@ -45,9 +48,13 @@ export default async (req) => {
     else raw = await callGemini(prompt, model, controller.signal);
 
     const suggestions = normalizeSuggestions(parseModelJson(raw), durationSeconds);
-    if (!suggestions.length) return json({ suggestions: [], model, aiFallback: true });
+    if (!suggestions.length) {
+      console.warn('[tik-autopilot] model returned no usable suggestions', { model, rawPreview: String(raw).slice(0, 300) });
+      return json({ suggestions: [], model, aiFallback: true, error: 'The AI returned no usable trivia — try again.' });
+    }
     return json({ suggestions, model, aiFallback: false });
   } catch (e) {
+    console.error('[tik-autopilot] AI call failed', { model, name: e.name, message: e.message });
     const reason = e.name === 'AbortError'
       ? 'the AI took too long to respond — try again'
       : e.message;
