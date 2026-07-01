@@ -63,9 +63,11 @@ Verified against `developers.tiktok.com` (2026-07-01):
   the draft-to-inbox MVP.
 - **PULL_FROM_URL:** image URLs must be `https`, must not redirect, must
   stay reachable for up to 1 hour, and must sit under a domain/URL-prefix
-  verified under the app's **URL properties**. => the posting step only
-  works from the **deployed Netlify site**, not `localhost`. (Grab,
-  caption, and compositing all work fully offline/local.)
+  verified under the app's **URL properties**. This is why `/tik` is a
+  **deployed-Netlify tool**: TikTok's servers pull the images over the
+  public internet, so the hosting URLs must be the deployed site's public
+  domain. Grab / caption / compose work anywhere; the post handoff runs
+  against the deploy. See **Deployment & environments** below.
 
 ## Architecture
 
@@ -180,8 +182,9 @@ Mirrors `youtube-auth.mjs`:
 - **Domain not verified / tester not registered** → TikTok's error surfaced
   verbatim with a one-line hint pointing at the developer-portal setup.
 - **> 35 slides** → prevented in the UI.
-- **Running on localhost** → the post step warns that TikTok can't reach
-  local URLs; everything up to the handoff still works.
+- **Post attempted from a non-public origin** (e.g. `localhost`) → the UI
+  notes TikTok can't reach non-public image URLs and points the user to
+  the deployed site; capture/caption/compose are unaffected.
 
 ## Configuration / setup (documented, not code)
 
@@ -198,9 +201,28 @@ Mirrors `youtube-auth.mjs`:
   canvas compositing pixels, OAuth round-trip, blob hosting, and the live
   TikTok init + status poll landing a real draft in a test account's inbox.
 
+## Deployment & environments
+
+`/tik` is designed to run on the **deployed Netlify site** — that's the
+normal, fully-functional mode, not a fallback:
+
+- **Deployed (production / branch deploy):** everything works, including
+  the TikTok post. The three functions run on Netlify, `tik-media` serves
+  the JPEGs from the site's public HTTPS domain, and TikTok pulls them.
+  This is the intended way the tool is used.
+- **Local dev (`astro dev` / `netlify dev`):** capture, caption, and
+  compositing work fully; the *post* step is the one thing that needs a
+  public origin, so it's validated on a deploy. For local end-to-end
+  testing of the post, use a Netlify **branch/deploy preview** whose URL
+  prefix is verified in the TikTok app, or a public tunnel.
+
+**One-time TikTok setup** (documented for the operator): create the
+developer app, set `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET` in Netlify
+env, add the deployed domain under **URL properties**, register test
+TikTok accounts, and request the `video.upload` scope.
+
 ## Rollout
 
-Ship the page + functions; keep `/tik` unlinked from main nav until the
-TikTok app setup (domain verification, test users) is done, since the
-posting step is inert without it. Capture/caption/compose are usable
-immediately for producing the JPEGs even before TikTok is wired up.
+Ship the page + functions. Capture/caption/compose are usable immediately
+for producing the JPEGs; the TikTok post goes live once the one-time app
+setup above is done. Keep `/tik` unlinked from main nav until then.
