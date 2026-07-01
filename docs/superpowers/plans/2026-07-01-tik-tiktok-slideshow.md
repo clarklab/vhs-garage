@@ -23,17 +23,21 @@ public/scripts/tik/
   slides.js           (pure, unit-tested) # slide-array reducers, MAX_SLIDES cap
   layout.js           (pure, unit-tested) # computeSlideLayout() — frame/band rects
   caption.js          (pure, unit-tested) # word-wrap + font-fit (injected text measurer)
+  filename.js         (pure, unit-tested) # parseMovieName() — filename → { title, year }
   capture.js          (DOM)               # load video file, grab a frame to an ImageBitmap
   scrubber.js         (DOM)               # chunky scrubber control
   compose.js          (canvas)            # composeToCanvas() + composeSlide() → final JPEG
   auth.js             (browser + tested)  # TikTok OAuth (Web flow) client helpers
   publish.js          (network)           # upload slides + publish + poll status
+  autopilot.js        (network/DOM)       # filename → AI trivia → seek+grab prefilled slides
   app.js              (DOM)               # entry: wires everything, live slide-list UI
 netlify/functions/
   tik-auth.mjs                            # GET client_key; POST exchange/refresh/revoke
   tik-media.mjs                           # POST store JPEG in Blobs; GET stream it publicly
   tik-publish.mjs                         # refresh→access token, init draft, poll status
+  tik-autopilot.mjs                       # filename→5 deep-cut trivia via AI Gateway
   lib/tiktok-payload.mjs (pure, tested)   # buildInitPayload() + validateForInit()
+  lib/autopilot.mjs      (pure, tested)   # buildAutopilotPrompt() + normalizeSuggestions()
 test/tik/
   timecode.test.mjs
   slides.test.mjs
@@ -41,6 +45,8 @@ test/tik/
   caption.test.mjs
   tiktok-payload.test.mjs
   auth.test.mjs
+  filename.test.mjs
+  autopilot.test.mjs
 ```
 
 Modified:
@@ -1045,6 +1051,12 @@ import { BUILD_ID } from '../utils/build-id.js';
                  class="mt-1 block w-full text-sm file:mr-3 file:rounded file:border-0 file:bg-red-600 file:px-3 file:py-2 file:text-white" />
         </label>
 
+        <button id="autopilot-btn"
+                class="rounded bg-gradient-to-r from-fuchsia-600 to-red-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
+                disabled title="Load a video first">
+          🤖 Autopilot — preload 5 trivia slides
+        </button>
+
         <video id="video" class="w-full rounded-lg bg-black" playsinline muted></video>
 
         <!-- Chunky scrubber -->
@@ -1783,11 +1795,503 @@ git commit -m "feat(tik): wire capture, scrubber, slide list, auth, and posting"
 
 ---
 
-## Task 16: End-to-end verification against a deploy
+## Task 16: `filename.js` — parse a movie filename
+
+**Files:**
+- Create: `public/scripts/tik/filename.js`
+- Create: `test/tik/filename.test.mjs`
+
+Turns a download-style filename into a searchable `{ title, year, query }` for autopilot. Pure, unit-tested.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/tik/filename.test.mjs`:
+
+```js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseMovieName } from '../../public/scripts/tik/filename.js';
+
+test('parses a scene-release filename to title + year', () => {
+  const r = parseMovieName('Jaws.1975.1080p.BluRay.x264-YIFY.mkv');
+  assert.equal(r.title, 'Jaws');
+  assert.equal(r.year, '1975');
+  assert.equal(r.query, 'Jaws (1975)');
+});
+
+test('strips tags after the year and normalizes separators', () => {
+  assert.deepEqual(
+    { ...parseMovieName('The.Thing.1982.REMASTERED.720p.mp4') },
+    { title: 'The Thing', year: '1982', query: 'The Thing (1982)' }
+  );
+});
+
+test('handles underscores', () => {
+  const r = parseMovieName('Blade_Runner_1982.avi');
+  assert.equal(r.title, 'Blade Runner');
+  assert.equal(r.year, '1982');
+});
+
+test('no year → null year and query is just the title', () => {
+  const r = parseMovieName('Alien.mkv');
+  assert.equal(r.title, 'Alien');
+  assert.equal(r.year, null);
+  assert.equal(r.query, 'Alien');
+});
+
+test('handles parens/brackets around year and quality', () => {
+  const r = parseMovieName('Back to the Future (1985) [1080p].mp4');
+  assert.equal(r.title, 'Back to the Future');
+  assert.equal(r.year, '1985');
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npm test`
+Expected: FAIL — cannot find `filename.js`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `public/scripts/tik/filename.js`:
+
+```js
+// Parse a movie filename into a searchable title + year for autopilot. Pure —
+// no DOM, unit-tested. Handles scene-release names (dots, tags, groups, year).
+export function parseMovieName(filename) {
+  let name = String(filename || '');
+  name = name.replace(/\.[a-z0-9]{2,4}$/i, '');          // drop extension
+  name = name.replace(/[._]+/g, ' ');                    // dots/underscores → spaces
+  const yearMatch = name.match(/\b(19\d{2}|20\d{2})\b/); // first plausible year
+  const year = yearMatch ? yearMatch[1] : null;
+  if (yearMatch) name = name.slice(0, yearMatch.index);  // cut year + trailing tags
+  name = name.replace(
+    /\b(1080p|2160p|720p|480p|4k|x264|x265|h ?264|h ?265|hevc|xvid|divx|aac|ac3|dts|bluray|blu-ray|brrip|bdrip|webrip|web-?dl|hdrip|dvdrip|dvdscr|remux|proper|repack|extended|unrated|imax|remastered)\b/gi,
+    ' '
+  );
+  name = name.replace(/[\[(][^\])]*[\])]/g, ' ');        // closed bracket groups
+  name = name.replace(/[^\p{L}\p{N}]+$/u, '');           // trailing punctuation/space
+  name = name.replace(/^[^\p{L}\p{N}]+/u, '');           // leading punctuation/space
+  name = name.replace(/\s{2,}/g, ' ').trim();
+  const title = name || 'Unknown';
+  return { title, year, query: year ? `${title} (${year})` : title };
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `npm test`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add test/tik/filename.test.mjs public/scripts/tik/filename.js
+git commit -m "feat(tik): filename→title/year parser for autopilot"
+```
+
+---
+
+## Task 17: `lib/autopilot.mjs` — prompt builder + suggestion normalizer
+
+**Files:**
+- Create: `netlify/functions/lib/autopilot.mjs`
+- Create: `test/tik/autopilot.test.mjs`
+
+Pure helpers for the autopilot AI call: the prompt string and the validate/clamp step for the model's JSON.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/tik/autopilot.test.mjs`:
+
+```js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  AUTOPILOT_COUNT, buildAutopilotPrompt, normalizeSuggestions,
+} from '../../netlify/functions/lib/autopilot.mjs';
+
+test('buildAutopilotPrompt embeds title, year, duration, count, and asks for JSON', () => {
+  const p = buildAutopilotPrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440 });
+  assert.match(p, /Jaws/);
+  assert.match(p, /1975/);
+  assert.match(p, /7440/);
+  assert.match(p, new RegExp(String(AUTOPILOT_COUNT)));
+  assert.match(p, /ONLY valid JSON/i);
+});
+
+test('normalizeSuggestions keeps valid entries and clamps timecodes to [0, duration]', () => {
+  const raw = { suggestions: [
+    { caption: 'A', timecode: -5 },
+    { caption: 'B', timecode: 999999 },
+    { caption: 'C', timecode: 100 },
+  ] };
+  assert.deepEqual(normalizeSuggestions(raw, 200), [
+    { caption: 'A', timecode: 0 },
+    { caption: 'B', timecode: 200 },
+    { caption: 'C', timecode: 100 },
+  ]);
+});
+
+test('normalizeSuggestions drops captionless entries and caps at max', () => {
+  const raw = { suggestions: [
+    { caption: '', timecode: 1 },
+    { timecode: 2 },
+    { caption: 'ok', timecode: 3 },
+  ] };
+  assert.deepEqual(normalizeSuggestions(raw, 100, 5), [{ caption: 'ok', timecode: 3 }]);
+});
+
+test('normalizeSuggestions coerces a non-numeric timecode to 0 and truncates long captions', () => {
+  const out = normalizeSuggestions({ suggestions: [{ caption: 'x'.repeat(300), timecode: 'nope' }] }, 100);
+  assert.equal(out[0].timecode, 0);
+  assert.equal(out[0].caption.length, 180);
+});
+
+test('normalizeSuggestions on junk input returns an empty array', () => {
+  assert.deepEqual(normalizeSuggestions(null, 100), []);
+  assert.deepEqual(normalizeSuggestions({}, 100), []);
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npm test`
+Expected: FAIL — cannot find `lib/autopilot.mjs`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `netlify/functions/lib/autopilot.mjs`:
+
+```js
+// Pure helpers for autopilot. buildAutopilotPrompt() writes the LLM prompt;
+// normalizeSuggestions() validates/clamps the model's JSON. No network / DOM.
+export const AUTOPILOT_COUNT = 5;
+const CAPTION_MAX = 180;
+
+export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUTOPILOT_COUNT }) {
+  const dur = Math.max(1, Math.round(durationSeconds || 0));
+  return `You are a film historian curating a TikTok slideshow of DEEP-CUT movie trivia for the film "${title}"${year ? ` (${year})` : ''}.
+
+Give exactly ${count} genuinely lesser-known, deep-cut trivia facts — avoid the famous/obvious ones a casual fan already knows. Only include facts you are confident are TRUE; never invent details. Each fact becomes one slide caption (${CAPTION_MAX} characters max, punchy, no hashtags).
+
+For each fact, suggest a timecode as a whole number of SECONDS between 0 and ${dur}, pointing to roughly where in the film a relevant or representative frame would appear. Spread the timecodes across the runtime. These are only suggestions — the user fine-tunes the frame.
+
+Return ONLY valid JSON in this exact shape, nothing else:
+{
+  "suggestions": [
+    { "caption": "string", "timecode": 0 }
+  ]
+}`;
+}
+
+export function normalizeSuggestions(raw, durationSeconds, max = AUTOPILOT_COUNT) {
+  const dur = Math.max(0, Math.floor(durationSeconds || 0));
+  const list = Array.isArray(raw?.suggestions) ? raw.suggestions : [];
+  const out = [];
+  for (const item of list) {
+    if (out.length >= max) break;
+    const caption = typeof item?.caption === 'string' ? item.caption.trim() : '';
+    if (!caption) continue;
+    let tc = Number(item?.timecode);
+    if (!Number.isFinite(tc)) tc = 0;
+    tc = Math.min(dur, Math.max(0, Math.round(tc)));
+    out.push({ caption: caption.slice(0, CAPTION_MAX), timecode: tc });
+  }
+  return out;
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `npm test`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add test/tik/autopilot.test.mjs netlify/functions/lib/autopilot.mjs
+git commit -m "feat(tik): autopilot prompt builder + suggestion normalizer"
+```
+
+---
+
+## Task 18: `tik-autopilot.mjs` — AI-Gateway trivia function
+
+**Files:**
+- Create: `netlify/functions/tik-autopilot.mjs`
+
+Mirrors `youtube-publish.mjs`'s AI plumbing (provider routing, `parseModelJson`, 8s abort, graceful fallback). No unit test (network I/O); verified in Task 20.
+
+- [ ] **Step 1: Write the function**
+
+Create `netlify/functions/tik-autopilot.mjs`:
+
+```js
+// Autopilot: given a movie title/year, ask an LLM (via the Netlify AI Gateway)
+// for deep-cut trivia + suggested timecodes. Mirrors youtube-publish.mjs's
+// provider routing + JSON parsing. POST { title, year, durationSeconds, model? }.
+import { buildAutopilotPrompt, normalizeSuggestions } from './lib/autopilot.mjs';
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_BASE_URL = process.env.GOOGLE_GEMINI_BASE_URL;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
+
+const DEFAULT_MODEL = process.env.TIK_AUTOPILOT_MODEL || 'gemini-2.5-flash';
+const ALLOWED_MODELS = new Set([
+  'gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gpt-4.1-nano', 'claude-haiku-4-5',
+]);
+function pickModel(requested) {
+  return requested && ALLOWED_MODELS.has(requested) ? requested : DEFAULT_MODEL;
+}
+function providerFor(model) {
+  if (model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3')) return 'openai';
+  if (model.startsWith('claude')) return 'anthropic';
+  return 'gemini';
+}
+
+export default async (req) => {
+  if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
+  let body;
+  try { body = await req.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
+
+  const { title, year, durationSeconds, model: requested } = body;
+  if (!title) return json({ error: 'Missing movie title' }, 400);
+  const model = pickModel(requested);
+  const prompt = buildAutopilotPrompt({ title, year, durationSeconds });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const provider = providerFor(model);
+    let raw;
+    if (provider === 'openai') raw = await callOpenAI(prompt, model, controller.signal);
+    else if (provider === 'anthropic') raw = await callAnthropic(prompt, model, controller.signal);
+    else raw = await callGemini(prompt, model, controller.signal);
+
+    const suggestions = normalizeSuggestions(parseModelJson(raw), durationSeconds);
+    if (!suggestions.length) return json({ suggestions: [], model, aiFallback: true });
+    return json({ suggestions, model, aiFallback: false });
+  } catch (e) {
+    const reason = e.name === 'AbortError' ? 'timeout' : e.message;
+    return json({ suggestions: [], model, aiFallback: true, error: `Autopilot AI failed: ${reason}` });
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+async function callGemini(prompt, model, signal) {
+  if (!GEMINI_API_KEY || !GEMINI_BASE_URL) throw new Error('Gemini not configured');
+  const res = await fetch(`${GEMINI_BASE_URL}/v1beta/models/${model}:generateContent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { responseMimeType: 'application/json' },
+    }),
+    signal,
+  });
+  if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+async function callOpenAI(prompt, model, signal) {
+  if (!OPENAI_API_KEY) throw new Error('OpenAI not configured');
+  const res = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
+    body: JSON.stringify({
+      model, messages: [{ role: 'user', content: prompt }],
+      response_format: { type: 'json_object' },
+    }),
+    signal,
+  });
+  if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+async function callAnthropic(prompt, model, signal) {
+  if (!ANTHROPIC_API_KEY) throw new Error('Anthropic not configured');
+  const res = await fetch(`${ANTHROPIC_BASE_URL}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({ model, max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }),
+    signal,
+  });
+  if (!res.ok) throw new Error(`Anthropic ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+  const data = await res.json();
+  const block = (data.content || []).find((b) => b.type === 'text');
+  return block?.text || '';
+}
+
+// Lenient JSON parse — strips ```json fences and recovers the first {...} block.
+function parseModelJson(raw) {
+  if (!raw) return null;
+  let s = String(raw).replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  try { return JSON.parse(s); } catch {}
+  const start = s.indexOf('{'), end = s.lastIndexOf('}');
+  if (start >= 0 && end > start) { try { return JSON.parse(s.slice(start, end + 1)); } catch {} }
+  return null;
+}
+
+function json(body, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+}
+```
+
+- [ ] **Step 2: Sanity-check the module loads**
+
+Run: `node --check netlify/functions/tik-autopilot.mjs`
+Expected: no output (exit 0).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add netlify/functions/tik-autopilot.mjs
+git commit -m "feat(tik): tik-autopilot function (deep-cut trivia via AI Gateway)"
+```
+
+---
+
+## Task 19: `autopilot.js` client + wire the Autopilot button
+
+**Files:**
+- Create: `public/scripts/tik/autopilot.js`
+- Modify: `public/scripts/tik/app.js` (import + wire the button)
+
+Client orchestration: filename → AI → seek+grab prefilled slides, then wire the `#autopilot-btn` added in Task 9. Verified manually.
+
+- [ ] **Step 1: Write the client module**
+
+Create `public/scripts/tik/autopilot.js`:
+
+```js
+// Autopilot orchestration (browser): filename → AI trivia → seek+grab prefilled
+// slides. Network + DOM; verified manually. Pure parsing lives in filename.js.
+import { parseMovieName } from './filename.js';
+import { grabFrame } from './capture.js';
+
+// Seek the video to `seconds` and resolve once the new frame is ready.
+function seekTo(video, seconds) {
+  return new Promise((resolve) => {
+    const target = Math.min(Math.max(0, seconds), video.duration || seconds);
+    if (Math.abs(video.currentTime - target) < 0.05) return resolve();
+    const onSeeked = () => { video.removeEventListener('seeked', onSeeked); resolve(); };
+    video.addEventListener('seeked', onSeeked);
+    video.currentTime = target;
+  });
+}
+
+// Run autopilot. Returns an array of prefilled slides [{ id, bitmap, caption }].
+// makeId() supplies unique ids; onProgress(msg) drives the status line. Throws
+// with a clear message if the AI returns nothing (caller shows "grab manually").
+export async function runAutopilot(video, filename, { makeId, onProgress = () => {} }) {
+  const { title, year, query } = parseMovieName(filename);
+  onProgress(`Researching “${query}”…`);
+  const res = await fetch('/.netlify/functions/tik-autopilot', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, year, durationSeconds: video.duration || 0 }),
+  });
+  const data = await res.json().catch(() => ({}));
+  const suggestions = data.suggestions || [];
+  if (!suggestions.length) {
+    throw new Error(data.error || 'Autopilot couldn’t find trivia — grab frames manually.');
+  }
+  const slides = [];
+  for (let i = 0; i < suggestions.length; i++) {
+    onProgress(`Grabbing frame ${i + 1}/${suggestions.length}…`);
+    await seekTo(video, suggestions[i].timecode);
+    const bitmap = await grabFrame(video);
+    slides.push({ id: makeId(), bitmap, caption: suggestions[i].caption });
+  }
+  return slides;
+}
+```
+
+- [ ] **Step 2: Wire it into `app.js`**
+
+In `public/scripts/tik/app.js`, add the import after the `publish.js` import:
+
+```js
+import { runAutopilot } from './autopilot.js';
+```
+
+Add `autopilot` to the `els` object:
+
+```js
+  authBtn: $('auth-btn'), authStatus: $('auth-status'),
+  autopilot: $('autopilot-btn'),
+```
+
+Enable the button once a video's metadata loads (add near the other `els.video` listeners, e.g. right after `initScrubber({...})`):
+
+```js
+els.video.addEventListener('loadedmetadata', () => {
+  els.autopilot.disabled = false;
+  els.autopilot.title = '';
+});
+```
+
+Add the click handler (place it next to the Grab handler):
+
+```js
+els.autopilot.addEventListener('click', async () => {
+  const file = els.file.files?.[0];
+  if (!file || !els.video.duration) { els.status.textContent = 'Load a video first.'; return; }
+  els.autopilot.disabled = true;
+  try {
+    const made = await runAutopilot(els.video, file.name, {
+      makeId: () => String(nextId++),
+      onProgress: (m) => { els.status.textContent = '🤖 ' + m; },
+    });
+    let added = 0;
+    for (const sl of made) { if (canAddSlide(slides)) { slides = addSlide(slides, sl); added++; } }
+    render();
+    els.status.textContent = `🤖 Added ${added} AI-suggested slide${added === 1 ? '' : 's'} — verify the trivia, tweak captions & frames, then post.`;
+  } catch (err) {
+    els.status.textContent = '⚠️ ' + err.message;
+  } finally {
+    els.autopilot.disabled = false;
+  }
+});
+```
+
+- [ ] **Step 3: Syntax-check**
+
+Run: `node --check public/scripts/tik/autopilot.js && node --check public/scripts/tik/app.js`
+Expected: no output (exit 0).
+
+- [ ] **Step 4: Manual smoke test (needs functions running)**
+
+Run `netlify dev` (so `/.netlify/functions/*` are served), open `/tik`:
+- Load a video whose filename has a recognizable movie name.
+- The **🤖 Autopilot** button enables. Click it → status shows "Researching…" then "Grabbing frame n/5…" → 5 slides appear, each with a prefilled caption and a grabbed frame at the suggested timecode.
+- Edit a caption (preview updates live), re-scrub and re-grab a frame if you like.
+- If AI env vars aren't set, the status shows the "grab frames manually" notice and no slides are added (graceful).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add public/scripts/tik/autopilot.js public/scripts/tik/app.js
+git commit -m "feat(tik): autopilot — preload a 5-slide draft from the filename"
+```
+
+---
+
+## Task 20: End-to-end verification against a deploy
 
 **Files:** none (verification + docs only)
 
-The post step needs the deployed site (public URLs, verified domain). Everything else was verified locally in Task 15.
+The post step needs the deployed site (public URLs, verified domain). Everything else was verified locally in Tasks 15 & 19.
 
 - [ ] **Step 1: Confirm the one-time TikTok setup is in place**
 
@@ -1796,12 +2300,14 @@ Verify with the operator (or document as prerequisites):
 - The deployed domain (and the `/.netlify/functions/tik-media` URL prefix) is added under **URL properties** in the TikTok developer app.
 - The TikTok account used for testing is registered as a tester on the app, and `video.upload` scope is requested.
 - The deployed `/tik` URL is added as a redirect URI in the app's login settings.
+- Autopilot AI vars are set (reused from the existing gateway): `GEMINI_API_KEY` + `GOOGLE_GEMINI_BASE_URL` (and/or `OPENAI_*` / `ANTHROPIC_*`), optional `TIK_AUTOPILOT_MODEL`.
 
 - [ ] **Step 2: Deploy and run the full flow**
 
 Deploy the branch (Netlify branch deploy or production). On the deployed `/tik`:
 - Click **Sign in to TikTok** → complete OAuth → returns to `/tik` showing "signed in ✓".
-- Load a video, grab 3–4 frames, caption them.
+- Load a video whose filename names a known movie → click **🤖 Autopilot** → 5 prefilled slides appear with plausible deep-cut trivia + grabbed frames. Spot-check the trivia for accuracy (it's AI-suggested), tweak captions/frames.
+- (Or) grab 3–4 frames manually and caption them.
 - Click **Post to TikTok** → status walks through "Rendering… / Uploading… / Sending…" → ends at "✅ Draft sent to your TikTok inbox."
 - In the TikTok app, open the inbox notification → the slideshow draft is there with the captioned frames → publish.
 
@@ -1824,8 +2330,9 @@ git commit -m "chore(tik): finalize /tik after end-to-end verification"
 
 ## Notes for the implementer
 
-- **Run `npm test` after every pure-logic task** — it runs all `test/tik/*.test.mjs` via `node:test` (built into Node 22; no dependency to install).
-- **The post step cannot be exercised on `localhost`** — TikTok pulls images over the public internet. Compose/caption/grab all work locally; validate posting on a deploy (Task 16).
+- **Run `npm test` after every pure-logic task** — the `node --test 'test/tik/**/*.test.mjs'` script runs every `test/tik/*.test.mjs` via `node:test` (built into Node 22; no dependency to install).
+- **The post step cannot be exercised on `localhost`** — TikTok pulls images over the public internet. Compose/caption/grab all work locally; validate posting on a deploy (Task 20).
+- **Autopilot needs the functions running** (`netlify dev` or a deploy) and the AI-Gateway env vars — see Task 20. Its trivia is AI-suggested from training knowledge and its timecodes are guesses; always spot-check before posting. The prompt asks the model for confident-only, deep-cut facts, but the human review is the safety net.
 - **Unaudited app = private drafts to registered testers only.** That's expected for the MVP; going public is a later audit step, and the interface (`tik-publish`) is where `post_mode`/`privacy` would change.
-- **Don't add npm dependencies.** All image work is canvas-based; all tests use `node:test`.
+- **Don't add npm dependencies.** All image work is canvas-based; the AI call reuses the existing gateway; all tests use `node:test`.
 ```

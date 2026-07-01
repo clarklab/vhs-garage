@@ -28,10 +28,17 @@ site's own domain.
   2. Use a chunky scrubber to pick frames and **grab** them.
   3. Type a caption (trivia) into a textarea for each grab.
   4. Post the set to TikTok as a slideshow, in one click.
+- **Autopilot:** one click preloads a whole draft slideshow — from the
+  movie's *filename*, an LLM (via the Netlify AI Gateway) returns 5 deep-cut
+  trivia moments, each with a caption and a suggested timecode; the tool
+  auto-grabs a frame at each timecode and prefills the caption. The user then
+  tweaks captions and re-grabs frames. Goal: an ~85% head-start, not a
+  finished post.
 - Make generating movie-trivia posts trivially easy.
 - No new npm dependencies. All image work happens client-side on `<canvas>`.
 - Reuse the existing OAuth-via-Netlify-function pattern (mirrors
-  `youtube-auth.mjs` / `youtube-publish.mjs`).
+  `youtube-auth.mjs` / `youtube-publish.mjs`) and the existing AI-Gateway
+  provider-routing pattern (mirrors `youtube-publish.mjs`).
 
 ## Non-goals (YAGNI)
 
@@ -39,9 +46,12 @@ site's own domain.
 - **Direct public posting** (`DIRECT_POST`). MVP posts a private **draft
   to the creator's TikTok inbox**; they finish and publish in the app.
   Direct-to-feed requires an audited app + approved scopes and is deferred.
-- **AI-generated trivia**, scheduling, multi-account, analytics.
+- Scheduling, multi-account, analytics.
 - **Server-side image compositing.** Would need an image library (sharp),
   violating the no-deps rule. Everything is composited in the browser.
+- **AI verifying its own trivia / fetching real scene frames.** The model
+  supplies trivia from its training knowledge and *guesses* timecodes (it
+  can't see the file); both are editable starting points, not ground truth.
 
 ## TikTok API facts this design is built on
 
@@ -185,6 +195,34 @@ confidential client that holds the secret):
 - Surfaces clear errors (unverified domain, unregistered tester, expired
   token → re-auth).
 
+### 8. Autopilot — `tik-autopilot.mjs` + `autopilot.js`
+
+One button that turns a just-loaded video into a prefilled 5-slide draft.
+
+- **Filename → title:** `parseMovieName(filename)` (pure, tested) strips the
+  extension and release-scene tags (`1080p`, `x264`, `BluRay`, `YIFY`, …) and
+  pulls out a 4-digit year → `{ title, year, query }`. e.g.
+  `Jaws.1975.1080p.BluRay.x264-YIFY.mkv` → `{ title: "Jaws", year: "1975" }`.
+- **Server (`tik-autopilot.mjs`):** mirrors `youtube-publish.mjs`'s AI-Gateway
+  plumbing — provider routing by model id, `callGemini`/`callOpenAI`/
+  `callAnthropic`, lenient `parseModelJson`, an 8s abort (under Netlify's 10s
+  cap), and a graceful fallback. Body `{ title, year, durationSeconds }` →
+  prompts for exactly 5 genuinely deep-cut, *confident-only* trivia facts,
+  each with a suggested integer timecode in `[0, durationSeconds]`. Returns
+  `normalizeSuggestions(...)` → `{ suggestions: [{ caption, timecode }],
+  aiFallback }` (validated, clamped, captions ≤180 chars).
+- **Client (`autopilot.js`):** `parseMovieName` → POST to `tik-autopilot`
+  → for each suggestion, `seekTo(video, timecode)` (await `seeked`) then
+  `grabFrame` → build a slide with the caption prefilled. Appends to the
+  slide list (respecting the 35 cap); the user then edits captions and
+  re-scrubs/re-grabs any frame. If the AI is unreachable, a clear notice
+  tells the user to grab manually.
+- **Honesty:** trivia comes from the model's training knowledge and the
+  timecodes are guesses (it can't see the file) — the UI labels these as
+  AI-suggested and everything is editable before posting.
+- **Default model:** `gemini-2.5-flash` (better factual quality than the
+  `-lite`/`-nano` tier) via `TIK_AUTOPILOT_MODEL`, from the same allowlist.
+
 ## Error handling
 
 - **Undecodable file** → explicit message, no crash.
@@ -196,10 +234,17 @@ confidential client that holds the secret):
 - **Post attempted from a non-public origin** (e.g. `localhost`) → the UI
   notes TikTok can't reach non-public image URLs and points the user to
   the deployed site; capture/caption/compose are unaffected.
+- **Autopilot before a file is loaded** → button disabled (needs a video for
+  duration + frame grabs). **AI unreachable / not configured** →
+  `tik-autopilot` returns `aiFallback` with an empty list; the UI says
+  "couldn't reach AI — grab frames manually." Autopilot works only where the
+  functions run (deploy or `netlify dev`).
 
 ## Configuration / setup (documented, not code)
 
-- Env vars: `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`.
+- Env vars: `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`. Autopilot reuses the
+  existing AI-Gateway vars (`GEMINI_API_KEY`/`GEMINI_BASE_URL`, optional
+  `OPENAI_*`/`ANTHROPIC_*`) plus optional `TIK_AUTOPILOT_MODEL`.
 - TikTok developer app: add the deployed domain under **URL properties**;
   register test TikTok accounts; request `video.upload` scope.
 
@@ -207,7 +252,8 @@ confidential client that holds the secret):
 
 - **Unit (pure functions):** caption wrapping/line-break/auto-fit,
   timecode formatting, slide-array reducers (add/remove/reorder/edit),
-  the TikTok init payload builder, cover-index/35-slide validation.
+  the TikTok init payload builder, cover-index/35-slide validation,
+  filename→title parsing, and autopilot-suggestion normalization/clamping.
 - **Manual (against a deployed preview):** the actual grab-from-`<video>`,
   canvas compositing pixels, OAuth round-trip, blob hosting, and the live
   TikTok init + status poll landing a real draft in a test account's inbox.
