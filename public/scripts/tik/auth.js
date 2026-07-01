@@ -1,7 +1,7 @@
 // TikTok OAuth (Login Kit for Web) on the client. /tik is server-backed and the
 // code exchange happens in tik-auth.mjs with the client secret, so there is no
-// PKCE. The refresh token lives in localStorage, same trust model as the YouTube
-// flow. buildAuthorizeUrl is pure (unit-tested); the rest is browser-only
+// PKCE. The refresh token lives in localStorage (client-trusted, no server
+// session). buildAuthorizeUrl is pure (unit-tested); the rest is browser-only
 // (sessionStorage, localStorage, location) and only inside functions.
 
 const AUTHORIZE_BASE = 'https://www.tiktok.com/v2/auth/authorize/';

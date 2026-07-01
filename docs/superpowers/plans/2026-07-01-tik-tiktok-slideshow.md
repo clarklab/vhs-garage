@@ -59,7 +59,7 @@ package.json                              # add "test" script
 - **Pages MUST use the `Base` layout.** Tailwind v4 CSS ships only through `@import "tailwindcss"` in `src/styles/global.css`, which is imported **only** by `src/layouts/Base.astro`. A hand-written `<!doctype html>` page ships **zero** stylesheet (verified: an unwrapped page builds but emits no `<link rel="stylesheet">`, so every Tailwind class is inert). Every page in `src/pages` wraps its body in `<Base title=… description=…>` — see `src/pages/capture.astro:6` and `src/pages/recorder.astro:30`. `Base` provides `<slot name="head" />` and `<slot />`; its `<body>` is `bg-black text-white`.
 - Client JS is served statically from `public/scripts/…` and referenced from the Astro page as `<script type="module" src={`/scripts/tik/app.js?v=${BUILD_ID}`}>` — see `src/pages/capture.astro:1942` and `src/utils/build-id.js`.
 - `package.json` has `"type": "module"`, so `.js` files are ES modules; `node:test` can import them directly.
-- Netlify functions are `export default async (req) => Response`; Blobs via `import { getStore } from '@netlify/blobs'` — see `netlify/functions/signup-count.mjs` and `netlify/functions/youtube-auth.mjs`.
+- Netlify functions are `export default async (req) => Response`; Blobs via `import { getStore } from '@netlify/blobs'` — see `netlify/functions/signup-count.mjs`.
 - Pure modules must not touch `document`/`window`/`location` at import time (only inside functions) so Node can import them for tests.
 
 ---
@@ -667,7 +667,7 @@ Uses TikTok's **Login Kit for Web** flow (confidential client): the browser redi
 Create `netlify/functions/tik-auth.mjs`:
 
 ```js
-// TikTok OAuth helper for the /tik page. Mirrors youtube-auth.mjs.
+// TikTok OAuth helper for the /tik page (Login Kit for Web).
 // - GET  → returns the public client_key so the browser can build the auth URL.
 // - POST action=exchange → swaps a PKCE auth code for access + refresh tokens.
 // - POST action=refresh  → swaps a refresh token for a fresh access token.
@@ -1395,8 +1395,8 @@ Create `public/scripts/tik/auth.js`:
 ```js
 // TikTok OAuth (Login Kit for Web) on the client. /tik is server-backed and the
 // code exchange happens in tik-auth.mjs with the client secret, so there is no
-// PKCE. The refresh token lives in localStorage, same trust model as the YouTube
-// flow. buildAuthorizeUrl is pure (unit-tested); the rest is browser-only
+// PKCE. The refresh token lives in localStorage (client-trusted, no server
+// session). buildAuthorizeUrl is pure (unit-tested); the rest is browser-only
 // (sessionStorage, localStorage, location) and only inside functions.
 
 const AUTHORIZE_BASE = 'https://www.tiktok.com/v2/auth/authorize/';
@@ -2021,7 +2021,7 @@ git commit -m "feat(tik): autopilot prompt builder + suggestion normalizer"
 **Files:**
 - Create: `netlify/functions/tik-autopilot.mjs`
 
-Mirrors `youtube-publish.mjs`'s AI plumbing (provider routing, `parseModelJson`, 8s abort, graceful fallback). No unit test (network I/O); verified in Task 20.
+Reuses the site's AI-Gateway plumbing (provider routing, `parseModelJson`, 8s abort, graceful fallback). No unit test (network I/O); verified in Task 20.
 
 - [ ] **Step 1: Write the function**
 
@@ -2029,8 +2029,8 @@ Create `netlify/functions/tik-autopilot.mjs`:
 
 ```js
 // Autopilot: given a movie title/year, ask an LLM (via the Netlify AI Gateway)
-// for deep-cut trivia + suggested timecodes. Mirrors youtube-publish.mjs's
-// provider routing + JSON parsing. POST { title, year, durationSeconds, model? }.
+// for deep-cut trivia + suggested timecodes. Provider routing + lenient JSON
+// parsing over the AI Gateway. POST { title, year, durationSeconds, model? }.
 import { buildAutopilotPrompt, normalizeSuggestions } from './lib/autopilot.mjs';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;

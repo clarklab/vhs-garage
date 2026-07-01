@@ -1,4 +1,4 @@
-// TikTok OAuth helper for the /tik page. Mirrors youtube-auth.mjs.
+// TikTok OAuth helper for the /tik page (Login Kit for Web).
 // - GET  → returns the public client_key so the browser can build the auth URL.
 // - POST action=exchange → swaps a PKCE auth code for access + refresh tokens.
 // - POST action=refresh  → swaps a refresh token for a fresh access token.

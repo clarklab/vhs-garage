@@ -1,6 +1,6 @@
 // Autopilot: given a movie title/year, ask an LLM (via the Netlify AI Gateway)
-// for deep-cut trivia + suggested timecodes. Mirrors youtube-publish.mjs's
-// provider routing + JSON parsing. POST { title, year, durationSeconds, model? }.
+// for deep-cut trivia + suggested timecodes. Provider routing + lenient JSON
+// parsing over the AI Gateway. POST { title, year, durationSeconds, model? }.
 import { buildAutopilotPrompt, normalizeSuggestions } from './lib/autopilot.mjs';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
