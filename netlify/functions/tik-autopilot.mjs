@@ -33,8 +33,10 @@ export default async (req) => {
   const model = pickModel(requested);
   const prompt = buildAutopilotPrompt({ title, year, durationSeconds });
 
+  // Abort before Netlify's 10s function ceiling so we return a graceful
+  // fallback instead of a platform 502.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
+  const timer = setTimeout(() => controller.abort(), 9000);
   try {
     const provider = providerFor(model);
     let raw;
@@ -46,8 +48,10 @@ export default async (req) => {
     if (!suggestions.length) return json({ suggestions: [], model, aiFallback: true });
     return json({ suggestions, model, aiFallback: false });
   } catch (e) {
-    const reason = e.name === 'AbortError' ? 'timeout' : e.message;
-    return json({ suggestions: [], model, aiFallback: true, error: `Autopilot AI failed: ${reason}` });
+    const reason = e.name === 'AbortError'
+      ? 'the AI took too long to respond — try again'
+      : e.message;
+    return json({ suggestions: [], model, aiFallback: true, error: `Autopilot failed: ${reason}` });
   } finally {
     clearTimeout(timer);
   }
@@ -60,7 +64,10 @@ async function callGemini(prompt, model, signal) {
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: 'application/json' },
+      // Gemini 2.5 Flash has "thinking" on by default, which adds several
+      // seconds of latency and blew the abort budget. Trivia recall doesn't
+      // need chain-of-thought, so disable it for speed (thinkingBudget: 0).
+      generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
     }),
     signal,
   });
