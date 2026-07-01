@@ -64,8 +64,9 @@ async function sweepOldBlobs(store) {
         if (now - createdAt > MAX_AGE_MS) await store.delete(b.key).catch(() => {});
       })
     );
-  } catch {
-    // Sweeping is best-effort; never block an upload on cleanup.
+  } catch (e) {
+    // Sweeping is best-effort; never block an upload on cleanup — but log it.
+    console.warn('[tik-media] blob sweep failed:', e.message);
   }
 }
 

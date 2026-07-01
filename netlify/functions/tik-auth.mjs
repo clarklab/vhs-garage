@@ -32,9 +32,11 @@ export default async (req) => {
       redirect_uri: redirectUri,
     });
     if (data.error && data.error !== 'ok') {
+      console.error('[tik-auth] code exchange failed', { error: data.error, description: data.error_description });
       return json({ error: data.error_description || data.error }, 400);
     }
     if (!data.refresh_token) {
+      console.error('[tik-auth] code exchange returned no refresh_token', { keys: Object.keys(data || {}) });
       return json({ error: 'TikTok did not return a refresh token — try signing in again.' }, 400);
     }
     return json({
@@ -55,6 +57,7 @@ export default async (req) => {
       refresh_token: refreshToken,
     });
     if (!data.access_token) {
+      console.error('[tik-auth] token refresh failed', { error: data.error, description: data.error_description });
       return json({ error: data.error_description || 'Could not refresh token' }, 401);
     }
     return json({

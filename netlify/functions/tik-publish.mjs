@@ -22,7 +22,10 @@ export default async (req) => {
   if (!check.ok) return json({ error: check.error }, 400);
 
   const accessToken = await getAccessToken(refreshToken);
-  if (!accessToken) return json({ error: 'Could not get access token — please sign in again' }, 401);
+  if (!accessToken) {
+    console.error('[tik-publish] token refresh failed — refresh token invalid/expired');
+    return json({ error: 'Could not get access token — please sign in again' }, 401);
+  }
 
   // Initialize the draft.
   const initRes = await fetch(INIT_URL, {
@@ -36,6 +39,7 @@ export default async (req) => {
   const initData = await initRes.json().catch(() => ({}));
   const publishId = initData?.data?.publish_id;
   if (!publishId) {
+    console.error('[tik-publish] content/init rejected', { status: initRes.status, tiktok: initData?.error });
     const msg = initData?.error?.message || 'TikTok rejected the post';
     return json({ error: msg, hint: hintForError(initData?.error), tiktok: initData?.error }, 400);
   }
