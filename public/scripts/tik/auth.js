@@ -1,0 +1,86 @@
+// TikTok OAuth (Login Kit for Web) on the client. /tik is server-backed and the
+// code exchange happens in tik-auth.mjs with the client secret, so there is no
+// PKCE. The refresh token lives in localStorage, same trust model as the YouTube
+// flow. buildAuthorizeUrl is pure (unit-tested); the rest is browser-only
+// (sessionStorage, localStorage, location) and only inside functions.
+
+const AUTHORIZE_BASE = 'https://www.tiktok.com/v2/auth/authorize/';
+const SCOPE = 'user.info.basic,video.upload';
+const LS_REFRESH = 'tik_refresh_token';
+const SS_STATE = 'tik_oauth_state';
+
+export function buildAuthorizeUrl({ clientKey, redirectUri, state }) {
+  const p = new URLSearchParams({
+    client_key: clientKey,
+    scope: SCOPE,
+    response_type: 'code',
+    redirect_uri: redirectUri,
+    state,
+  });
+  return `${AUTHORIZE_BASE}?${p.toString()}`;
+}
+
+export function isSignedIn() {
+  return !!localStorage.getItem(LS_REFRESH);
+}
+export function getRefreshToken() {
+  return localStorage.getItem(LS_REFRESH);
+}
+// Drop the stored token WITHOUT revoking — for when TikTok reports it already
+// invalid (401) and we just want to force a fresh sign-in.
+export function clearLocalToken() {
+  localStorage.removeItem(LS_REFRESH);
+}
+
+function randomHex(bytes = 16) {
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return [...arr].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Kick off sign-in: fetch client_key, set a CSRF state, redirect to TikTok.
+export async function startAuth() {
+  const { clientKey } = await fetch('/.netlify/functions/tik-auth').then((r) => r.json());
+  if (!clientKey) throw new Error('TikTok OAuth is not configured on the server.');
+  const state = randomHex(16);
+  sessionStorage.setItem(SS_STATE, state);
+  const redirectUri = location.origin + location.pathname;
+  location.href = buildAuthorizeUrl({ clientKey, redirectUri, state });
+}
+
+// On page load: if we came back with ?code=&state=, exchange it for tokens.
+// Returns true if a sign-in was completed on this load.
+export async function handleRedirect() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('code');
+  const state = params.get('state');
+  if (!code) return false;
+  const expectedState = sessionStorage.getItem(SS_STATE);
+  // Clean the URL regardless of outcome.
+  history.replaceState({}, '', location.origin + location.pathname);
+  if (!expectedState || state !== expectedState) throw new Error('OAuth state mismatch — try again.');
+
+  const redirectUri = location.origin + location.pathname;
+  const res = await fetch('/.netlify/functions/tik-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'exchange', code, redirectUri }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  localStorage.setItem(LS_REFRESH, data.refreshToken);
+  sessionStorage.removeItem(SS_STATE);
+  return true;
+}
+
+export async function signOut() {
+  const token = getRefreshToken();
+  clearLocalToken();
+  if (token) {
+    await fetch('/.netlify/functions/tik-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'revoke', token }),
+    }).catch(() => {});
+  }
+}
