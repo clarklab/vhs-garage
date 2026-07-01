@@ -1,30 +1,26 @@
-// Autopilot orchestration (browser): filename → AI trivia → seek+grab prefilled
-// slides. Network + DOM; verified manually. Pure parsing lives in filename.js.
-import { parseMovieName } from './filename.js';
-import { grabFrame, seekAndSettle } from './capture.js';
+// Autopilot AI fetch: ask tik-autopilot for scene-specific trivia. The seek +
+// frame-grab happens in app.js, so bulk-autopilot, "add scene", and per-slide
+// "redo trivia" all share one code path. Pure network here.
 
-// Run autopilot. Returns an array of prefilled slides [{ id, bitmap, caption }].
-// makeId() supplies unique ids; onProgress(msg) drives the status line. Throws
-// with a clear message if the AI returns nothing (caller shows "grab manually").
-export async function runAutopilot(video, filename, { makeId, onProgress = () => {} }) {
-  const { title, year, query } = parseMovieName(filename);
-  onProgress(`Researching “${query}”…`);
+// opts: { title, year, durationSeconds, count?, exclude?, focusTimecode? }
+// Returns [{ caption, timecode }]. Throws a clear message if none come back.
+export async function fetchScenes(opts = {}) {
   const res = await fetch('/.netlify/functions/tik-autopilot', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, year, durationSeconds: video.duration || 0 }),
+    body: JSON.stringify({
+      title: opts.title,
+      year: opts.year,
+      durationSeconds: opts.durationSeconds || 0,
+      count: opts.count,
+      exclude: opts.exclude || [],
+      focusTimecode: opts.focusTimecode,
+    }),
   });
   const data = await res.json().catch(() => ({}));
   const suggestions = data.suggestions || [];
   if (!suggestions.length) {
-    throw new Error(data.error || 'Autopilot couldn’t find trivia — grab frames manually.');
+    throw new Error(data.error || 'Autopilot couldn’t generate trivia — try again.');
   }
-  const slides = [];
-  for (let i = 0; i < suggestions.length; i++) {
-    onProgress(`Grabbing frame ${i + 1}/${suggestions.length}…`);
-    await seekAndSettle(video, suggestions[i].timecode);
-    const bitmap = await grabFrame(video);
-    slides.push({ id: makeId(), bitmap, caption: suggestions[i].caption, timecode: suggestions[i].timecode });
-  }
-  return slides;
+  return suggestions;
 }

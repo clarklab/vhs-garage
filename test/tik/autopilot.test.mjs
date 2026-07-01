@@ -13,6 +13,24 @@ test('buildAutopilotPrompt embeds title, year, duration, count, and asks for JSO
   assert.match(p, /ONLY valid JSON/i);
 });
 
+test('buildAutopilotPrompt asks for scene-specific + behind-the-scenes trivia', () => {
+  const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440 });
+  assert.match(p, /SPECIFIC SCENE/);
+  assert.match(p, /BEHIND-THE-SCENES/i);
+});
+
+test('buildAutopilotPrompt lists excluded trivia to avoid repeats', () => {
+  const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440, exclude: ['the shark was named Bruce', ''] });
+  assert.match(p, /do NOT repeat/i);
+  assert.match(p, /the shark was named Bruce/);
+});
+
+test('buildAutopilotPrompt with count=1 is singular and can focus a timecode', () => {
+  const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440, count: 1, focusTimecode: 3720 });
+  assert.match(p, /exactly 1 trivia moment\b/);   // singular, no trailing "s"
+  assert.match(p, /Focus this one on the SCENE around 3720 seconds/);
+});
+
 test('normalizeSuggestions keeps valid entries and clamps timecodes to [0, duration]', () => {
   const raw = { suggestions: [
     { caption: 'A', timecode: -5 },

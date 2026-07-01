@@ -33,10 +33,10 @@ export default async (req) => {
   let body;
   try { body = await req.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
 
-  const { title, year, durationSeconds, model: requested } = body;
+  const { title, year, durationSeconds, count, exclude, focusTimecode, model: requested } = body;
   if (!title) return json({ error: 'Missing movie title' }, 400);
   const model = pickModel(requested);
-  const prompt = buildAutopilotPrompt({ title, year, durationSeconds });
+  const prompt = buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode });
 
   // Abort before Netlify's 10s function ceiling so we return a graceful
   // fallback instead of a platform 502.
@@ -49,7 +49,7 @@ export default async (req) => {
     else if (provider === 'anthropic') raw = await callAnthropic(prompt, model, controller.signal);
     else raw = await callGemini(prompt, model, controller.signal);
 
-    const suggestions = normalizeSuggestions(parseModelJson(raw), durationSeconds);
+    const suggestions = normalizeSuggestions(parseModelJson(raw), durationSeconds, count);
     if (!suggestions.length) {
       console.warn('[tik-autopilot] model returned no usable suggestions', { model, rawPreview: String(raw).slice(0, 300) });
       return json({ suggestions: [], model, aiFallback: true, error: 'The AI returned no usable trivia — try again.' });

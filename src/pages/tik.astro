@@ -4,10 +4,14 @@ import { BUILD_ID } from '../utils/build-id.js';
 ---
 <Base title="/tik" description="Movie-trivia TikTok slideshow maker">
   <meta slot="head" name="robots" content="noindex" />
+  <link slot="head" rel="preconnect" href="https://fonts.googleapis.com" />
+  <link slot="head" rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link slot="head" rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
 
   <div class="min-h-screen bg-neutral-950 text-neutral-100">
     <header class="flex items-center gap-3 px-4 py-3 border-b border-neutral-800">
-      <span class="text-xl">🎬 → 📱</span>
+      <span class="material-symbols-outlined text-[24px] leading-none text-neutral-400">movie</span>
       <h1 class="text-lg font-bold">/tik</h1>
       <span class="text-xs text-neutral-500">movie-trivia slideshow maker</span>
       <div class="ml-auto flex items-center gap-2">
@@ -26,9 +30,10 @@ import { BUILD_ID } from '../utils/build-id.js';
         </label>
 
         <button id="autopilot-btn"
-                class="rounded bg-gradient-to-r from-fuchsia-600 to-red-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
+                class="flex items-center justify-center gap-2 rounded bg-gradient-to-r from-fuchsia-600 to-red-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
                 disabled title="Load a video first">
-          🤖 Autopilot — preload 5 trivia slides
+          <span class="material-symbols-outlined text-[20px] leading-none">auto_awesome</span>
+          Autopilot — preload 5 trivia scenes
         </button>
 
         <video id="video" class="w-full rounded-lg bg-black" playsinline muted></video>
@@ -39,10 +44,19 @@ import { BUILD_ID } from '../utils/build-id.js';
                  class="h-7 w-full cursor-pointer accent-red-600" />
           <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
             <span id="timecode" class="tabular-nums text-neutral-300">00:00.000</span>
-            <button id="step-back" class="rounded bg-neutral-800 px-2 py-1">⏮ −1f</button>
-            <button id="step-fwd" class="rounded bg-neutral-800 px-2 py-1">+1f ⏭</button>
-            <button id="grab-btn" class="ml-auto rounded bg-red-600 px-4 py-2 font-bold text-white">＋ Grab frame</button>
-            <button id="cancel-edit" class="hidden rounded bg-neutral-800 px-3 py-2 text-sm">Cancel</button>
+            <button id="step-back" class="flex items-center rounded bg-neutral-800 px-2 py-1">
+              <span class="material-symbols-outlined text-[18px] leading-none">chevron_left</span>1f
+            </button>
+            <button id="step-fwd" class="flex items-center rounded bg-neutral-800 px-2 py-1">
+              1f<span class="material-symbols-outlined text-[18px] leading-none">chevron_right</span>
+            </button>
+            <button id="grab-btn" class="ml-auto flex items-center gap-1 rounded bg-red-600 px-4 py-2 font-bold text-white disabled:opacity-40">
+              <span id="grab-icon" class="material-symbols-outlined text-[20px] leading-none">photo_camera</span>
+              <span id="grab-label">Grab frame</span>
+            </button>
+            <button id="cancel-edit" class="hidden rounded bg-neutral-800 px-3 py-2 text-sm">
+              <span class="material-symbols-outlined text-[18px] leading-none align-middle">close</span> Cancel
+            </button>
           </div>
         </div>
 
@@ -60,12 +74,17 @@ import { BUILD_ID } from '../utils/build-id.js';
           <h2 class="text-sm uppercase tracking-wide text-neutral-500">
             Slides (<span id="slide-count">0</span>/35)
           </h2>
-          <button id="post-btn" class="rounded bg-red-600 px-4 py-2 font-bold text-white disabled:opacity-40" disabled>
-            Post to TikTok ▲
+          <button id="post-btn" class="flex items-center gap-1 rounded bg-red-600 px-4 py-2 font-bold text-white disabled:opacity-40" disabled>
+            <span class="material-symbols-outlined text-[20px] leading-none">upload</span> Post to TikTok
           </button>
         </div>
         <p id="post-status" class="text-xs text-neutral-400"></p>
         <ol id="slide-list" class="flex flex-col gap-2"></ol>
+        <button id="add-scene"
+                class="flex items-center justify-center gap-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 disabled:opacity-40"
+                disabled title="Load a video first">
+          <span class="material-symbols-outlined text-[20px] leading-none">add</span> Add AI scene
+        </button>
       </section>
     </main>
   </div>
