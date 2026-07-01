@@ -20,6 +20,41 @@ export function loadVideoFile(file, videoEl) {
   });
 }
 
+// Seek `video` to `seconds` and resolve once the frame has settled ('seeked'),
+// racing a timeout so a stalled decode can never hang the caller, plus a
+// one-shot 'error' listener that rejects. Clamps to [0, duration].
+export function seekAndSettle(video, seconds, timeoutMs = 4000) {
+  return new Promise((resolve, reject) => {
+    const target = Math.min(Math.max(0, seconds), video.duration || seconds);
+    if (Math.abs(video.currentTime - target) < 0.05 && !video.seeking) return resolve();
+    let timer;
+    const cleanup = () => {
+      clearTimeout(timer);
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('error', onError);
+    };
+    const onSeeked = () => { cleanup(); resolve(); };
+    const onError = () => { cleanup(); reject(new Error('Video decode error while seeking.')); };
+    timer = setTimeout(() => { cleanup(); resolve(); }, timeoutMs); // give up waiting; use current frame
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('error', onError);
+    video.currentTime = target;
+  });
+}
+
+// Wait for an in-flight seek to settle before grabbing, so a manual grab
+// captures the displayed frame, not the pre-seek one. Resolves immediately if
+// not seeking; bounded by a timeout so a stuck seek never hangs the UI.
+export function awaitSeekSettled(video, timeoutMs = 1500) {
+  if (!video.seeking) return Promise.resolve();
+  return new Promise((resolve) => {
+    let timer;
+    const done = () => { clearTimeout(timer); video.removeEventListener('seeked', done); resolve(); };
+    timer = setTimeout(done, timeoutMs);
+    video.addEventListener('seeked', done);
+  });
+}
+
 // Draw the current video frame to an offscreen canvas and return an ImageBitmap
 // at the source's native resolution.
 export async function grabFrame(videoEl) {

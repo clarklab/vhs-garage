@@ -18,14 +18,28 @@ export default async (req) => {
     if (!buf) return new Response('Not found', { status: 404 });
     return new Response(buf, {
       status: 200,
-      headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=3600' },
+      headers: {
+        'Content-Type': 'image/jpeg',
+        'X-Content-Type-Options': 'nosniff', // never let a stored non-JPEG be sniffed as active content
+        'Cache-Control': 'public, max-age=3600',
+      },
     });
   }
 
   if (req.method === 'POST') {
+    // Same-origin gate: the only legitimate caller is the site's own browser
+    // fetch, so this isn't a fully open upload host. Cross-origin/omitted → 403.
+    const sameHost = (u) => { try { return new URL(u).host === url.host; } catch { return false; } };
+    if (!sameHost(req.headers.get('origin')) && !sameHost(req.headers.get('referer'))) {
+      return json({ error: 'Forbidden' }, 403);
+    }
+
     const buf = await req.arrayBuffer();
     if (!buf || buf.byteLength === 0) return json({ error: 'Empty body' }, 400);
     if (buf.byteLength > MAX_BYTES) return json({ error: 'Image too large' }, 413);
+    // Enforce JPEG by magic bytes (SOI = FF D8) — don't trust the client header.
+    const head = new Uint8Array(buf.slice(0, 2));
+    if (head[0] !== 0xff || head[1] !== 0xd8) return json({ error: 'Only JPEG images are accepted' }, 415);
 
     await sweepOldBlobs(store);
 

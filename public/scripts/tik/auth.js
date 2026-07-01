@@ -54,6 +54,13 @@ export async function handleRedirect() {
   const params = new URLSearchParams(location.search);
   const code = params.get('code');
   const state = params.get('state');
+  const authError = params.get('error');
+  if (authError) {
+    // TikTok bounced back with an error (e.g. the user cancelled). Clean the URL
+    // and surface it so the caller can show a message instead of failing silently.
+    history.replaceState({}, '', location.origin + location.pathname);
+    throw new Error(params.get('error_description') || `TikTok sign-in was cancelled (${authError}).`);
+  }
   if (!code) return false;
   const expectedState = sessionStorage.getItem(SS_STATE);
   // Clean the URL regardless of outcome.

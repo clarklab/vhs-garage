@@ -24,5 +24,16 @@ export function initScrubber({ video, range, timecode, stepBack, stepFwd, fps = 
   stepBack.addEventListener('click', () => { video.currentTime = frameStep(video.currentTime, -1, fps); });
   stepFwd.addEventListener('click', () => { video.currentTime = frameStep(video.currentTime, 1, fps); });
 
+  // Keyboard nudge: ←/→ step one frame, Space nudges forward. Ignored while a
+  // text field is focused so caption typing isn't hijacked.
+  window.addEventListener('keydown', (e) => {
+    const el = document.activeElement;
+    const tag = (el?.tagName || '').toLowerCase();
+    if (tag === 'textarea' || tag === 'input' || el?.isContentEditable) return;
+    if (!video.duration) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); video.currentTime = frameStep(video.currentTime, -1, fps); }
+    else if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); video.currentTime = frameStep(video.currentTime, 1, fps); }
+  });
+
   return { sync };
 }

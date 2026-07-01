@@ -1,4 +1,4 @@
-import { loadVideoFile, grabFrame } from './capture.js';
+import { loadVideoFile, grabFrame, awaitSeekSettled } from './capture.js';
 import { initScrubber } from './scrubber.js';
 import { addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES } from './slides.js';
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken } from './auth.js';
@@ -81,6 +81,7 @@ function currentTitleLine() {
 els.grab.addEventListener('click', async () => {
   if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
   try {
+    await awaitSeekSettled(els.video); // don't grab a stale frame mid-seek
     const bitmap = await grabFrame(els.video);
     slides = addSlide(slides, { id: String(nextId++), bitmap, caption: '' });
     render();
