@@ -3,25 +3,38 @@ import { initScrubber } from './scrubber.js';
 import { addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame } from './slides.js';
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken } from './auth.js';
 import { publishSlideshow } from './publish.js';
-import { runAutopilot } from './autopilot.js';
+import { fetchScenes } from './autopilot.js';
+import { parseMovieName } from './filename.js';
 import { composeToCanvas } from './compose.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
   file: $('file-input'), video: $('video'),
   range: $('scrub-range'), timecode: $('timecode'),
-  stepBack: $('step-back'), stepFwd: $('step-fwd'), grab: $('grab-btn'),
+  stepBack: $('step-back'), stepFwd: $('step-fwd'),
+  grab: $('grab-btn'), grabIcon: $('grab-icon'), grabLabel: $('grab-label'),
   titleToggle: $('title-toggle'), movieTitle: $('movie-title'),
   count: $('slide-count'), list: $('slide-list'), post: $('post-btn'), status: $('post-status'),
   authBtn: $('auth-btn'), authStatus: $('auth-status'),
-  autopilot: $('autopilot-btn'), cancelEdit: $('cancel-edit'),
+  autopilot: $('autopilot-btn'), cancelEdit: $('cancel-edit'), addScene: $('add-scene'),
 };
 
 let slides = [];               // [{ id, bitmap, caption, timecode }]
 let nextId = 1;
 let dragFrom = null;
 let editingId = null;          // slide id whose frame is being re-grabbed, or null
+let videoReady = false;        // metadata loaded → grabbing is possible
+let aiBusy = false;            // an AI action (autopilot/add/redo) is in flight
+let movie = { title: '', year: null, query: '' }; // parsed from the filename
 const PREVIEW_SCALE = 0.25;    // quarter-res preview thumbnails; uploads stay full-res
+
+// A Material Symbols icon element (for JS-created buttons).
+function iconSpan(name, sizeClass = 'text-[18px]') {
+  const s = document.createElement('span');
+  s.className = `material-symbols-outlined ${sizeClass} leading-none`;
+  s.textContent = name;
+  return s;
+}
 
 initScrubber({
   video: els.video, range: els.range, timecode: els.timecode,
@@ -29,8 +42,10 @@ initScrubber({
 });
 
 els.video.addEventListener('loadedmetadata', () => {
+  videoReady = true;
   els.autopilot.disabled = false;
   els.autopilot.title = '';
+  render(); // updates the Add-scene button state
 });
 
 // TikTok pulls slide images over the public internet, so posting only works from
@@ -42,17 +57,23 @@ function isPublicOrigin() {
   return true;
 }
 
+// Seek to a timecode and grab the settled frame.
+async function grabAt(timecode) {
+  await seekAndSettle(els.video, timecode);
+  return grabFrame(els.video);
+}
+
 // ---- Auth ----
 function refreshAuthUI() {
   const signed = isSignedIn();
-  els.authStatus.textContent = signed ? 'signed in ✓' : 'not signed in';
+  els.authStatus.textContent = signed ? 'signed in' : 'not signed in';
   els.authBtn.textContent = signed ? 'Sign out' : 'Sign in to TikTok';
   updatePostButton();
 }
 els.authBtn.addEventListener('click', async () => {
   try {
     if (isSignedIn()) { await signOut(); } else { await startAuth(); return; }
-  } catch (e) { alert(e.message); }
+  } catch (e) { console.error('[tik] auth failed:', e); alert(e.message); }
   refreshAuthUI();
 });
 
@@ -60,9 +81,10 @@ els.authBtn.addEventListener('click', async () => {
 els.file.addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
+  movie = parseMovieName(file.name);
   try {
     await loadVideoFile(file, els.video);
-    els.status.textContent = 'Loaded. Scrub and grab frames.';
+    els.status.textContent = `Loaded ${movie.query}. Scrub and grab frames, or run Autopilot.`;
   } catch (err) {
     console.error('[tik] failed to load video file:', err);
     els.status.textContent = err.message;
@@ -85,10 +107,9 @@ els.grab.addEventListener('click', async () => {
     await awaitSeekSettled(els.video); // don't grab a stale frame mid-seek
     const bitmap = await grabFrame(els.video);
     if (editingId) {
-      // Re-grab: replace the frame of the slide being edited.
       slides = updateSlideFrame(slides, editingId, bitmap, els.video.currentTime);
       exitEdit();
-      els.status.textContent = 'Frame updated ✓';
+      els.status.textContent = 'Frame updated.';
     } else {
       if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
       slides = addSlide(slides, { id: String(nextId++), bitmap, caption: '', timecode: els.video.currentTime });
@@ -102,7 +123,8 @@ async function enterEdit(id) {
   const slide = slides.find((s) => s.id === id);
   if (!slide) return;
   editingId = id;
-  els.grab.textContent = '💾 Save frame';
+  els.grabIcon.textContent = 'save';
+  els.grabLabel.textContent = 'Save frame';
   els.cancelEdit.classList.remove('hidden');
   render(); // apply the highlight
   els.status.textContent = 'Editing this slide — scrub to a new frame, then Save.';
@@ -110,31 +132,64 @@ async function enterEdit(id) {
 }
 function resetEditState() {
   editingId = null;
-  els.grab.textContent = '＋ Grab frame';
+  els.grabIcon.textContent = 'photo_camera';
+  els.grabLabel.textContent = 'Grab frame';
   els.cancelEdit.classList.add('hidden');
 }
 function exitEdit() { resetEditState(); render(); }
 els.cancelEdit.addEventListener('click', () => { exitEdit(); els.status.textContent = 'Edit cancelled.'; });
 
-// ---- Autopilot ----
+// ---- Autopilot: preload a full slideshow ----
 els.autopilot.addEventListener('click', async () => {
-  const file = els.file.files?.[0];
-  if (!file || !els.video.duration) { els.status.textContent = 'Load a video first.'; return; }
+  if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
+  if (aiBusy) return;
+  aiBusy = true;
   els.autopilot.disabled = true;
   try {
-    const made = await runAutopilot(els.video, file.name, {
-      makeId: () => String(nextId++),
-      onProgress: (m) => { els.status.textContent = '🤖 ' + m; },
-    });
+    els.status.textContent = `Researching ${movie.query || 'the film'}…`;
+    const scenes = await fetchScenes({ title: movie.title, year: movie.year, durationSeconds: els.video.duration, count: 5 });
     let added = 0;
-    for (const sl of made) { if (canAddSlide(slides)) { slides = addSlide(slides, sl); added++; } }
+    for (let i = 0; i < scenes.length; i++) {
+      if (!canAddSlide(slides)) break;
+      els.status.textContent = `Grabbing frame ${i + 1}/${scenes.length}…`;
+      const bitmap = await grabAt(scenes[i].timecode);
+      slides = addSlide(slides, { id: String(nextId++), bitmap, caption: scenes[i].caption, timecode: scenes[i].timecode });
+      added++;
+    }
     render();
-    els.status.textContent = `🤖 Added ${added} AI-suggested slide${added === 1 ? '' : 's'} — verify the trivia, tweak captions & frames, then post.`;
+    els.status.textContent = `Added ${added} AI scene${added === 1 ? '' : 's'} — verify the trivia, tweak captions & frames, then post.`;
   } catch (err) {
     console.error('[tik] autopilot failed:', err);
-    els.status.textContent = '⚠️ ' + err.message;
+    els.status.textContent = err.message;
   } finally {
+    aiBusy = false;
     els.autopilot.disabled = false;
+  }
+});
+
+// ---- Add one more AI scene (with context so it doesn't repeat) ----
+els.addScene.addEventListener('click', async () => {
+  if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
+  if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
+  if (aiBusy) return;
+  aiBusy = true;
+  els.addScene.disabled = true;
+  try {
+    els.status.textContent = 'Finding another scene…';
+    const [scene] = await fetchScenes({
+      title: movie.title, year: movie.year, durationSeconds: els.video.duration,
+      count: 1, exclude: slides.map((s) => s.caption),
+    });
+    const bitmap = await grabAt(scene.timecode);
+    slides = addSlide(slides, { id: String(nextId++), bitmap, caption: scene.caption, timecode: scene.timecode });
+    render();
+    els.status.textContent = 'Added a new AI scene — tweak it or add more.';
+  } catch (err) {
+    console.error('[tik] add scene failed:', err);
+    els.status.textContent = err.message;
+  } finally {
+    aiBusy = false;
+    render(); // restores the Add-scene disabled state for the current cap
   }
 });
 
@@ -142,6 +197,7 @@ els.autopilot.addEventListener('click', async () => {
 function render() {
   els.count.textContent = String(slides.length);
   els.grab.disabled = !editingId && !canAddSlide(slides); // Save stays enabled at the cap
+  els.addScene.disabled = !videoReady || !canAddSlide(slides);
   els.list.innerHTML = '';
   slides.forEach((slide, index) => els.list.appendChild(renderSlide(slide, index)));
   updatePostButton();
@@ -183,16 +239,51 @@ function renderSlide(slide, index) {
     composeToCanvas(thumb, slide.bitmap, ta.value, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE }); // live preview
   });
 
+  // Redo this trivia with AI (twinkle), keeping the frame.
+  const redo = document.createElement('button');
+  redo.className = 'rounded bg-neutral-800 px-2 py-1 text-fuchsia-300 disabled:opacity-40';
+  redo.title = 'Redo this trivia with AI';
+  redo.append(iconSpan('auto_awesome'));
+  redo.addEventListener('click', async () => {
+    if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
+    if (aiBusy) return;
+    aiBusy = true;
+    redo.disabled = true;
+    try {
+      els.status.textContent = 'Rewriting this trivia…';
+      const exclude = slides.filter((s) => s.id !== slide.id).map((s) => s.caption);
+      const [scene] = await fetchScenes({
+        title: movie.title, year: movie.year, durationSeconds: els.video.duration,
+        count: 1, exclude, focusTimecode: slide.timecode,
+      });
+      slides = editCaption(slides, slide.id, scene.caption);
+      ta.value = scene.caption;
+      composeToCanvas(thumb, slide.bitmap, scene.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE });
+      els.status.textContent = 'Trivia rewritten.';
+    } catch (err) {
+      console.error('[tik] redo trivia failed:', err);
+      els.status.textContent = err.message;
+    } finally {
+      aiBusy = false;
+      redo.disabled = false;
+    }
+  });
+
   const del = document.createElement('button');
-  del.className = 'flex-none self-start rounded bg-neutral-800 px-2 py-1 text-xs';
-  del.textContent = '✕';
+  del.className = 'rounded bg-neutral-800 px-2 py-1 text-neutral-400';
+  del.title = 'Delete slide';
+  del.append(iconSpan('delete'));
   del.addEventListener('click', () => {
     slides = removeSlide(slides, slide.id);
     if (slide.id === editingId) resetEditState(); // don't leave edit mode dangling
     render();
   });
 
-  li.append(thumb, ta, del);
+  const controls = document.createElement('div');
+  controls.className = 'flex flex-none flex-col gap-1';
+  controls.append(redo, del);
+
+  li.append(thumb, ta, controls);
 
   // Drag to reorder.
   li.addEventListener('dragstart', () => { dragFrom = index; });
@@ -225,16 +316,16 @@ els.post.addEventListener('click', async () => {
       onProgress: (m) => { els.status.textContent = m; },
     });
     if (result.status === 'FAILED') {
-      els.status.textContent = '⚠️ TikTok reported a failure — check the app.';
+      els.status.textContent = 'TikTok reported a failure — check the app.';
     } else if (result.status === 'SEND_TO_USER_INBOX' || result.status === 'PUBLISH_COMPLETE') {
-      els.status.textContent = '✅ Draft sent to your TikTok inbox. Open the app to publish.';
+      els.status.textContent = 'Draft sent to your TikTok inbox. Open the app to publish.';
     } else {
-      els.status.textContent = '⏳ Uploaded — still processing. Check your TikTok inbox shortly.';
+      els.status.textContent = 'Uploaded — still processing. Check your TikTok inbox shortly.';
     }
   } catch (err) {
     console.error('[tik] post failed:', err);
     if (err.reauth) { clearLocalToken(); refreshAuthUI(); } // token dead → back to signed-out
-    els.status.textContent = '⚠️ ' + err.message;
+    els.status.textContent = err.message;
   } finally {
     updatePostButton();
   }
@@ -243,10 +334,10 @@ els.post.addEventListener('click', async () => {
 // ---- Boot ----
 (async () => {
   try {
-    if (await handleRedirect()) els.status.textContent = 'Signed in to TikTok ✓';
+    if (await handleRedirect()) els.status.textContent = 'Signed in to TikTok.';
   } catch (e) { console.error('[tik] sign-in failed:', e); els.status.textContent = e.message; }
   if (!isPublicOrigin()) {
-    els.status.textContent = 'ℹ️ Grab & caption work here; posting to TikTok needs the deployed site (TikTok can’t fetch images from a local address).';
+    els.status.textContent = 'Grab & caption work here; posting to TikTok needs the deployed site (TikTok can’t fetch images from a local address).';
   }
   refreshAuthUI();
   render();
