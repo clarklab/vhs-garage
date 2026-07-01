@@ -3,6 +3,7 @@ import { initScrubber } from './scrubber.js';
 import { addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES } from './slides.js';
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken } from './auth.js';
 import { publishSlideshow } from './publish.js';
+import { runAutopilot } from './autopilot.js';
 import { composeToCanvas } from './compose.js';
 
 const $ = (id) => document.getElementById(id);
@@ -13,6 +14,7 @@ const els = {
   titleToggle: $('title-toggle'), movieTitle: $('movie-title'),
   count: $('slide-count'), list: $('slide-list'), post: $('post-btn'), status: $('post-status'),
   authBtn: $('auth-btn'), authStatus: $('auth-status'),
+  autopilot: $('autopilot-btn'),
 };
 
 let slides = [];               // [{ id, bitmap, caption }]
@@ -23,6 +25,11 @@ const PREVIEW_SCALE = 0.25;    // quarter-res preview thumbnails; uploads stay f
 initScrubber({
   video: els.video, range: els.range, timecode: els.timecode,
   stepBack: els.stepBack, stepFwd: els.stepFwd,
+});
+
+els.video.addEventListener('loadedmetadata', () => {
+  els.autopilot.disabled = false;
+  els.autopilot.title = '';
 });
 
 // TikTok pulls slide images over the public internet, so posting only works from
@@ -78,6 +85,27 @@ els.grab.addEventListener('click', async () => {
     slides = addSlide(slides, { id: String(nextId++), bitmap, caption: '' });
     render();
   } catch (err) { els.status.textContent = err.message; }
+});
+
+// ---- Autopilot ----
+els.autopilot.addEventListener('click', async () => {
+  const file = els.file.files?.[0];
+  if (!file || !els.video.duration) { els.status.textContent = 'Load a video first.'; return; }
+  els.autopilot.disabled = true;
+  try {
+    const made = await runAutopilot(els.video, file.name, {
+      makeId: () => String(nextId++),
+      onProgress: (m) => { els.status.textContent = '🤖 ' + m; },
+    });
+    let added = 0;
+    for (const sl of made) { if (canAddSlide(slides)) { slides = addSlide(slides, sl); added++; } }
+    render();
+    els.status.textContent = `🤖 Added ${added} AI-suggested slide${added === 1 ? '' : 's'} — verify the trivia, tweak captions & frames, then post.`;
+  } catch (err) {
+    els.status.textContent = '⚠️ ' + err.message;
+  } finally {
+    els.autopilot.disabled = false;
+  }
 });
 
 // ---- Slide list rendering ----
