@@ -5,6 +5,16 @@
 [build.environment]
   NODE_VERSION = "22"
 
+# Serve /tik slide images under the /tik prefix so ONE TikTok URL-property
+# verification of https://<domain>/tik covers them. The images physically live
+# in the tik-media function; status = 200 is an internal REWRITE (proxy), not a
+# 3xx redirect — TikTok's PULL_FROM_URL forbids redirects, and a rewrite returns
+# the image bytes directly at /tik/media/<id>.
+[[redirects]]
+  from = "/tik/media/:id"
+  to = "/.netlify/functions/tik-media?id=:id"
+  status = 200
+
 # During active development we want every page refresh to pull the latest
 # deploy — testers (some non-technical) shouldn't have to figure out hard
 # refresh / DevTools to see new code. Disable browser caching for the

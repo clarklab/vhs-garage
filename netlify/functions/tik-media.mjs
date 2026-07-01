@@ -45,8 +45,10 @@ export default async (req) => {
 
     const id = crypto.randomUUID();
     await store.set(id, buf, { metadata: { createdAt: Date.now() } });
-    // Build an absolute, non-redirecting URL on this deployed origin.
-    const publicUrl = `${url.origin}/.netlify/functions/tik-media?id=${id}`;
+    // Serve under the /tik prefix (netlify.toml rewrites /tik/media/:id → this
+    // function) so a single TikTok URL-property verification of <domain>/tik
+    // covers the image URLs. Absolute, non-redirecting, on this deployed origin.
+    const publicUrl = `${url.origin}/tik/media/${id}`;
     return json({ url: publicUrl, id });
   }
 
