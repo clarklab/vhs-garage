@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_SLIDES, addSlide, removeSlide, reorderSlide, editCaption, canAddSlide,
+  MAX_SLIDES, addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, updateSlideFrame,
 } from '../../public/scripts/tik/slides.js';
 
 const s = (id, caption = '') => ({ id, caption });
@@ -44,4 +44,17 @@ test('editCaption updates only the matching slide, immutably', () => {
   assert.equal(b[0].caption, 'new');
   assert.equal(b[1].caption, 'keep');
   assert.equal(a[0].caption, 'old'); // original untouched
+});
+
+test('updateSlideFrame replaces bitmap+timecode for the matching slide only, immutably', () => {
+  const a = [
+    { id: '1', caption: 'c1', bitmap: 'b1', timecode: 1 },
+    { id: '2', caption: 'c2', bitmap: 'b2', timecode: 2 },
+  ];
+  const b = updateSlideFrame(a, '1', 'newbmp', 9);
+  assert.equal(b[0].bitmap, 'newbmp');
+  assert.equal(b[0].timecode, 9);
+  assert.equal(b[0].caption, 'c1');  // caption preserved
+  assert.equal(b[1].bitmap, 'b2');   // other slide untouched
+  assert.equal(a[0].bitmap, 'b1');   // original untouched
 });
