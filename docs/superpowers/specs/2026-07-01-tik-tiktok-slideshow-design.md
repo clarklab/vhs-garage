@@ -9,7 +9,7 @@ We want a dead-simple way to turn a local movie file into a TikTok
 photo slideshow of trivia cards: scrub the video, grab a few frames,
 type a trivia caption for each, and push the whole thing to TikTok as
 a proper slideshow post. Today there's nothing like this — `capture.astro`
-is a heavy VHS-to-YouTube pipeline (ffmpeg.wasm, live capture). `/tik`
+is a heavy VHS capture/upload pipeline (ffmpeg.wasm, live capture). `/tik`
 is deliberately separate: **standalone, no new npm dependencies**, no
 coupling to the capture station.
 
@@ -36,9 +36,8 @@ site's own domain.
   finished post.
 - Make generating movie-trivia posts trivially easy.
 - No new npm dependencies. All image work happens client-side on `<canvas>`.
-- Reuse the existing OAuth-via-Netlify-function pattern (mirrors
-  `youtube-auth.mjs` / `youtube-publish.mjs`) and the existing AI-Gateway
-  provider-routing pattern (mirrors `youtube-publish.mjs`).
+- Reuse the site's existing OAuth-via-Netlify-function pattern and its
+  AI-Gateway provider-routing pattern.
 
 ## Non-goals (YAGNI)
 
@@ -156,7 +155,6 @@ For each slide, render a **1080×1920** canvas:
 
 ### 5. Auth — `tik-auth.mjs`
 
-Mirrors `youtube-auth.mjs`:
 Uses TikTok's **Login Kit for Web** flow (no PKCE — `/tik` is a server-backed
 confidential client that holds the secret):
 - `GET` → returns public `TIKTOK_CLIENT_KEY` so the browser builds the
@@ -167,7 +165,7 @@ confidential client that holds the secret):
   `https://open.tiktokapis.com/v2/oauth/token/` for access + refresh tokens
   using `TIKTOK_CLIENT_KEY` + `TIKTOK_CLIENT_SECRET`.
 - `POST action=refresh` / `action=revoke` → refresh an access token / revoke.
-- Refresh token persisted in `localStorage` (same trust model as YouTube).
+- Refresh token persisted in `localStorage` (client-trusted, no server session).
 
 > Not PKCE: TikTok documents `code_challenge` only for its Desktop/Mobile
 > flow, and requires a *hex*-encoded challenge there (not base64url). A
@@ -203,7 +201,7 @@ One button that turns a just-loaded video into a prefilled 5-slide draft.
   extension and release-scene tags (`1080p`, `x264`, `BluRay`, `YIFY`, …) and
   pulls out a 4-digit year → `{ title, year, query }`. e.g.
   `Jaws.1975.1080p.BluRay.x264-YIFY.mkv` → `{ title: "Jaws", year: "1975" }`.
-- **Server (`tik-autopilot.mjs`):** mirrors `youtube-publish.mjs`'s AI-Gateway
+- **Server (`tik-autopilot.mjs`):** reuses the site's AI-Gateway
   plumbing — provider routing by model id, `callGemini`/`callOpenAI`/
   `callAnthropic`, lenient `parseModelJson`, an 8s abort (under Netlify's 10s
   cap), and a graceful fallback. Body `{ title, year, durationSeconds }` →
