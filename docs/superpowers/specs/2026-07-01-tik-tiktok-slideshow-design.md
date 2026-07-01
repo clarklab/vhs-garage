@@ -58,9 +58,12 @@ Verified against `developers.tiktok.com` (2026-07-01):
 - **Status endpoint:** `POST https://open.tiktokapis.com/v2/post/publish/status/fetch/`
   with `publish_id`, polled until the draft lands.
 - **Scope:** `video.upload` (covers photo drafts) plus `user.info.basic`.
-- **Unaudited app:** all posts are forced to **private** and only work for
-  TikTok accounts registered as **testers** in the app. This is exactly
-  the draft-to-inbox MVP.
+- **Unaudited app:** all posts are forced to **private** viewing mode
+  (per the content-posting reference; error
+  `unaudited_client_can_only_post_to_private_accounts`). Separately, an app
+  still in **sandbox** / not yet approved for the scope can only be used by
+  TikTok accounts added as **target users / testers** in the developer
+  portal. Both align with the draft-to-inbox MVP.
 - **PULL_FROM_URL:** image URLs must be `https`, must not redirect, must
   stay reachable for up to 1 hour, and must sit under a domain/URL-prefix
   verified under the app's **URL properties**. This is why `/tik` is a
@@ -144,14 +147,22 @@ For each slide, render a **1080×1920** canvas:
 ### 5. Auth — `tik-auth.mjs`
 
 Mirrors `youtube-auth.mjs`:
+Uses TikTok's **Login Kit for Web** flow (no PKCE — `/tik` is a server-backed
+confidential client that holds the secret):
 - `GET` → returns public `TIKTOK_CLIENT_KEY` so the browser builds the
-  authorize URL (`https://www.tiktok.com/v2/auth/authorize/`, PKCE,
+  authorize URL (`https://www.tiktok.com/v2/auth/authorize/`, params
+  `client_key`/`scope`/`response_type=code`/`redirect_uri`/`state`,
   scopes `user.info.basic,video.upload`).
-- `POST action=exchange` → swaps the PKCE code at
+- `POST action=exchange` → swaps the returned `code` at
   `https://open.tiktokapis.com/v2/oauth/token/` for access + refresh tokens
   using `TIKTOK_CLIENT_KEY` + `TIKTOK_CLIENT_SECRET`.
-- `POST action=revoke` → revokes a token.
+- `POST action=refresh` / `action=revoke` → refresh an access token / revoke.
 - Refresh token persisted in `localStorage` (same trust model as YouTube).
+
+> Not PKCE: TikTok documents `code_challenge` only for its Desktop/Mobile
+> flow, and requires a *hex*-encoded challenge there (not base64url). A
+> server-backed web app uses the Web flow and authenticates the exchange
+> with the client secret.
 
 ### 6. Media hosting — `tik-media.mjs`
 
