@@ -8,7 +8,9 @@ const GEMINI_BASE_URL = process.env.GOOGLE_GEMINI_BASE_URL;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
+// Root URL (no /v1) — Netlify's AI Gateway injects it this way, matching the
+// Anthropic SDK convention where /v1/messages is appended. See callAnthropic.
+const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
 
 // Default to Claude for trivia quality. Override with TIK_AUTOPILOT_MODEL
 // (must be in the allowlist and provisioned in the AI Gateway).
@@ -101,7 +103,8 @@ async function callOpenAI(prompt, model, signal) {
 
 async function callAnthropic(prompt, model, signal) {
   if (!ANTHROPIC_API_KEY) throw new Error('Anthropic not configured');
-  const res = await fetch(`${ANTHROPIC_BASE_URL}/messages`, {
+  // Netlify AI Gateway + Anthropic REST: {base}/v1/messages (base has no /v1).
+  const res = await fetch(`${ANTHROPIC_BASE_URL}/v1/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY,
