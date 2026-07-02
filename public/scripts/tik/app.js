@@ -11,7 +11,6 @@ const $ = (id) => document.getElementById(id);
 const els = {
   file: $('file-input'), video: $('video'),
   range: $('scrub-range'), timecode: $('timecode'),
-  stepBack: $('step-back'), stepFwd: $('step-fwd'),
   grab: $('grab-btn'), grabIcon: $('grab-icon'), grabLabel: $('grab-label'),
   titleToggle: $('title-toggle'), movieTitle: $('movie-title'),
   count: $('slide-count'), list: $('slide-list'), post: $('post-btn'), status: $('post-status'),
@@ -38,7 +37,7 @@ function iconSpan(name, sizeClass = 'text-[18px]') {
 
 initScrubber({
   video: els.video, range: els.range, timecode: els.timecode,
-  stepBack: els.stepBack, stepFwd: els.stepFwd,
+  steps: [...document.querySelectorAll('#scrubber [data-frames], #scrubber [data-seconds]')],
 });
 
 els.video.addEventListener('loadedmetadata', () => {
