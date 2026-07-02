@@ -44,12 +44,14 @@ import { BUILD_ID } from '../utils/build-id.js';
                  class="h-7 w-full cursor-pointer accent-red-600" />
           <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
             <span id="timecode" class="tabular-nums text-neutral-300">00:00.000</span>
-            <button id="step-back" class="flex items-center rounded bg-neutral-800 px-2 py-1">
-              <span class="material-symbols-outlined text-[18px] leading-none">chevron_left</span>1f
-            </button>
-            <button id="step-fwd" class="flex items-center rounded bg-neutral-800 px-2 py-1">
-              1f<span class="material-symbols-outlined text-[18px] leading-none">chevron_right</span>
-            </button>
+            <button data-seconds="-5" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">−5s</button>
+            <button data-seconds="-1" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">−1s</button>
+            <button data-frames="-5" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">−5fr</button>
+            <button data-frames="-1" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">−1fr</button>
+            <button data-frames="1" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">+1fr</button>
+            <button data-frames="5" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">+5fr</button>
+            <button data-seconds="1" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">+1s</button>
+            <button data-seconds="5" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">+5s</button>
             <button id="grab-btn" class="ml-auto flex items-center gap-1 rounded bg-red-600 px-4 py-2 font-bold text-white disabled:opacity-40">
               <span id="grab-icon" class="material-symbols-outlined text-[20px] leading-none">photo_camera</span>
               <span id="grab-label">Grab frame</span>
