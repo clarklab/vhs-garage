@@ -5,6 +5,7 @@ import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken } from 
 import { publishSlideshow } from './publish.js';
 import { fetchScenes } from './autopilot.js';
 import { parseMovieName } from './filename.js';
+import { formatTimecode } from './timecode.js';
 import { composeToCanvas, composeSlide } from './compose.js';
 
 const $ = (id) => document.getElementById(id);
@@ -308,24 +309,40 @@ function renderSlide(slide, index) {
 
   row.append(thumb, mid, controls);
 
-  // --- AI panel (hidden until the twinkle is clicked) ---
+  // --- AI panel (hidden until the twinkle is clicked). Runs on Opus 4.8 —
+  // the strongest model — since it's a single-suggestion request. ---
   const panel = document.createElement('div');
-  panel.className = 'hidden gap-2 flex-col sm:flex-row sm:items-center';
+  panel.className = 'hidden gap-1.5 flex-col';
+
+  // Say exactly what each action sends, so nothing feels like a mystery box.
+  const hint = document.createElement('p');
+  hint.className = 'text-[11px] leading-snug text-neutral-500';
+  const tcLabel = Number.isFinite(slide.timecode) ? formatTimecode(slide.timecode) : 'this moment';
+  hint.innerHTML =
+    `<b class="text-neutral-400">Rewrite fact</b> asks Claude Opus for different trivia about this same scene (at ${tcLabel}) — the frame stays. ` +
+    `<b class="text-neutral-400">New scene</b> asks for a different moment entirely — replaces the frame and the caption. ` +
+    `Both are told to avoid the trivia already on your slides, and anything you type below is sent along as guidance.`;
+
   const guide = document.createElement('input');
   guide.type = 'text';
-  guide.placeholder = 'Optional guidance — e.g. “something about the practical effects”';
+  guide.placeholder = 'Optional guidance sent with either button — e.g. “something about the practical effects”';
   guide.className = 'flex-1 rounded bg-neutral-950 border border-neutral-800 px-2 py-1.5 text-sm text-neutral-100';
   suspendDragWhileEditing(guide);
 
-  const mkPanelBtn = (icon, label) => {
+  const mkPanelBtn = (icon, label, tip) => {
     const b = document.createElement('button');
     b.className = 'flex items-center justify-center gap-1 rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-100 disabled:opacity-40';
+    b.title = tip;
     b.append(iconSpan(icon), document.createTextNode(label));
     return b;
   };
-  const rewriteBtn = mkPanelBtn('edit_note', 'Rewrite fact');
-  const newSceneBtn = mkPanelBtn('movie', 'New scene');
-  panel.append(guide, rewriteBtn, newSceneBtn);
+  const rewriteBtn = mkPanelBtn('edit_note', 'Rewrite fact', 'New trivia for this same scene — keeps the frame');
+  const newSceneBtn = mkPanelBtn('movie', 'New scene', 'Different moment — replaces frame + caption');
+
+  const panelRow = document.createElement('div');
+  panelRow.className = 'flex flex-col gap-2 sm:flex-row sm:items-center';
+  panelRow.append(guide, rewriteBtn, newSceneBtn);
+  panel.append(hint, panelRow);
 
   redo.addEventListener('click', () => {
     if (panel.classList.contains('hidden')) {
@@ -348,12 +365,12 @@ function renderSlide(slide, index) {
     try {
       const guidance = guide.value.trim();
       if (mode === 'rewrite') {
-        // New fact about the SAME moment; the frame stays.
-        els.status.textContent = 'Rewriting this trivia…';
+        // New fact about the SAME moment; the frame stays. Opus = best recall.
+        els.status.textContent = 'Asking Claude Opus for a better fact…';
         const exclude = slides.filter((s) => s.id !== slide.id).map((s) => s.caption);
         const [scene] = await fetchScenes({
           title: movie.title, year: movie.year, durationSeconds: els.video.duration,
-          count: 1, exclude, focusTimecode: slide.timecode, guidance,
+          count: 1, exclude, focusTimecode: slide.timecode, guidance, model: 'claude-opus-4-8',
         });
         slides = editCaption(slides, slide.id, scene.caption);
         ta.value = scene.caption;
@@ -361,11 +378,11 @@ function renderSlide(slide, index) {
         els.status.textContent = 'Trivia rewritten.';
       } else {
         // A different scene entirely: new caption AND a new frame at its timecode.
-        els.status.textContent = 'Finding a different scene…';
+        els.status.textContent = 'Asking Claude Opus for a different scene…';
         const exclude = slides.map((s) => s.caption); // exclude this one too
         const [scene] = await fetchScenes({
           title: movie.title, year: movie.year, durationSeconds: els.video.duration,
-          count: 1, exclude, guidance,
+          count: 1, exclude, guidance, model: 'claude-opus-4-8',
         });
         const bitmap = await grabAt(scene.timecode);
         slides = updateSlideFrame(slides, slide.id, bitmap, scene.timecode);
