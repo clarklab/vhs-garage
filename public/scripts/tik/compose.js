@@ -1,69 +1,104 @@
-// Compose one slide: frame (letterboxed, top) + solid caption band (below) on a
-// 1080x1920 canvas. composeToCanvas() draws onto a canvas you own (used by the
-// live preview thumbnails); composeSlide() renders offscreen → JPEG Blob (upload).
+// Compose one slide on a 1080x1920 canvas: the frame and the caption are
+// stacked and vertically CENTERED as a group (breathing room above/below).
+// Captions use the TikTok-native text treatment: bold black text on white
+// rounded "pills", one pill per wrapped line. composeToCanvas() draws onto a
+// canvas you own (live preview thumbs); composeSlide() renders → JPEG Blob.
 import { computeSlideLayout } from './layout.js';
 import { wrapLines, fitFontSize } from './caption.js';
 
-const BAND_BG = '#111111';
-const TEXT_COLOR = '#ffffff';
-const FONT = (size) => `600 ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
-const PAD = 56;         // padding inside the band
-const LINE_HEIGHT = 1.25;
-const MIN_FONT = 28;
-const MAX_FONT = 84;
+const CANVAS_W = 1080;
+const CANVAS_H = 1920;
+const FONT = (size) => `700 ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+const TEXT_MAX_W = CANVAS_W - 220; // generous side padding for the text block
+const GAP = 52;                    // gap between frame and text block
+const MIN_VPAD = 100;              // minimum space above/below the centered group
+const MAX_FONT = 54;               // TikTok-ish caption size — noticeably smaller than before
+const MIN_FONT = 26;
+const PILL_PAD_X = 26;             // pill padding around each line
+const PILL_PAD_Y = 12;
+const PILL_RADIUS = 18;
+const PILL_GAP = 8;                // vertical gap between line pills
 
-// Draw the composed slide onto `cvs`. Only touches the canvas you pass in.
-// Reused for the preview thumbnails (scale < 1, cheap raster) and the upload
-// path (scale 1 → full 1080x1920). Layout math stays in 1080x1920 space; we
-// scale the raster with ctx.scale so text stays crisp.
+// Rounded-rect path (fallback-safe: not all canvas impls have ctx.roundRect).
+function pillPath(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, h / 2, w / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+// Draw the composed slide onto `cvs`. Layout math stays in 1080x1920 space;
+// we scale the raster with ctx.scale so text stays crisp at preview sizes.
 // bitmap: ImageBitmap; caption: string; titleLine?: prefix; scale?: raster scale.
 export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1 } = {}) {
-  const L = computeSlideLayout(bitmap.width, bitmap.height);
-  cvs.width = Math.round(L.canvas.w * scale);
-  cvs.height = Math.round(L.canvas.h * scale);
+  cvs.width = Math.round(CANVAS_W * scale);
+  cvs.height = Math.round(CANVAS_H * scale);
   const ctx = cvs.getContext('2d');
-  ctx.scale(scale, scale); // draw in 1080x1920 coords regardless of raster size
+  ctx.scale(scale, scale);
 
-  // Background + frame.
   ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, L.canvas.w, L.canvas.h);
-  ctx.drawImage(bitmap, L.frame.x, L.frame.y, L.frame.w, L.frame.h);
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-  // Caption band.
-  ctx.fillStyle = BAND_BG;
-  ctx.fillRect(L.band.x, L.band.y, L.band.w, L.band.h);
+  // Frame size: full width, aspect preserved, capped so text always has room.
+  const F = computeSlideLayout(bitmap.width, bitmap.height).frame; // w/h only; we position ourselves
 
-  const fullText = titleLine ? `${titleLine}\n${caption}` : caption;
-  const maxTextW = L.band.w - PAD * 2;
-  const maxTextH = L.band.h - PAD * 2;
+  const fullText = `${titleLine ? `${titleLine}\n` : ''}${caption}`.trim();
 
-  // measureText width scales ~linearly with font-size for a fixed string, so we
-  // measure once at a reference size and scale. Converge the font size over 2
-  // passes, then RE-WRAP at the final size so the drawn lines ARE the measured
-  // lines (fixing stale-lines overflow), with a vertical-overflow guard.
+  // Text layout: wrap at a reference size and scale (measureText is ~linear in
+  // font size), fit, re-wrap at the final size, then shrink until the whole
+  // group (frame + gap + pills) fits inside the canvas minus MIN_VPAD.
   const REF = 100;
   ctx.font = FONT(REF);
   const measureAtRef = (s) => ctx.measureText(s).width;
-  const wrapAt = (size) => wrapLines(fullText, maxTextW / (size / REF), measureAtRef);
+  const wrapAt = (size) => wrapLines(fullText, TEXT_MAX_W / (size / REF), measureAtRef);
+  const lineBoxH = (size) => size + PILL_PAD_Y * 2;              // one pill's height
+  const blockH = (n, size) => (n ? n * lineBoxH(size) + (n - 1) * PILL_GAP : 0);
+  const maxGroupH = CANVAS_H - MIN_VPAD * 2;
 
-  let fontSize = 64;
-  for (let pass = 0; pass < 2; pass++) {
-    fontSize = fitFontSize(wrapAt(fontSize).length, maxTextH, { maxFont: MAX_FONT, minFont: MIN_FONT });
-  }
-  let lines = wrapAt(fontSize);
-  while (fontSize > MIN_FONT && lines.length * fontSize * LINE_HEIGHT > maxTextH) {
-    fontSize -= 2;
+  let fontSize = MAX_FONT;
+  let lines = [];
+  if (fullText) {
+    const maxTextH = maxGroupH - F.h - GAP;
+    fontSize = fitFontSize(wrapAt(fontSize).length, Math.max(maxTextH, lineBoxH(MIN_FONT)), {
+      maxFont: MAX_FONT, minFont: MIN_FONT, lineHeightFactor: 1.5,
+    });
     lines = wrapAt(fontSize);
+    while (fontSize > MIN_FONT && F.h + GAP + blockH(lines.length, fontSize) > maxGroupH) {
+      fontSize -= 2;
+      lines = wrapAt(fontSize);
+    }
   }
 
-  ctx.font = FONT(fontSize);
-  ctx.fillStyle = TEXT_COLOR;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  const lh = fontSize * LINE_HEIGHT;
-  let y = L.band.y + (L.band.h - lines.length * lh) / 2;
-  const cx = L.canvas.w / 2;
-  for (const line of lines) { ctx.fillText(line, cx, y); y += lh; }
+  // Vertically center the group: frame + gap + text block.
+  const textH = lines.length ? blockH(lines.length, fontSize) : 0;
+  const groupH = F.h + (textH ? GAP + textH : 0);
+  const frameX = Math.round((CANVAS_W - F.w) / 2);
+  const frameY = Math.round((CANVAS_H - groupH) / 2);
+  ctx.drawImage(bitmap, frameX, frameY, F.w, F.h);
+
+  // Caption pills: white rounded pill per line, bold black centered text.
+  if (lines.length) {
+    ctx.font = FONT(fontSize);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const cx = CANVAS_W / 2;
+    let y = frameY + F.h + GAP;
+    for (const line of lines) {
+      const textW = ctx.measureText(line).width;
+      const pillW = Math.min(textW + PILL_PAD_X * 2, CANVAS_W - 40);
+      const pillH = lineBoxH(fontSize);
+      ctx.fillStyle = '#ffffff';
+      pillPath(ctx, cx - pillW / 2, y, pillW, pillH, PILL_RADIUS);
+      ctx.fill();
+      ctx.fillStyle = '#000000';
+      ctx.fillText(line, cx, y + pillH / 2 + 1);
+      y += pillH + PILL_GAP;
+    }
+  }
 }
 
 // Render to an offscreen canvas and return a JPEG Blob for upload.
