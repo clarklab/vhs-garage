@@ -2,7 +2,8 @@
 // frame-grab happens in app.js, so bulk-autopilot, "add scene", and per-slide
 // "redo trivia" all share one code path. Pure network here.
 
-// opts: { title, year, durationSeconds, count?, exclude?, focusTimecode? }
+// opts: { title, year, durationSeconds, count?, exclude?, focusTimecode?,
+//         guidance?, includeTitleSlide? }
 // Returns [{ caption, timecode }]. Throws a clear message if none come back.
 export async function fetchScenes(opts = {}) {
   const res = await fetch('/.netlify/functions/tik-autopilot', {
@@ -15,6 +16,8 @@ export async function fetchScenes(opts = {}) {
       count: opts.count,
       exclude: opts.exclude || [],
       focusTimecode: opts.focusTimecode,
+      guidance: opts.guidance || '',
+      includeTitleSlide: !!opts.includeTitleSlide,
     }),
   });
   const data = await res.json().catch(() => ({}));

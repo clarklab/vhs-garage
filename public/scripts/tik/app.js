@@ -127,7 +127,9 @@ async function enterEdit(id) {
   els.grabLabel.textContent = 'Save frame';
   els.cancelEdit.classList.remove('hidden');
   render(); // apply the highlight
-  els.status.textContent = 'Editing this slide — scrub to a new frame, then Save.';
+  els.status.textContent = slide.grabHint
+    ? `Editing this slide — GRAB: ${slide.grabHint}`
+    : 'Editing this slide — scrub to a new frame, then Save.';
   if (Number.isFinite(slide.timecode)) await seekAndSettle(els.video, slide.timecode);
 }
 function resetEditState() {
@@ -147,17 +149,24 @@ els.autopilot.addEventListener('click', async () => {
   els.autopilot.disabled = true;
   try {
     els.status.textContent = `Researching ${movie.query || 'the film'}…`;
-    const scenes = await fetchScenes({ title: movie.title, year: movie.year, durationSeconds: els.video.duration, count: 5 });
+    // Title slide first (grabbed at the film's title-card shot), then 5 trivia scenes.
+    const scenes = await fetchScenes({
+      title: movie.title, year: movie.year, durationSeconds: els.video.duration,
+      count: 5, includeTitleSlide: true,
+    });
     let added = 0;
     for (let i = 0; i < scenes.length; i++) {
       if (!canAddSlide(slides)) break;
       els.status.textContent = `Grabbing frame ${i + 1}/${scenes.length}…`;
       const bitmap = await grabAt(scenes[i].timecode);
-      slides = addSlide(slides, { id: String(nextId++), bitmap, caption: scenes[i].caption, timecode: scenes[i].timecode });
+      slides = addSlide(slides, {
+        id: String(nextId++), bitmap,
+        caption: scenes[i].caption, timecode: scenes[i].timecode, grabHint: scenes[i].grab || '',
+      });
       added++;
     }
     render();
-    els.status.textContent = `Added ${added} AI scene${added === 1 ? '' : 's'} — verify the trivia, tweak captions & frames, then post.`;
+    els.status.textContent = `Added a title slide + ${Math.max(0, added - 1)} AI scenes — verify the trivia, tweak captions & frames, then post.`;
   } catch (err) {
     console.error('[tik] autopilot failed:', err);
     els.status.textContent = err.message;
@@ -181,7 +190,10 @@ els.addScene.addEventListener('click', async () => {
       count: 1, exclude: slides.map((s) => s.caption),
     });
     const bitmap = await grabAt(scene.timecode);
-    slides = addSlide(slides, { id: String(nextId++), bitmap, caption: scene.caption, timecode: scene.timecode });
+    slides = addSlide(slides, {
+      id: String(nextId++), bitmap,
+      caption: scene.caption, timecode: scene.timecode, grabHint: scene.grab || '',
+    });
     render();
     els.status.textContent = 'Added a new AI scene — tweak it or add more.';
   } catch (err) {
@@ -215,10 +227,13 @@ function redrawAllThumbs() {
 
 function renderSlide(slide, index) {
   const li = document.createElement('li');
-  li.className = 'flex gap-2 rounded-lg bg-neutral-900 p-2';
+  li.className = 'flex flex-col gap-2 rounded-lg bg-neutral-900 p-2';
   if (slide.id === editingId) li.className += ' ring-2 ring-red-500'; // being re-grabbed
   li.draggable = true;
   li.dataset.index = String(index);
+
+  const row = document.createElement('div');
+  row.className = 'flex gap-2';
 
   // Live preview: the FULL composed slide (frame + caption band), rendered at
   // 1080x1920 by composeToCanvas and shrunk to a thumbnail with CSS.
@@ -230,8 +245,11 @@ function renderSlide(slide, index) {
   composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE });
   thumb.addEventListener('click', () => enterEdit(slide.id));
 
+  const mid = document.createElement('div');
+  mid.className = 'flex flex-1 flex-col gap-1 min-w-0';
+
   const ta = document.createElement('textarea');
-  ta.className = 'flex-1 rounded bg-neutral-950 border border-neutral-800 p-2 text-sm text-neutral-100';
+  ta.className = 'w-full rounded bg-neutral-950 border border-neutral-800 p-2 text-sm text-neutral-100';
   ta.rows = 3;
   ta.placeholder = 'Trivia for this frame…';
   ta.value = slide.caption;
@@ -239,36 +257,25 @@ function renderSlide(slide, index) {
     slides = editCaption(slides, slide.id, ta.value);
     composeToCanvas(thumb, slide.bitmap, ta.value, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE }); // live preview
   });
+  mid.append(ta);
 
-  // Redo this trivia with AI (twinkle), keeping the frame.
+  // Editor-only hint from the AI: what shot to look for when (re)grabbing.
+  // Never baked into the slide or sent to TikTok.
+  if (slide.grabHint) {
+    const hint = document.createElement('p');
+    hint.className = 'text-[11px] uppercase tracking-wide text-neutral-500 truncate';
+    hint.title = slide.grabHint;
+    hint.textContent = `GRAB: ${slide.grabHint}`;
+    mid.append(hint);
+  }
+
+  // Twinkle: opens a steerable AI panel — rewrite this fact (keep frame) or
+  // swap in a totally different scene (new frame + caption), with optional
+  // free-text guidance either way.
   const redo = document.createElement('button');
   redo.className = 'rounded bg-neutral-800 px-2 py-1 text-fuchsia-300 disabled:opacity-40';
-  redo.title = 'Redo this trivia with AI';
+  redo.title = 'Redo with AI…';
   redo.append(iconSpan('auto_awesome'));
-  redo.addEventListener('click', async () => {
-    if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
-    if (aiBusy) return;
-    aiBusy = true;
-    redo.disabled = true;
-    try {
-      els.status.textContent = 'Rewriting this trivia…';
-      const exclude = slides.filter((s) => s.id !== slide.id).map((s) => s.caption);
-      const [scene] = await fetchScenes({
-        title: movie.title, year: movie.year, durationSeconds: els.video.duration,
-        count: 1, exclude, focusTimecode: slide.timecode,
-      });
-      slides = editCaption(slides, slide.id, scene.caption);
-      ta.value = scene.caption;
-      composeToCanvas(thumb, slide.bitmap, scene.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE });
-      els.status.textContent = 'Trivia rewritten.';
-    } catch (err) {
-      console.error('[tik] redo trivia failed:', err);
-      els.status.textContent = err.message;
-    } finally {
-      aiBusy = false;
-      redo.disabled = false;
-    }
-  });
 
   const del = document.createElement('button');
   del.className = 'rounded bg-neutral-800 px-2 py-1 text-neutral-400';
@@ -284,7 +291,86 @@ function renderSlide(slide, index) {
   controls.className = 'flex flex-none flex-col gap-1';
   controls.append(redo, del);
 
-  li.append(thumb, ta, controls);
+  row.append(thumb, mid, controls);
+
+  // --- AI panel (hidden until the twinkle is clicked) ---
+  const panel = document.createElement('div');
+  panel.className = 'hidden gap-2 flex-col sm:flex-row sm:items-center';
+  const guide = document.createElement('input');
+  guide.type = 'text';
+  guide.placeholder = 'Optional guidance — e.g. “something about the practical effects”';
+  guide.className = 'flex-1 rounded bg-neutral-950 border border-neutral-800 px-2 py-1.5 text-sm text-neutral-100';
+
+  const mkPanelBtn = (icon, label) => {
+    const b = document.createElement('button');
+    b.className = 'flex items-center justify-center gap-1 rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-100 disabled:opacity-40';
+    b.append(iconSpan(icon), document.createTextNode(label));
+    return b;
+  };
+  const rewriteBtn = mkPanelBtn('edit_note', 'Rewrite fact');
+  const newSceneBtn = mkPanelBtn('movie', 'New scene');
+  panel.append(guide, rewriteBtn, newSceneBtn);
+
+  redo.addEventListener('click', () => {
+    if (panel.classList.contains('hidden')) {
+      panel.classList.remove('hidden');
+      panel.classList.add('flex');
+      guide.focus();
+    } else {
+      panel.classList.add('hidden');
+      panel.classList.remove('flex');
+    }
+  });
+
+  // Shared runner for the two panel actions.
+  const runPanelAction = async (mode) => {
+    if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
+    if (aiBusy) return;
+    aiBusy = true;
+    rewriteBtn.disabled = true;
+    newSceneBtn.disabled = true;
+    try {
+      const guidance = guide.value.trim();
+      if (mode === 'rewrite') {
+        // New fact about the SAME moment; the frame stays.
+        els.status.textContent = 'Rewriting this trivia…';
+        const exclude = slides.filter((s) => s.id !== slide.id).map((s) => s.caption);
+        const [scene] = await fetchScenes({
+          title: movie.title, year: movie.year, durationSeconds: els.video.duration,
+          count: 1, exclude, focusTimecode: slide.timecode, guidance,
+        });
+        slides = editCaption(slides, slide.id, scene.caption);
+        ta.value = scene.caption;
+        composeToCanvas(thumb, slide.bitmap, scene.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE });
+        els.status.textContent = 'Trivia rewritten.';
+      } else {
+        // A different scene entirely: new caption AND a new frame at its timecode.
+        els.status.textContent = 'Finding a different scene…';
+        const exclude = slides.map((s) => s.caption); // exclude this one too
+        const [scene] = await fetchScenes({
+          title: movie.title, year: movie.year, durationSeconds: els.video.duration,
+          count: 1, exclude, guidance,
+        });
+        const bitmap = await grabAt(scene.timecode);
+        slides = updateSlideFrame(slides, slide.id, bitmap, scene.timecode);
+        slides = editCaption(slides, slide.id, scene.caption);
+        slides = slides.map((s) => (s.id === slide.id ? { ...s, grabHint: scene.grab || '' } : s));
+        render();
+        els.status.textContent = 'Swapped in a different scene — tweak the frame if needed.';
+      }
+    } catch (err) {
+      console.error('[tik] AI panel action failed:', err);
+      els.status.textContent = err.message;
+    } finally {
+      aiBusy = false;
+      rewriteBtn.disabled = false;
+      newSceneBtn.disabled = false;
+    }
+  };
+  rewriteBtn.addEventListener('click', () => runPanelAction('rewrite'));
+  newSceneBtn.addEventListener('click', () => runPanelAction('newScene'));
+
+  li.append(row, panel);
 
   // Drag to reorder.
   li.addEventListener('dragstart', () => { dragFrom = index; });
@@ -335,12 +421,17 @@ function updatePostButton() {
 els.post.addEventListener('click', async () => {
   els.post.disabled = true;
   try {
-    // The movie-title line is intentionally reused as the draft's post title —
-    // an editable hint the creator can change in the TikTok app.
+    // Always send a real post title + description (they prefill the draft in
+    // the TikTok app — previously we sent the toggle's title line, which is
+    // empty when the toggle is off, so drafts arrived blank).
     const titleLine = currentTitleLine();
+    const slugTag = (movie.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const postTitle = movie.query ? `${movie.query} — deep-cut trivia` : (titleLine || 'Deep-cut movie trivia');
+    const postDesc = `${movie.query ? `Deep-cut trivia from ${movie.query}. ` : ''}Which one surprised you? #movietrivia #film${slugTag ? ` #${slugTag}` : ''}`;
     const result = await publishSlideshow(slides, {
       titleLine,
-      title: titleLine,
+      title: postTitle,
+      description: postDesc,
       onProgress: (m) => { els.status.textContent = m; },
     });
     if (result.status === 'FAILED') {
