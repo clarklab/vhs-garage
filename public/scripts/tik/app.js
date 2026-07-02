@@ -5,7 +5,7 @@ import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken } from 
 import { publishSlideshow } from './publish.js';
 import { fetchScenes } from './autopilot.js';
 import { parseMovieName } from './filename.js';
-import { composeToCanvas } from './compose.js';
+import { composeToCanvas, composeSlide } from './compose.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -16,6 +16,7 @@ const els = {
   count: $('slide-count'), list: $('slide-list'), post: $('post-btn'), status: $('post-status'),
   authBtn: $('auth-btn'), authStatus: $('auth-status'),
   autopilot: $('autopilot-btn'), cancelEdit: $('cancel-edit'), addScene: $('add-scene'),
+  download: $('download-btn'),
 };
 
 let slides = [];               // [{ id, bitmap, caption, timecode }]
@@ -197,6 +198,7 @@ function render() {
   els.count.textContent = String(slides.length);
   els.grab.disabled = !editingId && !canAddSlide(slides); // Save stays enabled at the cap
   els.addScene.disabled = !videoReady || !canAddSlide(slides);
+  els.download.disabled = slides.length === 0;
   els.list.innerHTML = '';
   slides.forEach((slide, index) => els.list.appendChild(renderSlide(slide, index)));
   updatePostButton();
@@ -296,6 +298,33 @@ function renderSlide(slide, index) {
 
   return li;
 }
+
+// ---- Download slides (no-API path: post them manually in the TikTok app) ----
+els.download.addEventListener('click', async () => {
+  if (!slides.length) return;
+  els.download.disabled = true;
+  try {
+    const slug = (movie.title || 'trivia').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'trivia';
+    const titleLine = currentTitleLine();
+    for (let i = 0; i < slides.length; i++) {
+      els.status.textContent = `Rendering slide ${i + 1}/${slides.length}…`;
+      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${slug}-${String(i + 1).padStart(2, '0')}.jpg`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      // Small gap so the browser doesn't coalesce/drop rapid downloads.
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    els.status.textContent = `Downloaded ${slides.length} slide${slides.length === 1 ? '' : 's'} — post them from the TikTok app (photo post), in order.`;
+  } catch (err) {
+    console.error('[tik] download failed:', err);
+    els.status.textContent = err.message;
+  } finally {
+    els.download.disabled = slides.length === 0;
+  }
+});
 
 // ---- Post ----
 function updatePostButton() {

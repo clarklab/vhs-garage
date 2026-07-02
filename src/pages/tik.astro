@@ -72,13 +72,20 @@ import { BUILD_ID } from '../utils/build-id.js';
 
       <!-- Slides pane -->
       <section class="flex flex-col gap-3">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-2">
           <h2 class="text-sm uppercase tracking-wide text-neutral-500">
             Slides (<span id="slide-count">0</span>/35)
           </h2>
-          <button id="post-btn" class="flex items-center gap-1 rounded bg-red-600 px-4 py-2 font-bold text-white disabled:opacity-40" disabled>
-            <span class="material-symbols-outlined text-[20px] leading-none">upload</span> Post to TikTok
-          </button>
+          <div class="flex items-center gap-2">
+            <button id="download-btn"
+                    class="flex items-center gap-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 disabled:opacity-40"
+                    disabled title="Download the finished slides as JPEGs — post them manually in the TikTok app, no API needed">
+              <span class="material-symbols-outlined text-[20px] leading-none">download</span> Download
+            </button>
+            <button id="post-btn" class="flex items-center gap-1 rounded bg-red-600 px-4 py-2 font-bold text-white disabled:opacity-40" disabled>
+              <span class="material-symbols-outlined text-[20px] leading-none">upload</span> Post to TikTok
+            </button>
+          </div>
         </div>
         <p id="post-status" class="text-xs text-neutral-400"></p>
         <ol id="slide-list" class="flex flex-col gap-2"></ol>
