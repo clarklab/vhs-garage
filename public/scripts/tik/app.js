@@ -344,7 +344,10 @@ els.post.addEventListener('click', async () => {
       onProgress: (m) => { els.status.textContent = m; },
     });
     if (result.status === 'FAILED') {
-      els.status.textContent = 'TikTok reported a failure — check the app.';
+      console.error('[tik] TikTok post FAILED', result);
+      els.status.textContent = result.failReason
+        ? `TikTok rejected the post: ${result.failReason}`
+        : 'TikTok reported a failure — check the app.';
     } else if (result.status === 'SEND_TO_USER_INBOX' || result.status === 'PUBLISH_COMPLETE') {
       els.status.textContent = 'Draft sent to your TikTok inbox. Open the app to publish.';
     } else {

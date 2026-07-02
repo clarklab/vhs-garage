@@ -45,8 +45,8 @@ export default async (req) => {
   }
 
   // Poll status a bounded number of times.
-  const status = await pollStatus(accessToken, publishId);
-  return json({ publishId, status });
+  const { status, failReason } = await pollStatus(accessToken, publishId);
+  return json({ publishId, status, failReason });
 };
 
 // Map known TikTok init errors to a one-line developer-portal hint, so the UI
@@ -101,12 +101,18 @@ async function pollStatus(accessToken, publishId, tries = 8) {
     });
     const data = await res.json().catch(() => ({}));
     const status = data?.data?.status;
+    const failReason = data?.data?.fail_reason || null;
     if (status && status !== 'PROCESSING_UPLOAD' && status !== 'PROCESSING_DOWNLOAD') {
-      return status; // terminal: SEND_TO_USER_INBOX | PUBLISH_COMPLETE | FAILED
+      // Terminal: SEND_TO_USER_INBOX | PUBLISH_COMPLETE | FAILED
+      if (status === 'FAILED') {
+        console.error('[tik-publish] post FAILED', { publishId, failReason, tiktok: data?.data });
+      }
+      return { status, failReason };
     }
     await sleep(1500);
   }
-  return 'PROCESSING_DOWNLOAD'; // timed out still downloading; the draft may still land shortly.
+  // Timed out still downloading; the draft may still land shortly.
+  return { status: 'PROCESSING_DOWNLOAD', failReason: null };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

@@ -12,10 +12,22 @@ export default async (req) => {
   const url = new URL(req.url);
 
   if (req.method === 'GET') {
-    const id = url.searchParams.get('id');
-    if (!id) return new Response('Missing id', { status: 400 });
+    // Accept the id from ?id= OR from the /tik/media/<id> path. The netlify.toml
+    // rewrite forwards requests here, but functions receive the ORIGINAL request
+    // URL — the ?id=:id substitution in the redirect's `to` never reaches us, so
+    // the path is the real source of truth for rewritten requests. (Verified in
+    // production: query-only parsing 400'd every TikTok image pull.)
+    const pathId = url.pathname.match(/^\/tik\/media\/([^/]+)\/?$/)?.[1];
+    const id = url.searchParams.get('id') || pathId;
+    if (!id) {
+      console.warn('[tik-media] GET missing id', { path: url.pathname });
+      return new Response('Missing id', { status: 400 });
+    }
     const buf = await store.get(id, { type: 'arrayBuffer' });
-    if (!buf) return new Response('Not found', { status: 404 });
+    if (!buf) {
+      console.warn('[tik-media] GET blob not found (expired or bad id)', { id });
+      return new Response('Not found', { status: 404 });
+    }
     return new Response(buf, {
       status: 200,
       headers: {
