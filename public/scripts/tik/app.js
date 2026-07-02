@@ -44,10 +44,18 @@ initScrubber({
 
 els.video.addEventListener('loadedmetadata', () => {
   videoReady = true;
-  els.autopilot.disabled = false;
+  els.autopilot.disabled = aiBusy; // stay disabled if a job is mid-flight
   els.autopilot.title = '';
   render(); // updates the Add-scene button state
 });
+
+// One AI action at a time. Background jobs can run for minutes now, so ALL the
+// AI entry points must visibly disable together — not just the button clicked.
+function setAiBusy(v) {
+  aiBusy = v;
+  els.autopilot.disabled = v || !videoReady;
+  els.addScene.disabled = v || !videoReady || !canAddSlide(slides);
+}
 
 // TikTok pulls slide images over the public internet, so posting only works from
 // a publicly reachable origin. Grab / caption / compose work anywhere.
@@ -147,14 +155,14 @@ els.autopilot.addEventListener('click', async () => {
   if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
   if (!canAddSlide(slides)) { els.status.textContent = `Slide cap reached (${MAX_SLIDES}) — delete some first.`; return; }
   if (aiBusy) return;
-  aiBusy = true;
-  els.autopilot.disabled = true;
+  setAiBusy(true);
   try {
     els.status.textContent = `Researching ${movie.query || 'the film'}…`;
     // Title slide first (grabbed at the film's title-card shot), then 5 trivia scenes.
     const scenes = await fetchScenes({
       title: movie.title, year: movie.year, durationSeconds: els.video.duration,
       count: 5, includeTitleSlide: true,
+      onProgress: (m) => { els.status.textContent = `Researching ${movie.query || 'the film'} — ${m}`; },
     });
     let added = 0;
     for (let i = 0; i < scenes.length; i++) {
@@ -178,8 +186,7 @@ els.autopilot.addEventListener('click', async () => {
     console.error('[tik] autopilot failed:', err);
     els.status.textContent = err.message;
   } finally {
-    aiBusy = false;
-    els.autopilot.disabled = false;
+    setAiBusy(false);
   }
 });
 
@@ -188,13 +195,13 @@ els.addScene.addEventListener('click', async () => {
   if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
   if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
   if (aiBusy) return;
-  aiBusy = true;
-  els.addScene.disabled = true;
+  setAiBusy(true);
   try {
     els.status.textContent = 'Finding another scene…';
     const [scene] = await fetchScenes({
       title: movie.title, year: movie.year, durationSeconds: els.video.duration,
       count: 1, exclude: slides.map((s) => s.caption),
+      onProgress: (m) => { els.status.textContent = `Finding another scene — ${m}`; },
     });
     const bitmap = await grabAt(scene.timecode);
     slides = addSlide(slides, {
@@ -207,7 +214,7 @@ els.addScene.addEventListener('click', async () => {
     console.error('[tik] add scene failed:', err);
     els.status.textContent = err.message;
   } finally {
-    aiBusy = false;
+    setAiBusy(false);
     render(); // restores the Add-scene disabled state for the current cap
   }
 });
@@ -216,7 +223,7 @@ els.addScene.addEventListener('click', async () => {
 function render() {
   els.count.textContent = String(slides.length);
   els.grab.disabled = !editingId && !canAddSlide(slides); // Save stays enabled at the cap
-  els.addScene.disabled = !videoReady || !canAddSlide(slides);
+  els.addScene.disabled = aiBusy || !videoReady || !canAddSlide(slides);
   els.download.disabled = slides.length === 0;
   els.list.innerHTML = '';
   slides.forEach((slide, index) => els.list.appendChild(renderSlide(slide, index)));
@@ -359,7 +366,7 @@ function renderSlide(slide, index) {
   const runPanelAction = async (mode) => {
     if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
     if (aiBusy) return;
-    aiBusy = true;
+    setAiBusy(true);
     rewriteBtn.disabled = true;
     newSceneBtn.disabled = true;
     try {
@@ -371,6 +378,7 @@ function renderSlide(slide, index) {
         const [scene] = await fetchScenes({
           title: movie.title, year: movie.year, durationSeconds: els.video.duration,
           count: 1, exclude, focusTimecode: slide.timecode, guidance, model: 'claude-opus-4-8',
+          onProgress: (m) => { els.status.textContent = `Rewriting this fact — ${m}`; },
         });
         slides = editCaption(slides, slide.id, scene.caption);
         ta.value = scene.caption;
@@ -383,6 +391,7 @@ function renderSlide(slide, index) {
         const [scene] = await fetchScenes({
           title: movie.title, year: movie.year, durationSeconds: els.video.duration,
           count: 1, exclude, guidance, model: 'claude-opus-4-8',
+          onProgress: (m) => { els.status.textContent = `Finding a different scene — ${m}`; },
         });
         const bitmap = await grabAt(scene.timecode);
         slides = updateSlideFrame(slides, slide.id, bitmap, scene.timecode);
@@ -395,7 +404,7 @@ function renderSlide(slide, index) {
       console.error('[tik] AI panel action failed:', err);
       els.status.textContent = err.message;
     } finally {
-      aiBusy = false;
+      setAiBusy(false);
       rewriteBtn.disabled = false;
       newSceneBtn.disabled = false;
     }

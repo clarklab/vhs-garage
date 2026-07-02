@@ -4,6 +4,14 @@ export const AUTOPILOT_COUNT = 5;
 const CAPTION_MAX = 180;
 const GRAB_MAX = 120; // editor-facing "what shot to grab" hint, never shown to viewers
 
+// Shared between the background worker (writes) and the poller (reads) —
+// a single source of truth so the two can never drift apart.
+export const JOBS_STORE = 'tik-jobs';
+export const ALLOWED_MODELS = new Set([
+  'claude-opus-4-8', 'claude-sonnet-5', 'claude-haiku-4-5', 'claude-sonnet-4-6',
+  'gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gpt-4.1-nano',
+]);
+
 export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUTOPILOT_COUNT, exclude = [], focusTimecode, guidance = '', includeTitleSlide = false }) {
   const dur = Math.max(1, Math.round(durationSeconds || 0));
   const film = year ? `${title} (${year})` : title;
