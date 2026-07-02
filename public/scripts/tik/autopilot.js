@@ -18,6 +18,7 @@ export async function fetchScenes(opts = {}) {
       focusTimecode: opts.focusTimecode,
       guidance: opts.guidance || '',
       includeTitleSlide: !!opts.includeTitleSlide,
+      model: opts.model, // optional override; server allowlist decides
     }),
   });
   const data = await res.json().catch(() => ({}));
