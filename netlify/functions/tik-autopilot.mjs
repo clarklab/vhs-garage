@@ -12,11 +12,14 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 // Anthropic SDK convention where /v1/messages is appended. See callAnthropic.
 const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
 
-// Default to Claude for trivia quality. Override with TIK_AUTOPILOT_MODEL
-// (must be in the allowlist and provisioned in the AI Gateway).
-const DEFAULT_MODEL = process.env.TIK_AUTOPILOT_MODEL || 'claude-haiku-4-5';
+// Default to Claude Sonnet for trivia quality — deep-cut recall is where the
+// bigger models clearly beat the fast tier, and Sonnet stays comfortably
+// inside the 9s abort. Override with TIK_AUTOPILOT_MODEL (must be in the
+// allowlist and provisioned in the AI Gateway); claude-opus-4-8 is allowed
+// for max quality if the latency holds up in practice.
+const DEFAULT_MODEL = process.env.TIK_AUTOPILOT_MODEL || 'claude-sonnet-5';
 const ALLOWED_MODELS = new Set([
-  'claude-haiku-4-5', 'claude-sonnet-4-6',
+  'claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5', 'claude-sonnet-4-6',
   'gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gpt-4.1-nano',
 ]);
 function pickModel(requested) {
@@ -115,7 +118,9 @@ async function callAnthropic(prompt, model, signal) {
       'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY,
       'anthropic-version': '2023-06-01',
     },
-    body: JSON.stringify({ model, max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }),
+    // 2048: a title slide + 5 suggestions with captions + grab hints can brush
+    // against 1024, and truncated JSON surfaces as "AI returned nothing".
+    body: JSON.stringify({ model, max_tokens: 2048, messages: [{ role: 'user', content: prompt }] }),
     signal,
   });
   if (!res.ok) throw new Error(`Anthropic ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
