@@ -73,14 +73,17 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
     }
   }
 
-  // Vertically center the group: frame + gap + text block.
+  // Vertically center the group: frame + gap + text block. Clamp the top so a
+  // pathological (huge pasted) caption clips only its trailing pills off the
+  // bottom — the frame itself must never slide off-canvas.
   const textH = lines.length ? blockH(lines.length, fontSize) : 0;
   const groupH = F.h + (textH ? GAP + textH : 0);
   const frameX = Math.round((CANVAS_W - F.w) / 2);
-  const frameY = Math.round((CANVAS_H - groupH) / 2);
+  const frameY = Math.max(0, Math.round((CANVAS_H - groupH) / 2));
   ctx.drawImage(bitmap, frameX, frameY, F.w, F.h);
 
   // Caption pills: white rounded pill per line, bold black centered text.
+  // Blank lines (blank paragraph in the textarea) get no pill — just space.
   if (lines.length) {
     ctx.font = FONT(fontSize);
     ctx.textAlign = 'center';
@@ -88,9 +91,10 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
     const cx = CANVAS_W / 2;
     let y = frameY + F.h + GAP;
     for (const line of lines) {
+      const pillH = lineBoxH(fontSize);
+      if (!line) { y += pillH + PILL_GAP; continue; } // no empty white blob
       const textW = ctx.measureText(line).width;
       const pillW = Math.min(textW + PILL_PAD_X * 2, CANVAS_W - 40);
-      const pillH = lineBoxH(fontSize);
       ctx.fillStyle = '#ffffff';
       pillPath(ctx, cx - pillW / 2, y, pillW, pillH, PILL_RADIUS);
       ctx.fill();

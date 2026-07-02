@@ -144,6 +144,7 @@ els.cancelEdit.addEventListener('click', () => { exitEdit(); els.status.textCont
 // ---- Autopilot: preload a full slideshow ----
 els.autopilot.addEventListener('click', async () => {
   if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
+  if (!canAddSlide(slides)) { els.status.textContent = `Slide cap reached (${MAX_SLIDES}) — delete some first.`; return; }
   if (aiBusy) return;
   aiBusy = true;
   els.autopilot.disabled = true;
@@ -166,7 +167,12 @@ els.autopilot.addEventListener('click', async () => {
       added++;
     }
     render();
-    els.status.textContent = `Added a title slide + ${Math.max(0, added - 1)} AI scenes — verify the trivia, tweak captions & frames, then post.`;
+    if (added === 0) {
+      els.status.textContent = `Slide cap reached (${MAX_SLIDES}) — nothing added.`;
+    } else {
+      const trivia = added - 1; // first added slide is the title slide
+      els.status.textContent = `Added a title slide + ${trivia} AI scene${trivia === 1 ? '' : 's'} — verify the trivia, tweak captions & frames, then post.`;
+    }
   } catch (err) {
     console.error('[tik] autopilot failed:', err);
     els.status.textContent = err.message;
@@ -235,7 +241,7 @@ function renderSlide(slide, index) {
   const row = document.createElement('div');
   row.className = 'flex gap-2';
 
-  // Live preview: the FULL composed slide (frame + caption band), rendered at
+  // Live preview: the FULL composed slide (frame + caption pills), rendered at
   // 1080x1920 by composeToCanvas and shrunk to a thumbnail with CSS.
   // Tap it to load its frame into the scrubber and re-grab.
   const thumb = document.createElement('canvas');
@@ -245,18 +251,27 @@ function renderSlide(slide, index) {
   composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE });
   thumb.addEventListener('click', () => enterEdit(slide.id));
 
+  // Text fields inside a draggable <li> lose mouse text-selection to the drag
+  // handler — suspend dragging while a field is being used.
+  const suspendDragWhileEditing = (field) => {
+    field.addEventListener('pointerdown', () => { li.draggable = false; });
+    field.addEventListener('blur', () => { li.draggable = true; });
+  };
+
   const mid = document.createElement('div');
   mid.className = 'flex flex-1 flex-col gap-1 min-w-0';
 
   const ta = document.createElement('textarea');
   ta.className = 'w-full rounded bg-neutral-950 border border-neutral-800 p-2 text-sm text-neutral-100';
   ta.rows = 3;
+  ta.maxLength = 300; // AI caps at 180; give manual edits headroom but keep slides renderable
   ta.placeholder = 'Trivia for this frame…';
   ta.value = slide.caption;
   ta.addEventListener('input', () => {
     slides = editCaption(slides, slide.id, ta.value);
     composeToCanvas(thumb, slide.bitmap, ta.value, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE }); // live preview
   });
+  suspendDragWhileEditing(ta);
   mid.append(ta);
 
   // Editor-only hint from the AI: what shot to look for when (re)grabbing.
@@ -300,6 +315,7 @@ function renderSlide(slide, index) {
   guide.type = 'text';
   guide.placeholder = 'Optional guidance — e.g. “something about the practical effects”';
   guide.className = 'flex-1 rounded bg-neutral-950 border border-neutral-800 px-2 py-1.5 text-sm text-neutral-100';
+  suspendDragWhileEditing(guide);
 
   const mkPanelBtn = (icon, label) => {
     const b = document.createElement('button');

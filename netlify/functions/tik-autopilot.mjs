@@ -1,7 +1,7 @@
 // Autopilot: given a movie title/year, ask an LLM (via the Netlify AI Gateway)
 // for deep-cut trivia + suggested timecodes. Provider routing + lenient JSON
 // parsing over the AI Gateway. POST { title, year, durationSeconds, model? }.
-import { buildAutopilotPrompt, normalizeSuggestions } from './lib/autopilot.mjs';
+import { buildAutopilotPrompt, normalizeSuggestions, AUTOPILOT_COUNT } from './lib/autopilot.mjs';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_BASE_URL = process.env.GOOGLE_GEMINI_BASE_URL;
@@ -50,7 +50,10 @@ export default async (req) => {
     else raw = await callGemini(prompt, model, controller.signal);
 
     // A title slide arrives as an extra first item, on top of `count` trivia.
-    const max = (count || undefined) && includeTitleSlide ? count + 1 : count;
+    // Coerce count so the normalize cap always matches what the prompt asked
+    // for (the prompt defaults to AUTOPILOT_COUNT when count is absent).
+    const base = Number(count) || AUTOPILOT_COUNT;
+    const max = includeTitleSlide ? base + 1 : base;
     const suggestions = normalizeSuggestions(parseModelJson(raw), durationSeconds, max);
     if (!suggestions.length) {
       console.warn('[tik-autopilot] model returned no usable suggestions', { model, rawPreview: String(raw).slice(0, 300) });
