@@ -12,7 +12,7 @@ export const ALLOWED_MODELS = new Set([
   'gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gpt-4.1-nano',
 ]);
 
-export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUTOPILOT_COUNT, exclude = [], focusTimecode, guidance = '', includeTitleSlide = false }) {
+export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUTOPILOT_COUNT, exclude = [], focusTimecode, guidance = '', includeTitleSlide = false, sourceMaterial = '', sourceName = '' }) {
   const dur = Math.max(1, Math.round(durationSeconds || 0));
   const film = year ? `${title} (${year})` : title;
 
@@ -27,7 +27,10 @@ export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUT
     ? `\n\nAlready used — do NOT repeat, paraphrase, or overlap with any of these; give genuinely different moments:\n${excludeList.map((c) => `- ${c}`).join('\n')}`
     : '';
   const guidanceBlock = String(guidance || '').trim()
-    ? `\n\nThe user added steering and/or starter facts for this request. Riff on and expand them — but treat any claims as unverified: only include ones you are confident are true, and correct details that are off. Follow the direction where it doesn't conflict with the rules above:\n<guidance>${String(guidance).trim()}</guidance>`
+    ? `\n\nThe user added steering and/or starter facts for this request. Riff on and expand them — but treat any claims as unverified: only include ones you are confident are true, and correct details that are off. Follow the direction where it doesn't conflict with the rules above:\n<guidance>${String(guidance).trim().slice(0, 20000)}</guidance>`
+    : '';
+  const sourceBlock = String(sourceMaterial || '').trim()
+    ? `\n\nVERIFIED SOURCE MATERIAL${sourceName ? ` (Wikipedia: "${sourceName}")` : ''} about this film's production is below. STRONGLY PREFER facts grounded in it over pure memory — it is better sourced than recall. Pick the most VISUAL and surprising details, rewrite them punchy in your OWN words (never copy sentences), and still apply every rule above (scene-tied, timecodes, skip the famous ones):\n<source_material>${String(sourceMaterial).trim().slice(0, 12000)}</source_material>`
     : '';
 
   return `You are a film historian curating a TikTok slideshow of DEEP-CUT movie trivia.
@@ -50,7 +53,7 @@ RULES for the facts:
 
 For each, give:
 - "timecode": a whole number of SECONDS between 0 and ${dur} pointing to where that scene appears (spread them across the runtime). These are suggestions the user fine-tunes.
-- "grab": a terse visual pointer to help the human editor find the exact shot, e.g. "the scene where the building is on fire" (${GRAB_MAX} chars max; for the editor only, never shown to viewers).${titleSlideBlock}${focusBlock}${excludeBlock}${guidanceBlock}
+- "grab": a terse visual pointer to help the human editor find the exact shot, e.g. "the scene where the building is on fire" (${GRAB_MAX} chars max; for the editor only, never shown to viewers).${titleSlideBlock}${focusBlock}${excludeBlock}${guidanceBlock}${sourceBlock}
 
 Return ONLY valid JSON in this exact shape, nothing else:
 {
