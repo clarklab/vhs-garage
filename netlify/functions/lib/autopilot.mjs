@@ -27,7 +27,7 @@ export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUT
     ? `\n\nAlready used — do NOT repeat, paraphrase, or overlap with any of these; give genuinely different moments:\n${excludeList.map((c) => `- ${c}`).join('\n')}`
     : '';
   const guidanceBlock = String(guidance || '').trim()
-    ? `\n\nThe user added this steering for the request (follow it where it doesn't conflict with the rules above):\n<guidance>${String(guidance).trim()}</guidance>`
+    ? `\n\nThe user added steering and/or starter facts for this request. Riff on and expand them — but treat any claims as unverified: only include ones you are confident are true, and correct details that are off. Follow the direction where it doesn't conflict with the rules above:\n<guidance>${String(guidance).trim()}</guidance>`
     : '';
 
   return `You are a film historian curating a TikTok slideshow of DEEP-CUT movie trivia.

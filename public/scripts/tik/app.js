@@ -16,7 +16,8 @@ const els = {
   titleToggle: $('title-toggle'), movieTitle: $('movie-title'),
   count: $('slide-count'), list: $('slide-list'), post: $('post-btn'), status: $('post-status'),
   authBtn: $('auth-btn'), authStatus: $('auth-status'),
-  autopilot: $('autopilot-btn'), cancelEdit: $('cancel-edit'), addScene: $('add-scene'),
+  autopilot: $('autopilot-btn'), autopilotPrompt: $('autopilot-prompt'),
+  cancelEdit: $('cancel-edit'), addScene: $('add-scene'),
   download: $('download-btn'),
 };
 
@@ -75,7 +76,7 @@ async function grabAt(timecode) {
 // Branded outro slide: the VHS Garage logo as the "frame" + a follow CTA as the
 // caption, flowing through the normal slide pipeline (editable, reorderable).
 const OUTRO_LOGO_URL = '/images/vhs-garage-logo-square.png'; // yellow lockup (V mark), black field
-const OUTRO_CAPTION = 'Follow VHS Garage for more deep-cut movie trivia';
+const OUTRO_CAPTION = 'Follow VHS Garage for more movie trivia';
 async function makeOutroSlide() {
   const res = await fetch(OUTRO_LOGO_URL);
   if (!res.ok) throw new Error(`Couldn't load the outro logo (${res.status})`);
@@ -173,6 +174,7 @@ els.autopilot.addEventListener('click', async () => {
     const scenes = await fetchScenes({
       title: movie.title, year: movie.year, durationSeconds: els.video.duration,
       count: 5, includeTitleSlide: true,
+      guidance: els.autopilotPrompt.value.trim(), // optional starter facts/direction to riff on
       onProgress: (m) => { els.status.textContent = `Researching ${movie.query || 'the film'} — ${m}`; },
     });
     let added = 0;
@@ -486,22 +488,17 @@ els.post.addEventListener('click', async () => {
     // the TikTok app — previously we sent the toggle's title line, which is
     // empty when the toggle is off, so drafts arrived blank).
     const titleLine = currentTitleLine();
-    const slugTag = (movie.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-    // e.g. year 1975 → "70smovies"
-    const decadeTag = /^\d{4}$/.test(movie.year || '') ? `${movie.year[2]}0smovies` : '';
     const postTitle = movie.query
-      ? `${movie.query} — deep-cut trivia you've never heard`
-      : (titleLine || 'Deep-cut movie trivia you’ve never heard');
+      ? `${movie.query} — movie trivia & behind-the-scenes facts`
+      : (titleLine || 'Movie trivia & behind-the-scenes facts');
     const postDesc = [
       movie.query
-        ? `Deep-cut, behind-the-scenes trivia from ${movie.query} — how many of these did you know?`
-        : 'Deep-cut, behind-the-scenes movie trivia — how many of these did you know?',
+        ? `Behind-the-scenes facts and hidden details from ${movie.query} — how many of these did you know?`
+        : 'Behind-the-scenes movie facts and hidden details — how many of these did you know?',
       'What’s your favorite scene? Drop it in the comments.',
       'Save this for your next movie night, and follow VHS Garage for more.',
-      ['#movietrivia', '#filmfacts', '#behindthescenes', '#moviefacts', '#easteregg',
-       '#movietok', '#filmtok', '#cinema', '#didyouknow',
-       slugTag && `#${slugTag}`, decadeTag && `#${decadeTag}`]
-        .filter(Boolean).join(' '),
+      // TikTok effectively honors ~5 hashtags — keep them broad, skip niche tags.
+      '#movietrivia #moviefacts #behindthescenes #movietok #didyouknow',
     ].join(' ');
     const result = await publishSlideshow(slides, {
       titleLine,
