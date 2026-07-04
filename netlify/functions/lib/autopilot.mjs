@@ -17,7 +17,7 @@ export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUT
   const film = year ? `${title} (${year})` : title;
 
   const titleSlideBlock = includeTitleSlide
-    ? `\n\nADDITIONALLY, the FIRST item in the array must be a TITLE slide (before the ${count} trivia moment${count === 1 ? '' : 's'}): its caption is "${film}" on the first line, then a newline, then a punchy one-line hook that TEASES the final fact so viewers swipe to the end (e.g. "the last one changes how you'll watch the ending" — no hashtags). Its timecode must point at the film's TITLE CARD / main-title logo shot (usually within the first few minutes of the runtime), and its "grab" should describe that title-card shot.`
+    ? `\n\nADDITIONALLY, the FIRST item in the array must be a TITLE slide (before the ${count} trivia moment${count === 1 ? '' : 's'}): its caption is "${film}" on the first line, then a newline, then a punchy one-line GENERAL intro for the set as a whole — vary the phrasing per film; think "trivia even superfans miss" or "how many of these did you catch?" energy. Do NOT reference any specific fact and do NOT use "the last one…" phrasing (no hashtags). Its timecode must point at the film's TITLE CARD / main-title logo shot (usually within the first few minutes of the runtime), and its "grab" should describe that title-card shot.`
     : '';
   const focusBlock = Number.isFinite(focusTimecode)
     ? `\n\nFocus this one on the SCENE around ${Math.round(focusTimecode)} seconds in (roughly ${Math.round((focusTimecode / dur) * 100)}% through the film), or a behind-the-scenes fact about that part of the shoot.`
