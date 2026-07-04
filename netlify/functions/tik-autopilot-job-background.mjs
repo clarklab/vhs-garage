@@ -8,6 +8,7 @@
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, normalizeSuggestions, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
+import { fetchFilmSource } from './lib/wiki.mjs';
 
 const JOB_MAX_AGE_MS = 60 * 60 * 1000; // sweep results older than 1h
 // Keep the AI budget BELOW the client's poll cap (4 min) so every job resolves
@@ -40,7 +41,23 @@ export default async (req) => {
     await store.setJSON(jobId, { started: true }, { metadata: { createdAt: Date.now() } });
     await sweepOldJobs(store);
 
-    const prompt = buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide });
+    // Ground the model in Wikipedia's production/filming sections — recall
+    // alone is consistently weaker than the published source material.
+    // Best-effort: a Wikipedia hiccup must never sink the job.
+    let source = null;
+    try {
+      const wikiController = new AbortController();
+      const wikiTimer = setTimeout(() => wikiController.abort(), 10_000);
+      source = await fetchFilmSource(title, year, wikiController.signal).finally(() => clearTimeout(wikiTimer));
+      if (source) console.log('[tik-autopilot-job] grounded in Wikipedia', { jobId, page: source.pageTitle, chars: source.text.length });
+    } catch (e) {
+      console.warn('[tik-autopilot-job] Wikipedia fetch failed; proceeding on recall', { jobId, message: e.message });
+    }
+
+    const prompt = buildAutopilotPrompt({
+      title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide,
+      sourceMaterial: source?.text || '', sourceName: source?.pageTitle || '',
+    });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
     let raw;

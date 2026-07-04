@@ -37,6 +37,18 @@ test('buildAutopilotPrompt demands visual, Easter-egg, jaw-drop trivia with the 
   assert.match(p, /SAVE THE BEST FOR LAST/);
 });
 
+test('buildAutopilotPrompt embeds source material when provided, omits when absent', () => {
+  const p = buildAutopilotPrompt({
+    title: 'Jaws', durationSeconds: 7440,
+    sourceMaterial: 'Principal photography began May 2, 1974.', sourceName: 'Jaws (film)',
+  });
+  assert.match(p, /STRONGLY PREFER facts grounded/);
+  assert.match(p, /<source_material>Principal photography began May 2, 1974\.<\/source_material>/);
+  assert.match(p, /Jaws \(film\)/);
+  const p2 = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440 });
+  assert.doesNotMatch(p2, /<source_material>/);
+});
+
 test('title slide hook is a general intro, not a last-fact tease', () => {
   const p = buildAutopilotPrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440, includeTitleSlide: true });
   assert.match(p, /GENERAL intro/);
