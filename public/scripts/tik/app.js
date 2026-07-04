@@ -74,7 +74,7 @@ async function grabAt(timecode) {
 
 // Branded outro slide: the VHS Garage logo as the "frame" + a follow CTA as the
 // caption, flowing through the normal slide pipeline (editable, reorderable).
-const OUTRO_LOGO_URL = '/images/vhs-garage-logo-still.png';
+const OUTRO_LOGO_URL = '/images/vhs-garage-logo-square.png'; // yellow lockup (V mark), black field
 const OUTRO_CAPTION = 'Follow VHS Garage for more deep-cut movie trivia';
 async function makeOutroSlide() {
   const res = await fetch(OUTRO_LOGO_URL);
