@@ -28,6 +28,20 @@ test('buildAutopilotPrompt bakes in uniqueness rails and the editor grab hint', 
   assert.match(p, /never shown to viewers/i);
 });
 
+test('buildAutopilotPrompt demands visual, Easter-egg, jaw-drop trivia with the payoff last', () => {
+  const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440 });
+  assert.match(p, /MAKE IT VISUAL/);
+  assert.match(p, /HUNT EASTER EGGS/);
+  assert.match(p, /did you ever notice/i);
+  assert.match(p, /"NO WAY" TEST/);
+  assert.match(p, /SAVE THE BEST FOR LAST/);
+});
+
+test('title slide hook teases the final fact', () => {
+  const p = buildAutopilotPrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440, includeTitleSlide: true });
+  assert.match(p, /TEASES the final fact/);
+});
+
 test('buildAutopilotPrompt lists excluded trivia to avoid repeats', () => {
   const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440, exclude: ['the shark was named Bruce', ''] });
   assert.match(p, /do NOT repeat/i);

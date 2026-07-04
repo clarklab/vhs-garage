@@ -72,6 +72,17 @@ async function grabAt(timecode) {
   return grabFrame(els.video);
 }
 
+// Branded outro slide: the VHS Garage logo as the "frame" + a follow CTA as the
+// caption, flowing through the normal slide pipeline (editable, reorderable).
+const OUTRO_LOGO_URL = '/images/vhs-garage-logo-still.png';
+const OUTRO_CAPTION = 'Follow VHS Garage for more deep-cut movie trivia';
+async function makeOutroSlide() {
+  const res = await fetch(OUTRO_LOGO_URL);
+  if (!res.ok) throw new Error(`Couldn't load the outro logo (${res.status})`);
+  const bitmap = await createImageBitmap(await res.blob());
+  return { id: String(nextId++), bitmap, caption: OUTRO_CAPTION, grabHint: '' };
+}
+
 // ---- Auth ----
 function refreshAuthUI() {
   const signed = isSignedIn();
@@ -175,12 +186,20 @@ els.autopilot.addEventListener('click', async () => {
       });
       added++;
     }
+    // Cap off with the branded outro (logo + follow CTA). Never fatal.
+    let outroAdded = false;
+    if (added > 0 && canAddSlide(slides)) {
+      try {
+        slides = addSlide(slides, await makeOutroSlide());
+        outroAdded = true;
+      } catch (e) { console.error('[tik] outro slide failed:', e); }
+    }
     render();
     if (added === 0) {
       els.status.textContent = `Slide cap reached (${MAX_SLIDES}) — nothing added.`;
     } else {
       const trivia = added - 1; // first added slide is the title slide
-      els.status.textContent = `Added a title slide + ${trivia} AI scene${trivia === 1 ? '' : 's'} — verify the trivia, tweak captions & frames, then post.`;
+      els.status.textContent = `Added a title slide + ${trivia} AI scene${trivia === 1 ? '' : 's'}${outroAdded ? ' + outro' : ''} — verify the trivia, tweak captions & frames, then post.`;
     }
   } catch (err) {
     console.error('[tik] autopilot failed:', err);
@@ -468,8 +487,22 @@ els.post.addEventListener('click', async () => {
     // empty when the toggle is off, so drafts arrived blank).
     const titleLine = currentTitleLine();
     const slugTag = (movie.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-    const postTitle = movie.query ? `${movie.query} — deep-cut trivia` : (titleLine || 'Deep-cut movie trivia');
-    const postDesc = `${movie.query ? `Deep-cut trivia from ${movie.query}. ` : ''}Which one surprised you? #movietrivia #film${slugTag ? ` #${slugTag}` : ''}`;
+    // e.g. year 1975 → "70smovies"
+    const decadeTag = /^\d{4}$/.test(movie.year || '') ? `${movie.year[2]}0smovies` : '';
+    const postTitle = movie.query
+      ? `${movie.query} — deep-cut trivia you've never heard`
+      : (titleLine || 'Deep-cut movie trivia you’ve never heard');
+    const postDesc = [
+      movie.query
+        ? `Deep-cut, behind-the-scenes trivia from ${movie.query} — how many of these did you know?`
+        : 'Deep-cut, behind-the-scenes movie trivia — how many of these did you know?',
+      'What’s your favorite scene? Drop it in the comments.',
+      'Save this for your next movie night, and follow VHS Garage for more.',
+      ['#movietrivia', '#filmfacts', '#behindthescenes', '#moviefacts', '#easteregg',
+       '#movietok', '#filmtok', '#cinema', '#didyouknow',
+       slugTag && `#${slugTag}`, decadeTag && `#${decadeTag}`]
+        .filter(Boolean).join(' '),
+    ].join(' ');
     const result = await publishSlideshow(slides, {
       titleLine,
       title: postTitle,
