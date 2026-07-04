@@ -26,11 +26,34 @@ export function initScrubber({ video, range, timecode, steps = [], fps = 30 }) {
   const stepFrames = (n) => { video.currentTime = clamp(frameStep(video.currentTime, n, fps)); };
   const stepSeconds = (n) => { video.currentTime = clamp(video.currentTime + n); };
 
+  // Press = one step; press-and-HOLD = continuous scrubbing (repeat after a
+  // short delay). pointerdown covers mouse, touch, and pen — no click handler,
+  // so the synthetic click after release can't double-step.
+  const HOLD_DELAY_MS = 400;
+  const HOLD_REPEAT_MS = 120;
+  const holdToRepeat = (btn, fn) => {
+    btn.style.touchAction = 'none'; // holding on touch shouldn't scroll the page
+    let delay = null;
+    let repeat = null;
+    const stop = () => {
+      clearTimeout(delay); clearInterval(repeat);
+      delay = repeat = null;
+    };
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); // no text selection / focus flicker while holding
+      fn();
+      delay = setTimeout(() => { repeat = setInterval(fn, HOLD_REPEAT_MS); }, HOLD_DELAY_MS);
+    });
+    for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) {
+      btn.addEventListener(ev, stop);
+    }
+  };
+
   for (const btn of steps) {
     if (btn.dataset.frames !== undefined) {
-      btn.addEventListener('click', () => stepFrames(Number(btn.dataset.frames)));
+      holdToRepeat(btn, () => stepFrames(Number(btn.dataset.frames)));
     } else if (btn.dataset.seconds !== undefined) {
-      btn.addEventListener('click', () => stepSeconds(Number(btn.dataset.seconds)));
+      holdToRepeat(btn, () => stepSeconds(Number(btn.dataset.seconds)));
     }
   }
 
