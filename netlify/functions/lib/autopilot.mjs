@@ -17,7 +17,7 @@ export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUT
   const film = year ? `${title} (${year})` : title;
 
   const titleSlideBlock = includeTitleSlide
-    ? `\n\nADDITIONALLY, the FIRST item in the array must be a TITLE slide (before the ${count} trivia moment${count === 1 ? '' : 's'}): its caption is "${film}" on the first line, then a newline, then a punchy one-line hook introducing a deep-cut trivia slideshow (no hashtags). Its timecode must point at the film's TITLE CARD / main-title logo shot (usually within the first few minutes of the runtime), and its "grab" should describe that title-card shot.`
+    ? `\n\nADDITIONALLY, the FIRST item in the array must be a TITLE slide (before the ${count} trivia moment${count === 1 ? '' : 's'}): its caption is "${film}" on the first line, then a newline, then a punchy one-line hook that TEASES the final fact so viewers swipe to the end (e.g. "the last one changes how you'll watch the ending" — no hashtags). Its timecode must point at the film's TITLE CARD / main-title logo shot (usually within the first few minutes of the runtime), and its "grab" should describe that title-card shot.`
     : '';
   const focusBlock = Number.isFinite(focusTimecode)
     ? `\n\nFocus this one on the SCENE around ${Math.round(focusTimecode)} seconds in (roughly ${Math.round((focusTimecode / dur) * 100)}% through the film), or a behind-the-scenes fact about that part of the shoot.`
@@ -39,9 +39,13 @@ Give exactly ${count} trivia moment${count === 1 ? '' : 's'}. Each MUST be tied 
 
 RULES for the facts:
 - SKIP THE FAMOUS ONES: nothing from the film's best-known trivia — if it appears in every listicle or a casual fan already knows it, it's out. Aim for what a film-history podcast would surprise people with.
-- VARY THE TYPE across the set: at most one each of practical effects/stunts, casting/actors, improvised moments, production mishaps, editing/sound/score details, locations/props. No two facts of the same type.
+- MAKE IT VISUAL: strongly prefer facts the viewer can SEE in the suggested frame — a prop, a background detail, a crew reflection, an on-screen mistake, a cameo — so the image itself proves the fact. A photo slideshow lives or dies on "look at THIS".
+- HUNT EASTER EGGS: at least one fact must be a hidden detail or Easter egg most viewers have never noticed — blink-and-you-miss-it props, background gags, continuity artifacts, hidden signatures. Phrase at least one as a "did you ever notice…" challenge.
+- THE "NO WAY" TEST: if a film fan wouldn't blurt "no way, really?", cut the fact and find a better one.
+- VARY THE TYPE across the set: at most one each of practical effects/stunts, casting/actors, improvised moments, production mishaps, editing/sound/score details, locations/props, hidden Easter eggs. No two facts of the same type.
 - BE CONCRETE: every caption must name something specific — a person, prop, number, line, or technique. No vague "fun fact" phrasing.
 - LEAD WITH THE SURPRISE: write like a punchy caption, not an encyclopedia entry.
+- SAVE THE BEST FOR LAST: order the facts so the single most jaw-dropping one is the FINAL trivia item — the payoff for swiping to the end.
 - Only facts you are confident are TRUE; never invent details. Each becomes one slide caption (${CAPTION_MAX} characters max, no hashtags).
 
 For each, give:
