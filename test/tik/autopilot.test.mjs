@@ -37,9 +37,11 @@ test('buildAutopilotPrompt demands visual, Easter-egg, jaw-drop trivia with the 
   assert.match(p, /SAVE THE BEST FOR LAST/);
 });
 
-test('title slide hook teases the final fact', () => {
+test('title slide hook is a general intro, not a last-fact tease', () => {
   const p = buildAutopilotPrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440, includeTitleSlide: true });
-  assert.match(p, /TEASES the final fact/);
+  assert.match(p, /GENERAL intro/);
+  assert.match(p, /Do NOT reference any specific fact/);
+  assert.doesNotMatch(p, /TEASES the final fact/);
 });
 
 test('buildAutopilotPrompt lists excluded trivia to avoid repeats', () => {
