@@ -86,13 +86,36 @@ test('buildAutopilotPrompt passes user guidance, delimited as data', () => {
   assert.doesNotMatch(p2, /<guidance>/);
 });
 
-test('a long guidance paste is promoted to PRIMARY user source material', () => {
-  const paste = 'The mechanical shark sank on its first day in the water. '.repeat(20); // > 800 chars
+test('a multi-item paste is promoted to user-chosen facts to rewrite (not curate)', () => {
+  const paste = 'The mechanical shark sank on its first day.\n\nThe barrels were real.\n\nSpielberg cameos as a clarinet player.';
   const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440, guidance: paste });
-  assert.match(p, /USER-SUPPLIED SOURCE MATERIAL/);
-  assert.match(p, /PRIMARY source/);
-  assert.match(p, /<user_source>/);
+  assert.match(p, /USER-CHOSEN FACTS/);
+  assert.match(p, /ONE trivia item per numbered fact/);
+  assert.match(p, /IGNORE the "SKIP THE FAMOUS ONES"/);
+  assert.match(p, /<user_facts>/);
+  assert.match(p, /1\. The mechanical shark sank/); // numbered, in order
   assert.doesNotMatch(p, /<guidance>/);
+});
+
+test('a single long blob is source notes (draw the best N), not one-per-fact', () => {
+  const paste = 'x'.repeat(900); // no blank-line separators → 1 item
+  const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440, guidance: paste, count: 5 });
+  assert.match(p, /USER-SUPPLIED SOURCE MATERIAL/);
+  assert.match(p, /draw the strongest 5 facts/);
+  assert.doesNotMatch(p, /USER-CHOSEN FACTS/);
+});
+
+test('enumerated facts are numbered and capped to count (strongest-last survives)', () => {
+  const paste = Array.from({ length: 15 }, (_, i) => `Fact number ${i + 1} about the film.`).join('\n\n');
+  const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440, guidance: paste, count: 12 });
+  assert.match(p, /12\. Fact number 12/);   // 12th fact included + numbered
+  assert.doesNotMatch(p, /13\. Fact number 13/); // sliced to count=12
+});
+
+test('a short single-line direction stays steering, not source', () => {
+  const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440, guidance: 'lean into the score' });
+  assert.match(p, /<guidance>lean into the score<\/guidance>/);
+  assert.doesNotMatch(p, /USER-CHOSEN FACTS/);
 });
 
 test('Wikipedia material defers to a user source paste (cross-check role)', () => {

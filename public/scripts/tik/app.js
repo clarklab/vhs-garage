@@ -149,10 +149,35 @@ async function enterEdit(id) {
   els.cancelEdit.classList.remove('hidden');
   render(); // apply the highlight
   els.status.textContent = slide.grabHint
-    ? `Editing this slide — GRAB: ${slide.grabHint}`
-    : 'Editing this slide — scrub to a new frame, then Save.';
+    ? `Editing — GRAB: ${slide.grabHint}  (or paste an image)`
+    : 'Editing this slide — scrub to a new frame and Save, or paste an image.';
   if (Number.isFinite(slide.timecode)) await seekAndSettle(els.video, slide.timecode);
 }
+
+// While a slide is being edited, pasting an image from the clipboard sets it as
+// that slide's frame (a custom image, not from the movie file). Text pastes and
+// pastes outside edit mode fall through untouched (so caption/prompt paste works).
+document.addEventListener('paste', async (e) => {
+  if (!editingId) return;
+  const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
+  if (!item) return;
+  e.preventDefault();
+  const blob = item.getAsFile();
+  if (!blob) return;
+  const id = editingId;
+  try {
+    const bitmap = await createImageBitmap(blob);
+    // Custom image: no movie timecode, and clear any stale GRAB hint so a later
+    // thumb-tap doesn't re-seek the video to an unrelated frame.
+    slides = updateSlideFrame(slides, id, bitmap, undefined);
+    slides = slides.map((s) => (s.id === id ? { ...s, grabHint: '' } : s));
+    exitEdit();
+    els.status.textContent = 'Pasted image set as this slide’s frame.';
+  } catch (err) {
+    console.error('[tik] paste image failed:', err);
+    els.status.textContent = 'Couldn’t read the pasted image.';
+  }
+});
 function resetEditState() {
   editingId = null;
   els.grabIcon.textContent = 'photo_camera';
@@ -170,11 +195,14 @@ els.autopilot.addEventListener('click', async () => {
   setAiBusy(true);
   try {
     els.status.textContent = `Researching ${movie.query || 'the film'}…`;
-    // Title slide first (grabbed at the film's title-card shot), then 5 trivia scenes.
+    // If the starter box holds a list of pasted facts, make one slide per fact
+    // (capped); otherwise the default 5. Title slide is always added on top.
+    const guidance = els.autopilotPrompt.value.trim();
+    const pasteItems = guidance.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+    const count = pasteItems.length >= 2 ? Math.min(pasteItems.length, 12) : 5;
     const scenes = await fetchScenes({
       title: movie.title, year: movie.year, durationSeconds: els.video.duration,
-      count: 5, includeTitleSlide: true,
-      guidance: els.autopilotPrompt.value.trim(), // optional starter facts/direction to riff on
+      count, includeTitleSlide: true, guidance,
       onProgress: (m) => { els.status.textContent = `Researching ${movie.query || 'the film'} — ${m}`; },
     });
     let added = 0;

@@ -26,16 +26,24 @@ export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUT
   const excludeBlock = excludeList.length
     ? `\n\nAlready used — do NOT repeat, paraphrase, or overlap with any of these; give genuinely different moments:\n${excludeList.map((c) => `- ${c}`).join('\n')}`
     : '';
-  // Short guidance = steering. A LONG paste (a trivia page from IMDb, Reddit,
-  // etc.) is the user handing us their preferred source — promote it to
-  // PRIMARY source material, above even our own fetched references.
+  // Three modes for the starter box:
+  // - ENUMERATED facts (2+ blank-line-separated items): rewrite each 1:1 (the
+  //   client sizes `count` to the item count, so this stays consistent).
+  // - a single LONG blob (>800 chars, no blank lines): treat as source notes —
+  //   draw the best `count` facts from it (consistent with "exactly ${count}").
+  // - short text: steering to riff on.
   const guidanceText = String(guidance || '').trim().slice(0, 20000);
-  const guidanceIsSource = guidanceText.length > 800;
-  const guidanceBlock = guidanceText
-    ? (guidanceIsSource
-      ? `\n\nUSER-SUPPLIED SOURCE MATERIAL is below (pasted from a trivia page or their own research). This is your PRIMARY source — draw most facts from it. Select the most VISUAL and surprising items, rewrite each punchy in your OWN words (never copy sentences), drop any you believe are false, and still apply every rule above (scene-tied, timecodes, skip the famous ones):\n<user_source>${guidanceText}</user_source>`
-      : `\n\nThe user added steering and/or starter facts for this request. Riff on and expand them — but treat any claims as unverified: only include ones you are confident are true, and correct details that are off. Follow the direction where it doesn't conflict with the rules above:\n<guidance>${guidanceText}</guidance>`)
-    : '';
+  const pasteItems = guidanceText.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+  const isEnumeratedFacts = pasteItems.length >= 2;
+  const guidanceIsSource = isEnumeratedFacts || guidanceText.length > 800;
+  const factList = pasteItems.slice(0, count); // align with the client's count cap so the last (strongest) item survives
+  const guidanceBlock = !guidanceText
+    ? ''
+    : isEnumeratedFacts
+      ? `\n\nUSER-CHOSEN FACTS are below — the SPECIFIC trivia the user picked for this slideshow. YOUR JOB is to turn each into a slide, NOT to curate, replace, or add your own. IGNORE the "SKIP THE FAMOUS ONES" and "HUNT EASTER EGGS" rules above — the user already chose these; keep well-known ones if they're in the list. Produce ONE trivia item per numbered fact below, in the same order, each rewritten punchy and scene-tied in your OWN words (never copy sentences), with a "timecode" and "grab". Drop a fact ONLY if you're confident it's false; if one is vague, still include it with your best-guess timecode. (Still applies: tie each to a specific scene, MAKE IT VISUAL, and produce the intro title slide as instructed.)\n<user_facts>\n${factList.map((f, i) => `${i + 1}. ${f}`).join('\n')}\n</user_facts>`
+      : guidanceIsSource
+        ? `\n\nUSER-SUPPLIED SOURCE MATERIAL is below (the user's own notes/research). Treat it as your PRIMARY source: draw the strongest ${count} facts from it, pick the most VISUAL and surprising, rewrite each punchy in your OWN words (never copy sentences), drop any you believe are false, and apply every rule above (scene-tied, timecodes, save the best for last):\n<user_source>${guidanceText}</user_source>`
+        : `\n\nThe user added steering and/or starter facts for this request. Riff on and expand them — but treat any claims as unverified: only include ones you are confident are true, and correct details that are off. Follow the direction where it doesn't conflict with the rules above:\n<guidance>${guidanceText}</guidance>`;
   const sourceBlock = String(sourceMaterial || '').trim()
     ? (guidanceIsSource
       ? `\n\nADDITIONAL reference material${sourceName ? ` (Wikipedia: "${sourceName}")` : ''} — use it to cross-check the user's source and to fill gaps:\n<source_material>${String(sourceMaterial).trim().slice(0, 12000)}</source_material>`
