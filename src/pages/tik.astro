@@ -1,6 +1,11 @@
 ---
 import Base from '../layouts/Base.astro';
 import { BUILD_ID } from '../utils/build-id.js';
+
+// Bookmarklet: on an IMDb trivia page, copies every trivia item to the
+// clipboard for pasting into the starter-prompt box. Runs in the USER'S
+// browser on a page they're viewing — we never scrape IMDb server-side.
+const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{const t=[...document.querySelectorAll('[data-testid="item-text"], .ipc-html-content-inner-div')].map(e=>e.innerText.trim()).filter(Boolean);const u=[...new Set(t)];if(!u.length){alert('No trivia found - open a movie\\'s Trivia page on IMDb first.');return}navigator.clipboard.writeText(u.join('\\n\\n')).then(()=>alert('Copied '+u.length+' trivia items - paste into the /tik starter prompt.'))})()`);
 ---
 <Base title="/tik" description="Movie-trivia TikTok slideshow maker">
   <meta slot="head" name="robots" content="noindex" />
@@ -32,6 +37,16 @@ import { BUILD_ID } from '../utils/build-id.js';
         <textarea id="autopilot-prompt" rows="2"
                   class="w-full rounded bg-neutral-900 border border-neutral-800 px-2 py-1.5 text-sm text-neutral-100"
                   placeholder="Optional starter prompt — paste trivia you found (IMDb, Reddit, anywhere) or give a direction; autopilot verifies and riffs on it"></textarea>
+        <p class="text-[11px] leading-snug text-neutral-500 -mt-1">
+          A big paste becomes autopilot's primary source. One-click grab: drag
+          <a href={IMDB_BOOKMARKLET}
+             class="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300"
+             title="Drag me to your bookmarks bar, then click it while on a movie's IMDb Trivia page"
+             onclick="return false;">
+            <span class="material-symbols-outlined text-[13px] leading-none">bookmark</span>Copy IMDb trivia
+          </a>
+          to your bookmarks bar, click it on a movie's IMDb Trivia page, then paste here.
+        </p>
 
         <button id="autopilot-btn"
                 class="flex items-center justify-center gap-2 rounded bg-gradient-to-r from-fuchsia-600 to-red-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40"

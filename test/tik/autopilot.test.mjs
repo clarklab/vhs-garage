@@ -86,6 +86,25 @@ test('buildAutopilotPrompt passes user guidance, delimited as data', () => {
   assert.doesNotMatch(p2, /<guidance>/);
 });
 
+test('a long guidance paste is promoted to PRIMARY user source material', () => {
+  const paste = 'The mechanical shark sank on its first day in the water. '.repeat(20); // > 800 chars
+  const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440, guidance: paste });
+  assert.match(p, /USER-SUPPLIED SOURCE MATERIAL/);
+  assert.match(p, /PRIMARY source/);
+  assert.match(p, /<user_source>/);
+  assert.doesNotMatch(p, /<guidance>/);
+});
+
+test('Wikipedia material defers to a user source paste (cross-check role)', () => {
+  const paste = 'x'.repeat(900);
+  const p = buildAutopilotPrompt({
+    title: 'Jaws', durationSeconds: 7440, guidance: paste,
+    sourceMaterial: 'Principal photography…', sourceName: 'Jaws (film)',
+  });
+  assert.match(p, /ADDITIONAL reference material/);
+  assert.doesNotMatch(p, /STRONGLY PREFER facts grounded/);
+});
+
 test('normalizeSuggestions keeps valid entries and clamps timecodes to [0, duration]', () => {
   const raw = { suggestions: [
     { caption: 'A', timecode: -5 },
