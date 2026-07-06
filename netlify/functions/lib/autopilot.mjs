@@ -26,11 +26,20 @@ export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUT
   const excludeBlock = excludeList.length
     ? `\n\nAlready used — do NOT repeat, paraphrase, or overlap with any of these; give genuinely different moments:\n${excludeList.map((c) => `- ${c}`).join('\n')}`
     : '';
-  const guidanceBlock = String(guidance || '').trim()
-    ? `\n\nThe user added steering and/or starter facts for this request. Riff on and expand them — but treat any claims as unverified: only include ones you are confident are true, and correct details that are off. Follow the direction where it doesn't conflict with the rules above:\n<guidance>${String(guidance).trim().slice(0, 20000)}</guidance>`
+  // Short guidance = steering. A LONG paste (a trivia page from IMDb, Reddit,
+  // etc.) is the user handing us their preferred source — promote it to
+  // PRIMARY source material, above even our own fetched references.
+  const guidanceText = String(guidance || '').trim().slice(0, 20000);
+  const guidanceIsSource = guidanceText.length > 800;
+  const guidanceBlock = guidanceText
+    ? (guidanceIsSource
+      ? `\n\nUSER-SUPPLIED SOURCE MATERIAL is below (pasted from a trivia page or their own research). This is your PRIMARY source — draw most facts from it. Select the most VISUAL and surprising items, rewrite each punchy in your OWN words (never copy sentences), drop any you believe are false, and still apply every rule above (scene-tied, timecodes, skip the famous ones):\n<user_source>${guidanceText}</user_source>`
+      : `\n\nThe user added steering and/or starter facts for this request. Riff on and expand them — but treat any claims as unverified: only include ones you are confident are true, and correct details that are off. Follow the direction where it doesn't conflict with the rules above:\n<guidance>${guidanceText}</guidance>`)
     : '';
   const sourceBlock = String(sourceMaterial || '').trim()
-    ? `\n\nVERIFIED SOURCE MATERIAL${sourceName ? ` (Wikipedia: "${sourceName}")` : ''} about this film's production is below. STRONGLY PREFER facts grounded in it over pure memory — it is better sourced than recall. Pick the most VISUAL and surprising details, rewrite them punchy in your OWN words (never copy sentences), and still apply every rule above (scene-tied, timecodes, skip the famous ones):\n<source_material>${String(sourceMaterial).trim().slice(0, 12000)}</source_material>`
+    ? (guidanceIsSource
+      ? `\n\nADDITIONAL reference material${sourceName ? ` (Wikipedia: "${sourceName}")` : ''} — use it to cross-check the user's source and to fill gaps:\n<source_material>${String(sourceMaterial).trim().slice(0, 12000)}</source_material>`
+      : `\n\nVERIFIED SOURCE MATERIAL${sourceName ? ` (Wikipedia: "${sourceName}")` : ''} about this film's production is below. STRONGLY PREFER facts grounded in it over pure memory — it is better sourced than recall. Pick the most VISUAL and surprising details, rewrite them punchy in your OWN words (never copy sentences), and still apply every rule above (scene-tied, timecodes, skip the famous ones):\n<source_material>${String(sourceMaterial).trim().slice(0, 12000)}</source_material>`)
     : '';
 
   return `You are a film historian curating a TikTok slideshow of DEEP-CUT movie trivia.
