@@ -495,12 +495,13 @@ els.post.addEventListener('click', async () => {
       : (titleLine || 'Movie trivia & behind-the-scenes facts');
     const postDesc = [
       movie.query
-        ? `Behind-the-scenes facts and hidden details from ${movie.query} — how many of these did you know?`
-        : 'Behind-the-scenes movie facts and hidden details — how many of these did you know?',
-      'What’s your favorite scene? Drop it in the comments.',
+        ? `Behind-the-scenes facts and hidden details from ${movie.query}.`
+        : 'Behind-the-scenes movie facts and hidden details.',
+      // Main ask: viewers love dropping quotes/one-liners, so ask for them outright.
+      'What’s your favorite quote from the movie? Drop it in the comments.',
       'Save this for your next movie night, and follow VHS Garage for more.',
       // TikTok effectively honors ~5 hashtags — keep them broad, skip niche tags.
-      '#movietrivia #moviefacts #behindthescenes #movietok #didyouknow',
+      '#movietrivia #moviefacts #behindthescenes #movietok #moviequotes',
     ].join(' ');
     const result = await publishSlideshow(slides, {
       titleLine,
