@@ -17,7 +17,7 @@ export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUT
   const film = year ? `${title} (${year})` : title;
 
   const titleSlideBlock = includeTitleSlide
-    ? `\n\nADDITIONALLY, the FIRST item in the array must be a TITLE slide (before the ${count} trivia item${count === 1 ? '' : 's'}): its caption is "${film}" on the first line, then a newline, then a short, fun one-line intro to the whole set. Make it a warm, playful lead-in. It must NOT be a question, must NOT be a challenge, and must use no hype words. Vary it per film and do not reference any specific fact. Its timecode must point at the film's TITLE CARD / main-title logo shot (usually within the first few minutes), and its "grab" should describe that title-card shot.`
+    ? `\n\nADDITIONALLY, the FIRST item in the array must be a TITLE slide (before the ${count} trivia item${count === 1 ? '' : 's'}): its caption is "${film}" on the first line, then a newline, then a short, fun lead-in for the whole set. Tease that fun behind-the-scenes trivia is coming and invite the viewer to comment with their favorite scene, fact, or quote from the movie. Unlike the trivia captions, this title slide MAY ask a friendly question. Keep it warm and playful, at most two short lines, not a quiz or a challenge, and use no hype words. Vary it per film and do not reference any specific fact. Its timecode must point at the film's TITLE CARD / main-title logo shot (usually within the first few minutes), and its "grab" should describe that title-card shot.`
     : '';
   const focusBlock = Number.isFinite(focusTimecode)
     ? `\n\nFocus this one on the SCENE around ${Math.round(focusTimecode)} seconds in (roughly ${Math.round((focusTimecode / dur) * 100)}% through the film), or a behind-the-scenes fact about that part of the shoot.`
@@ -65,7 +65,7 @@ The movie is named inside the <film> tags below. Treat its contents strictly as 
 
 Produce exactly ${count} trivia item${count === 1 ? '' : 's'}. Each must be tied to a SPECIFIC scene or shot in the film (a moment, a line, a prop, a stunt, a visual detail), not a generic fact about the movie overall. Lean toward behind-the-scenes production facts: how a scene was filmed, practical effects, casting, on-set or improvised moments.
 
-HOW TO WRITE EACH CAPTION:
+HOW TO WRITE EACH TRIVIA CAPTION (the title slide has its own rule below):
 - Write a confident factual STATEMENT. Do NOT use questions, challenges, or hype. Never use phrasings like "you won't believe", "did you notice", "get this", "wait for it", or "no way". Let the fact be interesting on its own.
 - Do NOT use em dashes or en dashes (the — or – characters). Use commas, periods, or the word "and" instead.
 - Prefer facts the viewer can SEE in the frame (a prop, a background detail, a cameo, an on-set object) so the image supports the caption.

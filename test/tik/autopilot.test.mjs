@@ -51,13 +51,16 @@ test('buildAutopilotPrompt embeds source material when provided, omits when abse
   assert.doesNotMatch(p2, /<source_material>/);
 });
 
-test('title slide hook is a fun general intro, not a question/tease', () => {
+test('title slide invites engagement (favorite scene/fact/quote), no challenge framing', () => {
   const p = buildAutopilotPrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440, includeTitleSlide: true });
-  assert.match(p, /fun one-line intro/);
+  assert.match(p, /favorite scene, fact, or quote/i);
+  assert.match(p, /invite the viewer to comment/i);
   assert.match(p, /not reference any specific fact/i);
-  assert.match(p, /NOT be a question/);
+  // Still not a "how many did you know" quiz/challenge, and doesn't tease a specific fact.
   assert.doesNotMatch(p, /TEASES the final fact/);
   assert.doesNotMatch(p, /how many of these/i);
+  // The title slide is exempt from the trivia "no questions" rule.
+  assert.match(p, /title slide MAY ask a friendly question/i);
 });
 
 test('buildAutopilotPrompt lists excluded trivia to avoid repeats', () => {
