@@ -33,8 +33,13 @@ function pillPath(ctx, x, y, w, h, r) {
 
 // Draw the composed slide onto `cvs`. Layout math stays in 1080x1920 space;
 // we scale the raster with ctx.scale so text stays crisp at preview sizes.
-// bitmap: ImageBitmap; caption: string; titleLine?: prefix; scale?: raster scale.
-export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1 } = {}) {
+// bitmap: ImageBitmap; caption: string; titleLine?: prefix; scale?: raster scale;
+// fontScale?: per-slide caption sizing (1 = auto; the overflow guard still caps
+// scale-up, and scale-down goes below the usual minimum).
+export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1 } = {}) {
+  const fs = Math.min(Math.max(Number(fontScale) || 1, 0.5), 1.6);
+  const maxFont = Math.round(MAX_FONT * fs);
+  const minFont = Math.max(12, Math.round(MIN_FONT * fs));
   cvs.width = Math.round(CANVAS_W * scale);
   cvs.height = Math.round(CANVAS_H * scale);
   const ctx = cvs.getContext('2d');
@@ -59,15 +64,15 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   const blockH = (n, size) => (n ? n * lineBoxH(size) + (n - 1) * PILL_GAP : 0);
   const maxGroupH = CANVAS_H - MIN_VPAD * 2;
 
-  let fontSize = MAX_FONT;
+  let fontSize = maxFont;
   let lines = [];
   if (fullText) {
     const maxTextH = maxGroupH - F.h - GAP;
-    fontSize = fitFontSize(wrapAt(fontSize).length, Math.max(maxTextH, lineBoxH(MIN_FONT)), {
-      maxFont: MAX_FONT, minFont: MIN_FONT, lineHeightFactor: 1.5,
+    fontSize = fitFontSize(wrapAt(fontSize).length, Math.max(maxTextH, lineBoxH(minFont)), {
+      maxFont, minFont, lineHeightFactor: 1.5,
     });
     lines = wrapAt(fontSize);
-    while (fontSize > MIN_FONT && F.h + GAP + blockH(lines.length, fontSize) > maxGroupH) {
+    while (fontSize > minFont && F.h + GAP + blockH(lines.length, fontSize) > maxGroupH) {
       fontSize -= 2;
       lines = wrapAt(fontSize);
     }

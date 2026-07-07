@@ -5,7 +5,6 @@ import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken } from 
 import { publishSlideshow } from './publish.js';
 import { fetchScenes } from './autopilot.js';
 import { parseMovieName } from './filename.js';
-import { formatTimecode } from './timecode.js';
 import { composeToCanvas, composeSlide } from './compose.js';
 
 const $ = (id) => document.getElementById(id);
@@ -284,7 +283,7 @@ function render() {
 function redrawAllThumbs() {
   slides.forEach((slide) => {
     const thumb = els.list.querySelector(`canvas[data-thumb="${slide.id}"]`);
-    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE });
+    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1 });
   });
 }
 
@@ -305,7 +304,6 @@ function renderSlide(slide, index) {
   thumb.dataset.thumb = slide.id;
   thumb.className = 'flex-none cursor-pointer rounded bg-black w-[72px] h-auto';
   thumb.title = 'Click to re-grab this frame';
-  composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE });
   thumb.addEventListener('click', () => enterEdit(slide.id));
 
   // Text fields inside a draggable <li> lose mouse text-selection to the drag
@@ -324,11 +322,18 @@ function renderSlide(slide, index) {
   ta.maxLength = 300; // AI caps at 180; give manual edits headroom but keep slides renderable
   ta.placeholder = 'Trivia for this frame…';
   ta.value = slide.caption;
+  suspendDragWhileEditing(ta);
+
+  // Redraw this slide's preview from the live caption + its per-slide font scale.
+  const redrawThumb = () => composeToCanvas(thumb, slide.bitmap, ta.value, {
+    titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1,
+  });
+  redrawThumb();
+
   ta.addEventListener('input', () => {
     slides = editCaption(slides, slide.id, ta.value);
-    composeToCanvas(thumb, slide.bitmap, ta.value, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE }); // live preview
+    redrawThumb();
   });
-  suspendDragWhileEditing(ta);
   mid.append(ta);
 
   // Editor-only hint from the AI: what shot to look for when (re)grabbing.
@@ -341,16 +346,86 @@ function renderSlide(slide, index) {
     mid.append(hint);
   }
 
-  // Twinkle: opens a steerable AI panel — rewrite this fact (keep frame) or
-  // swap in a totally different scene (new frame + caption), with optional
-  // free-text guidance either way.
-  const redo = document.createElement('button');
-  redo.className = 'rounded bg-neutral-800 px-2 py-1 text-fuchsia-300 disabled:opacity-40';
-  redo.title = 'Redo with AI…';
-  redo.append(iconSpan('auto_awesome'));
+  // Per-slide toolbar: caption font sizing + two AI actions. No prompt — one
+  // button rewrites this fact, the other creates a new one. Both run on Opus.
+  const toolbar = document.createElement('div');
+  toolbar.className = 'flex flex-wrap items-center gap-1';
+  const tbBtn = (icon, label, tip, extra = '') => {
+    const b = document.createElement('button');
+    b.className = `flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 disabled:opacity-40 ${extra}`;
+    b.title = tip;
+    b.append(iconSpan(icon, 'text-[16px]'));
+    if (label) b.append(document.createTextNode(label));
+    return b;
+  };
 
+  // Font sizing (per slide): scales the caption up/down for the amount of text.
+  const fontDown = tbBtn('text_decrease', '', 'Smaller caption');
+  const fontUp = tbBtn('text_increase', '', 'Bigger caption');
+  const nudgeFont = (delta) => {
+    const next = Math.min(Math.max((slide.fontScale || 1) + delta, 0.5), 1.6);
+    slide.fontScale = next; // keep the closure current for redraws
+    slides = slides.map((s) => (s.id === slide.id ? { ...s, fontScale: next } : s));
+    redrawThumb();
+  };
+  fontDown.addEventListener('click', () => nudgeFont(-0.1));
+  fontUp.addEventListener('click', () => nudgeFont(0.1));
+
+  const rewriteBtn = tbBtn('auto_awesome', 'Rewrite this fact', 'New wording for this same fact, keeps the frame', 'text-fuchsia-300');
+  const newFactBtn = tbBtn('refresh', 'Create a new fact', 'A different fact, with a new frame');
+
+  const runAi = async (mode) => {
+    if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
+    if (aiBusy) return;
+    setAiBusy(true);
+    rewriteBtn.disabled = true; newFactBtn.disabled = true;
+    try {
+      if (mode === 'rewrite') {
+        // A fresh take on THIS fact; the frame stays.
+        els.status.textContent = 'Rewriting this fact…';
+        const exclude = slides.filter((s) => s.id !== slide.id).map((s) => s.caption);
+        const [scene] = await fetchScenes({
+          title: movie.title, year: movie.year, durationSeconds: els.video.duration,
+          count: 1, exclude, focusTimecode: slide.timecode, model: 'claude-opus-4-8',
+          onProgress: (m) => { els.status.textContent = `Rewriting this fact — ${m}`; },
+        });
+        slides = editCaption(slides, slide.id, scene.caption);
+        ta.value = scene.caption;
+        redrawThumb();
+        els.status.textContent = 'Fact rewritten.';
+      } else {
+        // A different fact entirely, with a new frame at its timecode.
+        els.status.textContent = 'Creating a new fact…';
+        const exclude = slides.map((s) => s.caption);
+        const [scene] = await fetchScenes({
+          title: movie.title, year: movie.year, durationSeconds: els.video.duration,
+          count: 1, exclude, model: 'claude-opus-4-8',
+          onProgress: (m) => { els.status.textContent = `Creating a new fact — ${m}`; },
+        });
+        const bitmap = await grabAt(scene.timecode);
+        slides = updateSlideFrame(slides, slide.id, bitmap, scene.timecode);
+        slides = editCaption(slides, slide.id, scene.caption);
+        slides = slides.map((s) => (s.id === slide.id ? { ...s, grabHint: scene.grab || '' } : s));
+        render();
+        els.status.textContent = 'Created a new fact and frame.';
+      }
+    } catch (err) {
+      console.error('[tik] slide AI action failed:', err);
+      els.status.textContent = err.message;
+    } finally {
+      setAiBusy(false);
+      rewriteBtn.disabled = false; newFactBtn.disabled = false;
+    }
+  };
+  rewriteBtn.addEventListener('click', () => runAi('rewrite'));
+  newFactBtn.addEventListener('click', () => runAi('newFact'));
+
+  toolbar.append(fontDown, fontUp, rewriteBtn, newFactBtn);
+  mid.append(toolbar);
+
+  // Delete (top-right).
   const del = document.createElement('button');
-  del.className = 'rounded bg-neutral-800 px-2 py-1 text-neutral-400';
+  del.className = 'rounded bg-neutral-800 px-2 py-1 text-neutral-400 self-start disabled:opacity-40';
   del.title = 'Delete slide';
   del.append(iconSpan('delete'));
   del.addEventListener('click', () => {
@@ -359,109 +434,8 @@ function renderSlide(slide, index) {
     render();
   });
 
-  const controls = document.createElement('div');
-  controls.className = 'flex flex-none flex-col gap-1';
-  controls.append(redo, del);
-
-  row.append(thumb, mid, controls);
-
-  // --- AI panel (hidden until the twinkle is clicked). Runs on Opus 4.8 —
-  // the strongest model — since it's a single-suggestion request. ---
-  const panel = document.createElement('div');
-  panel.className = 'hidden gap-1.5 flex-col';
-
-  // Say exactly what each action sends, so nothing feels like a mystery box.
-  const hint = document.createElement('p');
-  hint.className = 'text-[11px] leading-snug text-neutral-500';
-  const tcLabel = Number.isFinite(slide.timecode) ? formatTimecode(slide.timecode) : 'this moment';
-  hint.innerHTML =
-    `<b class="text-neutral-400">Rewrite fact</b> asks Claude Opus for different trivia about this same scene (at ${tcLabel}) — the frame stays. ` +
-    `<b class="text-neutral-400">New scene</b> asks for a different moment entirely — replaces the frame and the caption. ` +
-    `Both are told to avoid the trivia already on your slides, and anything you type below is sent along as guidance.`;
-
-  const guide = document.createElement('input');
-  guide.type = 'text';
-  guide.placeholder = 'Optional guidance sent with either button — e.g. “something about the practical effects”';
-  guide.className = 'flex-1 rounded bg-neutral-950 border border-neutral-800 px-2 py-1.5 text-sm text-neutral-100';
-  suspendDragWhileEditing(guide);
-
-  const mkPanelBtn = (icon, label, tip) => {
-    const b = document.createElement('button');
-    b.className = 'flex items-center justify-center gap-1 rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-100 disabled:opacity-40';
-    b.title = tip;
-    b.append(iconSpan(icon), document.createTextNode(label));
-    return b;
-  };
-  const rewriteBtn = mkPanelBtn('edit_note', 'Rewrite fact', 'New trivia for this same scene — keeps the frame');
-  const newSceneBtn = mkPanelBtn('movie', 'New scene', 'Different moment — replaces frame + caption');
-
-  const panelRow = document.createElement('div');
-  panelRow.className = 'flex flex-col gap-2 sm:flex-row sm:items-center';
-  panelRow.append(guide, rewriteBtn, newSceneBtn);
-  panel.append(hint, panelRow);
-
-  redo.addEventListener('click', () => {
-    if (panel.classList.contains('hidden')) {
-      panel.classList.remove('hidden');
-      panel.classList.add('flex');
-      guide.focus();
-    } else {
-      panel.classList.add('hidden');
-      panel.classList.remove('flex');
-    }
-  });
-
-  // Shared runner for the two panel actions.
-  const runPanelAction = async (mode) => {
-    if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
-    if (aiBusy) return;
-    setAiBusy(true);
-    rewriteBtn.disabled = true;
-    newSceneBtn.disabled = true;
-    try {
-      const guidance = guide.value.trim();
-      if (mode === 'rewrite') {
-        // New fact about the SAME moment; the frame stays. Opus = best recall.
-        els.status.textContent = 'Asking Claude Opus for a better fact…';
-        const exclude = slides.filter((s) => s.id !== slide.id).map((s) => s.caption);
-        const [scene] = await fetchScenes({
-          title: movie.title, year: movie.year, durationSeconds: els.video.duration,
-          count: 1, exclude, focusTimecode: slide.timecode, guidance, model: 'claude-opus-4-8',
-          onProgress: (m) => { els.status.textContent = `Rewriting this fact — ${m}`; },
-        });
-        slides = editCaption(slides, slide.id, scene.caption);
-        ta.value = scene.caption;
-        composeToCanvas(thumb, slide.bitmap, scene.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE });
-        els.status.textContent = 'Trivia rewritten.';
-      } else {
-        // A different scene entirely: new caption AND a new frame at its timecode.
-        els.status.textContent = 'Asking Claude Opus for a different scene…';
-        const exclude = slides.map((s) => s.caption); // exclude this one too
-        const [scene] = await fetchScenes({
-          title: movie.title, year: movie.year, durationSeconds: els.video.duration,
-          count: 1, exclude, guidance, model: 'claude-opus-4-8',
-          onProgress: (m) => { els.status.textContent = `Finding a different scene — ${m}`; },
-        });
-        const bitmap = await grabAt(scene.timecode);
-        slides = updateSlideFrame(slides, slide.id, bitmap, scene.timecode);
-        slides = editCaption(slides, slide.id, scene.caption);
-        slides = slides.map((s) => (s.id === slide.id ? { ...s, grabHint: scene.grab || '' } : s));
-        render();
-        els.status.textContent = 'Swapped in a different scene — tweak the frame if needed.';
-      }
-    } catch (err) {
-      console.error('[tik] AI panel action failed:', err);
-      els.status.textContent = err.message;
-    } finally {
-      setAiBusy(false);
-      rewriteBtn.disabled = false;
-      newSceneBtn.disabled = false;
-    }
-  };
-  rewriteBtn.addEventListener('click', () => runPanelAction('rewrite'));
-  newSceneBtn.addEventListener('click', () => runPanelAction('newScene'));
-
-  li.append(row, panel);
+  row.append(thumb, mid, del);
+  li.append(row);
 
   // Drag to reorder.
   li.addEventListener('dragstart', () => { dragFrom = index; });
@@ -485,7 +459,7 @@ els.download.addEventListener('click', async () => {
     const titleLine = currentTitleLine();
     for (let i = 0; i < slides.length; i++) {
       els.status.textContent = `Rendering slide ${i + 1}/${slides.length}…`;
-      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine });
+      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1 });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `${slug}-${String(i + 1).padStart(2, '0')}.jpg`;
