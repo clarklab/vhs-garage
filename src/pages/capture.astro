@@ -1304,7 +1304,16 @@ import { BUILD_ID } from '../utils/build-id.js';
                    by populatePlaylistsUI() in app.js. -->
               <div id="yt-pub-playlists" class="hidden mb-3">
                 <p class="text-white/40 text-[10px] uppercase tracking-widest mb-1.5">Add to playlists</p>
-                <div id="yt-pub-playlists-list" class="space-y-1"></div>
+                <!-- Scroll host is a STABLE wrapper (never innerHTML'd) so it
+                     survives OverlayScrollbars' DOM restructuring — same pattern
+                     as #col3-content > #library-grid. With 5/10/100 playlists
+                     the list would otherwise push the Upload button off-screen;
+                     max-h caps it and .vhs-scroll (wired at init) makes it
+                     scroll. pr-1 keeps the bar off the per-row item counts;
+                     populatePlaylistsUI() still targets the inner list. -->
+                <div class="max-h-48 overflow-y-auto vhs-scroll pr-1">
+                  <div id="yt-pub-playlists-list" class="space-y-1"></div>
+                </div>
               </div>
 
               <button id="yt-pub-upload" class="w-full py-2 bg-red-600 hover:bg-red-500 text-white text-xs transition-colors">Upload to YouTube</button>
