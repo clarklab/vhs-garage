@@ -1081,9 +1081,14 @@ import { BUILD_ID } from '../utils/build-id.js';
             <div id="player-thumb-loading" class="hidden text-white/40 text-xs py-4 text-center">Generating thumbnails…</div>
             <div id="player-thumb-grid-wrap" class="hidden">
               <div id="player-thumb-grid" class="grid grid-cols-3 gap-2"></div>
-              <div class="flex items-center justify-end mt-2">
-                <button id="player-thumb-refresh" class="text-white/40 hover:text-white/70 text-xs flex items-center gap-1 transition-colors" title="Get 6 different frames">↻ Refresh</button>
-              </div>
+            </div>
+            <!-- Refresh sits OUTSIDE the grid wrapper: a failed generation
+                 collapses the picker back to the skeleton, and when this
+                 button lived inside the wrapper that collapse took the only
+                 retry control with it. It's disabled (not hidden) while a
+                 run is in flight. -->
+            <div class="flex items-center justify-end mt-2">
+              <button id="player-thumb-refresh" class="text-white/40 hover:text-white/70 disabled:opacity-40 disabled:pointer-events-none text-xs flex items-center gap-1 transition-colors" title="Get 6 different frames">↻ Refresh</button>
             </div>
           </div>
         </div>
