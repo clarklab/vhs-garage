@@ -3897,6 +3897,10 @@ function wireThumbnailPicker() {
     emptyState.classList.toggle('hidden', state !== 'empty');
     loadingState.classList.toggle('hidden', state !== 'loading');
     gridWrap.classList.toggle('hidden', state !== 'grid');
+    // Refresh lives outside the three swapped panels so it survives every
+    // state (a failed run used to hide it along with the grid, stranding
+    // the user with no way to retry). Disable it while a run is in flight.
+    if (refreshBtn) refreshBtn.disabled = state === 'loading';
   }
 
   function renderGrid() {
@@ -3999,7 +4003,24 @@ function wireThumbnailPicker() {
       showState('grid');
     } catch (e) {
       console.warn('[thumb] generation failed:', e.message);
-      showState('empty');
+      // Keep whatever the grid already had (the saved pick and/or the
+      // previous batch — currentThumbnails is only reassigned on success)
+      // instead of collapsing to the empty skeleton. A failed Refresh
+      // shouldn't throw away frames the user can still click.
+      if (pickedThumb || currentThumbnails.length > 0) {
+        renderGrid();
+        showState('grid');
+        showErrorToast(
+          'Thumbnail refresh failed',
+          `Couldn't pull new frames from this clip (${e.message}). Kept the previous ones.`
+        );
+      } else {
+        showState('empty');
+        showErrorToast(
+          'Thumbnail generation failed',
+          `Couldn't pull frames from this clip (${e.message}). Hit ↻ Refresh to try again.`
+        );
+      }
     }
   }
 
