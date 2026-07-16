@@ -7,115 +7,243 @@ import { BUILD_ID } from '../utils/build-id.js';
 // Runs in the USER'S browser on a page they're viewing — no server-side scrape.
 const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{if(document.getElementById('tik-picker'))return;var S='[data-testid="item-text"], .ipc-html-content-inner-div';var items=[...document.querySelectorAll(S)].filter(e=>e.innerText.trim());if(!items.length){alert('No trivia found - open a movie\\'s Trivia page on IMDb first.');return}var picked=new Set(),seen=new Set();var mark=function(e,on){e.style.outline=on?'3px solid #22c55e':'';e.style.background=on?'rgba(34,197,94,.15)':'';e.style.cursor='pointer'};var bar=document.createElement('div');bar.id='tik-picker';bar.style.cssText='position:fixed;z-index:2147483647;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:8px;align-items:center;background:#111;color:#fff;padding:10px 14px;border-radius:999px;box-shadow:0 6px 24px rgba(0,0,0,.5);font:600 14px system-ui';var cnt=document.createElement('span');cnt.textContent='Tap the trivia you want';var mk=function(t,bg,fg){var b=document.createElement('button');b.textContent=t;b.style.cssText='border:0;border-radius:999px;padding:6px 12px;font:600 13px system-ui;cursor:pointer;background:'+bg+';color:'+fg;return b};var all=mk('All','#333','#fff'),non=mk('None','#333','#fff'),cp=mk('Copy','#22c55e','#000');var upd=function(){cnt.textContent=picked.size?picked.size+' selected':'Tap the trivia you want'};var tog=function(e){if(picked.has(e)){picked.delete(e);mark(e,false)}else{picked.add(e);mark(e,true)}upd()};items.forEach(function(e){if(seen.has(e))return;seen.add(e);mark(e,false);e.addEventListener('click',function(ev){if(ev.target.closest('a,button,[role=button]'))return;ev.preventDefault();ev.stopPropagation();tog(e)},true)});all.onclick=function(){items.forEach(function(e){picked.add(e);mark(e,true)});upd()};non.onclick=function(){items.forEach(function(e){picked.delete(e);mark(e,false)});upd()};cp.onclick=function(){if(!picked.size){alert('Tap the trivia items you want first.');return}var txt=items.filter(function(e){return picked.has(e)}).map(function(e){return e.innerText.trim()}).join('\\n\\n');navigator.clipboard.writeText(txt).then(function(){cp.textContent='Copied '+picked.size+'!';setTimeout(function(){cp.textContent='Copy'},1500)})};bar.append(cnt,all,non,cp);document.body.appendChild(bar)})()`);
 ---
-<Base title="/tik" description="Movie-trivia TikTok slideshow maker">
+<Base title="VHS Studio" description="VHS Garage's TikTok slideshow studio">
   <meta slot="head" name="robots" content="noindex" />
   <link slot="head" rel="preconnect" href="https://fonts.googleapis.com" />
   <link slot="head" rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link slot="head" rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" />
+  <link slot="head" rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
 
-  <div class="min-h-screen bg-neutral-950 text-neutral-100">
-    <header class="flex items-center gap-3 px-4 py-3 border-b border-neutral-800">
-      <span class="material-symbols-outlined text-[24px] leading-none text-neutral-400">movie</span>
-      <h1 class="text-lg font-bold">/tik</h1>
-      <span class="text-xs text-neutral-500">movie-trivia slideshow maker</span>
-      <div class="ml-auto flex items-center gap-2">
-        <span id="auth-status" class="text-xs text-neutral-400">not signed in</span>
-        <button id="auth-btn" class="rounded bg-neutral-800 px-3 py-1.5 text-xs font-semibold">Sign in to TikTok</button>
+  <div id="studio" class="min-h-screen bg-neutral-950 text-neutral-100 antialiased">
+    <!-- App bar -->
+    <header class="sticky top-0 z-20 flex items-center gap-3 border-b border-neutral-800/80 bg-neutral-950/90 px-4 py-2.5 backdrop-blur">
+      <img src="/images/vhs-garage-logo-square.png" alt="VHS Garage" class="h-6 w-6 rounded" />
+      <h1 class="text-sm font-extrabold tracking-tight">VHS Studio</h1>
+      <span class="hidden text-xs text-neutral-500 sm:inline">TikTok slideshow maker</span>
+      <div class="ml-auto flex items-center gap-3">
+        <span id="save-state" class="hidden items-center gap-1.5 text-xs text-neutral-400">
+          <span id="save-dot" class="h-1.5 w-1.5 rounded-full bg-neutral-600"></span>
+          <span id="save-label">Saved</span>
+        </span>
+        <span id="auth-status" class="text-xs text-neutral-500">not signed in</span>
+        <button id="auth-btn" class="rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs font-semibold hover:bg-neutral-800">Sign in to TikTok</button>
       </div>
     </header>
 
-    <main class="grid gap-4 p-4 lg:grid-cols-2">
-      <!-- Capture pane -->
-      <section class="flex flex-col gap-3">
-        <label class="block">
-          <span class="text-xs uppercase tracking-wide text-neutral-500">Video file</span>
-          <input id="file-input" type="file" accept="video/*"
-                 class="mt-1 block w-full text-sm file:mr-3 file:rounded file:border-0 file:bg-red-600 file:px-3 file:py-2 file:text-white" />
-        </label>
-
-        <textarea id="autopilot-prompt" rows="2"
-                  class="w-full rounded bg-neutral-900 border border-neutral-800 px-2 py-1.5 text-sm text-neutral-100"
-                  placeholder="Optional starter prompt — paste trivia you found (IMDb, Reddit, anywhere) or give a direction; autopilot verifies and riffs on it"></textarea>
-        <p class="text-[11px] leading-snug text-neutral-500 -mt-1">
-          A pasted list of trivia becomes autopilot's source — it rewrites each into a slide. Drag
-          <a href={IMDB_BOOKMARKLET}
-             class="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300"
-             title="Drag me to your bookmarks bar, then click it while on a movie's IMDb Trivia page"
-             onclick="return false;">
-            <span class="material-symbols-outlined text-[13px] leading-none">bookmark</span>Pick IMDb trivia
-          </a>
-          to your bookmarks bar, click it on a movie's IMDb Trivia page, tap the items you want, hit Copy, then paste here.
-        </p>
-
-        <button id="autopilot-btn"
-                class="flex items-center justify-center gap-2 rounded bg-gradient-to-r from-fuchsia-600 to-red-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
-                disabled title="Load a video first">
-          <span class="material-symbols-outlined text-[20px] leading-none">auto_awesome</span>
-          Autopilot — title slide + 5 trivia scenes
+    <!-- ============ HOME ============ -->
+    <section id="screen-home" class="mx-auto w-full max-w-5xl px-4 py-8">
+      <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">New TikTok</h2>
+      <div class="mt-3 grid gap-3 sm:grid-cols-2">
+        <button id="new-trivia" class="group relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900 p-5 text-left transition hover:border-amber-400/60">
+          <div class="tape-lines pointer-events-none absolute inset-0 opacity-40"></div>
+          <div class="relative">
+            <span class="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-amber-400/15 text-amber-300">
+              <span class="material-symbols-outlined">movie</span>
+            </span>
+            <h3 class="mt-3 text-lg font-bold tracking-tight">Tape Trivia</h3>
+            <p class="mt-1 text-sm text-neutral-400">Deep-cut trivia over frames grabbed straight from the movie file. The agent researches, you verify.</p>
+            <p class="mt-3 text-xs font-semibold text-amber-300/90">Movie file + AI research <span aria-hidden="true">→</span></p>
+          </div>
         </button>
+        <button id="new-guys" class="group relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900 p-5 text-left transition hover:border-cyan-400/60">
+          <div class="tape-lines pointer-events-none absolute inset-0 opacity-40"></div>
+          <div class="relative">
+            <span class="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-400/15 text-cyan-300">
+              <span class="material-symbols-outlined">theater_comedy</span>
+            </span>
+            <h3 class="mt-3 text-lg font-bold tracking-tight">Remembering Some Guys</h3>
+            <p class="mt-1 text-sm text-neutral-400">One actor's most memorable cult roles. The agent lists and writes, you pick and bring the photos.</p>
+            <p class="mt-3 text-xs font-semibold text-cyan-300/90">Actor + your images <span aria-hidden="true">→</span></p>
+          </div>
+        </button>
+      </div>
 
-        <video id="video" class="w-full rounded-lg bg-black" playsinline muted></video>
+      <div class="mt-10 flex items-center justify-between">
+        <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Open</h2>
+        <span class="text-xs text-neutral-600">Saved on this device</span>
+      </div>
+      <div id="project-grid" class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"></div>
+      <p id="library-empty" class="mt-3 hidden rounded-xl border border-dashed border-neutral-800 p-8 text-center text-sm text-neutral-500">
+        Nothing saved yet — drafts and posted TikToks land here automatically as you work.
+      </p>
+    </section>
 
-        <!-- Chunky scrubber -->
-        <div id="scrubber" class="select-none">
-          <input id="scrub-range" type="range" min="0" max="1000" value="0"
-                 class="h-7 w-full cursor-pointer accent-red-600" />
-          <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
-            <span id="timecode" class="tabular-nums text-neutral-300">00:00.000</span>
-            <button data-seconds="-5" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">−5s</button>
-            <button data-seconds="-1" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">−1s</button>
-            <button data-frames="-5" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">−5fr</button>
-            <button data-frames="-1" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">−1fr</button>
-            <button data-frames="1" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">+1fr</button>
-            <button data-frames="5" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">+5fr</button>
-            <button data-seconds="1" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">+1s</button>
-            <button data-seconds="5" class="rounded bg-neutral-800 px-2 py-1 text-xs tabular-nums">+5s</button>
-            <button id="grab-btn" class="ml-auto flex items-center gap-1 rounded bg-red-600 px-4 py-2 font-bold text-white disabled:opacity-40">
-              <span id="grab-icon" class="material-symbols-outlined text-[20px] leading-none">photo_camera</span>
-              <span id="grab-label">Grab frame</span>
+    <!-- ============ EDITOR ============ -->
+    <section id="screen-editor" class="mx-auto hidden w-full max-w-6xl px-4 py-4">
+      <div class="flex flex-wrap items-center gap-2 pb-2">
+        <button id="back-btn" title="Back to your library" class="flex items-center gap-1 rounded-md border border-neutral-800 bg-neutral-900 px-2.5 py-1.5 text-xs font-semibold text-neutral-300 hover:bg-neutral-800">
+          <span class="material-symbols-outlined text-[16px] leading-none">arrow_back</span> Library
+        </button>
+        <span id="format-chip" class="rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide"></span>
+        <input id="project-name" class="min-w-0 flex-1 basis-40 bg-transparent text-base font-bold tracking-tight text-neutral-100 outline-none placeholder:text-neutral-600" placeholder="Untitled" maxlength="80" />
+        <button id="download-btn" disabled
+                class="flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"
+                title="Download the finished slides as JPEGs — post them manually in the TikTok app, no API needed">
+          <span class="material-symbols-outlined text-[18px] leading-none">download</span> Download
+        </button>
+        <button id="post-btn" disabled class="flex items-center gap-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-500 disabled:opacity-40">
+          <span class="material-symbols-outlined text-[18px] leading-none">upload</span> Post to TikTok
+        </button>
+      </div>
+      <p id="post-status" class="min-h-5 pb-2 text-xs text-neutral-400"></p>
+
+      <main class="grid gap-6 lg:grid-cols-2">
+        <!-- Source pane -->
+        <section class="flex flex-col gap-4">
+          <!-- Tape Trivia -->
+          <div id="pane-trivia" class="flex flex-col gap-3">
+            <label class="block">
+              <span class="text-xs uppercase tracking-wide text-neutral-500">Movie file</span>
+              <input id="file-input" type="file" accept="video/*"
+                     class="mt-1 block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-red-600 file:px-3 file:py-2 file:font-semibold file:text-white hover:file:bg-red-500" />
+            </label>
+            <p id="video-note" class="hidden rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs leading-snug text-amber-200">
+              This saved project's slides are intact — re-pick the movie file above if you want to grab new frames.
+            </p>
+
+            <textarea id="autopilot-prompt" rows="2"
+                      class="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-600"
+                      placeholder="Optional starter prompt — paste trivia you found (IMDb, Reddit, anywhere) or give a direction; autopilot verifies and riffs on it"></textarea>
+            <p class="-mt-1 text-[11px] leading-snug text-neutral-500">
+              A pasted list of trivia becomes autopilot's source — it rewrites each into a slide. Drag
+              <a href={IMDB_BOOKMARKLET}
+                 class="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300"
+                 title="Drag me to your bookmarks bar, then click it while on a movie's IMDb Trivia page"
+                 onclick="return false;">
+                <span class="material-symbols-outlined text-[13px] leading-none">bookmark</span>Pick IMDb trivia
+              </a>
+              to your bookmarks bar, click it on a movie's IMDb Trivia page, tap the items you want, hit Copy, then paste here.
+            </p>
+
+            <button id="autopilot-btn"
+                    class="flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-red-500 disabled:opacity-40"
+                    disabled title="Load a video first">
+              <span class="material-symbols-outlined text-[20px] leading-none">auto_awesome</span>
+              Autopilot — title slide + trivia scenes
             </button>
-            <button id="cancel-edit" class="hidden rounded bg-neutral-800 px-3 py-2 text-sm">
-              <span class="material-symbols-outlined text-[18px] leading-none align-middle">close</span> Cancel
+
+            <video id="video" class="w-full rounded-xl bg-black" playsinline muted></video>
+
+            <!-- Chunky scrubber -->
+            <div id="scrubber" class="select-none">
+              <input id="scrub-range" type="range" min="0" max="1000" value="0"
+                     class="h-7 w-full cursor-pointer accent-red-600" />
+              <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                <span id="timecode" class="tabular-nums text-neutral-300">00:00.000</span>
+                <button data-seconds="-5" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">−5s</button>
+                <button data-seconds="-1" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">−1s</button>
+                <button data-frames="-5" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">−5fr</button>
+                <button data-frames="-1" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">−1fr</button>
+                <button data-frames="1" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">+1fr</button>
+                <button data-frames="5" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">+5fr</button>
+                <button data-seconds="1" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">+1s</button>
+                <button data-seconds="5" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">+5s</button>
+                <button id="grab-btn" class="ml-auto flex items-center gap-1 rounded-lg bg-red-600 px-4 py-2 font-bold text-white hover:bg-red-500 disabled:opacity-40">
+                  <span id="grab-icon" class="material-symbols-outlined text-[20px] leading-none">photo_camera</span>
+                  <span id="grab-label">Grab frame</span>
+                </button>
+                <button id="cancel-edit" class="hidden rounded-lg bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700">
+                  <span class="material-symbols-outlined align-middle text-[18px] leading-none">close</span> Cancel
+                </button>
+              </div>
+            </div>
+
+            <label class="flex items-center gap-2 text-sm text-neutral-400">
+              <input id="title-toggle" type="checkbox" class="accent-red-600" />
+              Prefix every slide with a title
+              <input id="movie-title" type="text" placeholder="e.g. Jaws (1975)"
+                     class="ml-1 flex-1 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-neutral-100" disabled />
+            </label>
+          </div>
+
+          <!-- Remembering Some Guys -->
+          <div id="pane-guys" class="hidden flex-col gap-3">
+            <label class="block">
+              <span class="text-xs uppercase tracking-wide text-neutral-500">Actor</span>
+              <div class="mt-1 flex gap-2">
+                <input id="actor-input" placeholder="e.g. Keith David"
+                       class="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-600" maxlength="80" />
+                <button id="find-roles-btn"
+                        class="flex items-center gap-1.5 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-neutral-950 hover:bg-cyan-400 disabled:opacity-40">
+                  <span class="material-symbols-outlined text-[18px] leading-none">person_search</span> Find roles
+                </button>
+              </div>
+            </label>
+            <p class="text-[11px] leading-snug text-neutral-500">
+              The agent lists ~20 memorable, cult-leaning roles. Pick your favorites (up to 12), and it writes a blurb for each.
+              You bring the photos: click a slide, then paste, drop, or pick an image.
+            </p>
+
+            <div id="roles-box" class="hidden rounded-xl border border-neutral-800 bg-neutral-900 p-3">
+              <div class="flex items-center gap-2 pb-2">
+                <span class="text-xs font-semibold uppercase tracking-wide text-neutral-400">Roles</span>
+                <span id="picked-count" class="text-xs font-semibold text-cyan-300">0 picked</span>
+                <div class="ml-auto flex gap-1">
+                  <button id="roles-all" class="rounded-md bg-neutral-800 px-2 py-1 text-[11px] font-semibold hover:bg-neutral-700">All</button>
+                  <button id="roles-none" class="rounded-md bg-neutral-800 px-2 py-1 text-[11px] font-semibold hover:bg-neutral-700">None</button>
+                </div>
+              </div>
+              <div id="roles-list" class="flex max-h-80 flex-col gap-1 overflow-y-auto pr-1"></div>
+              <button id="write-blurbs-btn" disabled
+                      class="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-neutral-950 hover:bg-cyan-400 disabled:opacity-40">
+                <span class="material-symbols-outlined text-[18px] leading-none">auto_awesome</span>
+                <span id="write-blurbs-label">Write the slides</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Post details (shared) -->
+          <details id="post-details" class="rounded-xl border border-neutral-800 bg-neutral-900 p-3">
+            <summary class="cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-neutral-400">Post details — title, description &amp; hashtags</summary>
+            <label class="mt-3 block text-xs text-neutral-500">Title
+              <input id="post-title-input" maxlength="90"
+                     class="mt-1 w-full rounded-md border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
+            </label>
+            <label class="mt-2 block text-xs text-neutral-500">Description
+              <textarea id="post-desc-input" rows="4" maxlength="2200"
+                        class="mt-1 w-full rounded-md border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100"></textarea>
+            </label>
+            <div class="mt-2 flex items-center justify-between">
+              <span class="text-[11px] text-neutral-600">TikTok honors ~5 broad hashtags</span>
+              <button id="post-reset" class="text-[11px] font-semibold text-neutral-400 hover:text-neutral-200">Reset to suggested</button>
+            </div>
+          </details>
+        </section>
+
+        <!-- Slides pane -->
+        <section class="flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">
+              Slides <span class="text-neutral-600">(<span id="slide-count">0</span>/35)</span>
+            </h2>
+            <button id="add-scene" disabled title="Load a video first"
+                    class="flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
+              <span class="material-symbols-outlined text-[18px] leading-none">add</span> Add AI scene
             </button>
           </div>
-        </div>
+          <p id="slides-hint" class="text-[11px] leading-snug text-neutral-500"></p>
+          <ol id="slide-list" class="flex flex-col gap-2"></ol>
+        </section>
+      </main>
 
-        <label class="flex items-center gap-2 text-sm text-neutral-400">
-          <input id="title-toggle" type="checkbox" class="accent-red-600" />
-          Prefix every slide with a title
-          <input id="movie-title" type="text" placeholder="e.g. Jaws (1975)"
-                 class="ml-1 flex-1 rounded bg-neutral-900 px-2 py-1 text-neutral-100" disabled />
-        </label>
-      </section>
-
-      <!-- Slides pane -->
-      <section class="flex flex-col gap-3">
-        <div class="flex items-center justify-between gap-2">
-          <h2 class="text-sm uppercase tracking-wide text-neutral-500">
-            Slides (<span id="slide-count">0</span>/35)
-          </h2>
-          <div class="flex items-center gap-2">
-            <button id="download-btn"
-                    class="flex items-center gap-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 disabled:opacity-40"
-                    disabled title="Download the finished slides as JPEGs — post them manually in the TikTok app, no API needed">
-              <span class="material-symbols-outlined text-[20px] leading-none">download</span> Download
-            </button>
-            <button id="post-btn" class="flex items-center gap-1 rounded bg-red-600 px-4 py-2 font-bold text-white disabled:opacity-40" disabled>
-              <span class="material-symbols-outlined text-[20px] leading-none">upload</span> Post to TikTok
-            </button>
-          </div>
-        </div>
-        <p id="post-status" class="text-xs text-neutral-400"></p>
-        <ol id="slide-list" class="flex flex-col gap-2"></ol>
-        <button id="add-scene"
-                class="flex items-center justify-center gap-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 disabled:opacity-40"
-                disabled title="Load a video first">
-          <span class="material-symbols-outlined text-[20px] leading-none">add</span> Add AI scene
-        </button>
-      </section>
-    </main>
+      <input id="img-file-input" type="file" accept="image/*" class="hidden" />
+    </section>
   </div>
+
+  <style is:global>
+    #studio {
+      font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      font-feature-settings: 'cv11';
+    }
+    .tape-lines {
+      background-image: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 7px);
+    }
+    @keyframes save-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    .save-pulse { animation: save-pulse 1.2s ease-in-out infinite; }
+    #post-details > summary::-webkit-details-marker { display: none; }
+  </style>
 
   <script type="module" src={`/scripts/tik/app.js?v=${BUILD_ID}`}></script>
 </Base>

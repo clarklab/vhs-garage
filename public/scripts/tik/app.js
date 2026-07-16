@@ -1,33 +1,72 @@
+// VHS Studio — the /tik app controller. Screens: HOME (new + open) and EDITOR
+// (per-format panes over a shared slide list). Projects autosave to IndexedDB
+// (store.js) so drafts and posted TikToks survive reloads; the video file
+// itself can't persist (browser limitation), but every slide's frame does.
 import { loadVideoFile, grabFrame, awaitSeekSettled, seekAndSettle } from './capture.js';
 import { initScrubber } from './scrubber.js';
 import { addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame } from './slides.js';
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken } from './auth.js';
 import { publishSlideshow } from './publish.js';
-import { fetchScenes } from './autopilot.js';
+import { fetchScenes, fetchRoles, fetchBlurbs } from './autopilot.js';
 import { parseMovieName } from './filename.js';
 import { composeToCanvas, composeSlide } from './compose.js';
+import { FORMATS, formatOf, makeProject, defaultPostFields, captionForRole, relativeTime, projectDisplayName } from './project.js';
+import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
+import { makeCardBitmap } from './placeholder.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
-  file: $('file-input'), video: $('video'),
-  range: $('scrub-range'), timecode: $('timecode'),
-  grab: $('grab-btn'), grabIcon: $('grab-icon'), grabLabel: $('grab-label'),
-  titleToggle: $('title-toggle'), movieTitle: $('movie-title'),
-  count: $('slide-count'), list: $('slide-list'), post: $('post-btn'), status: $('post-status'),
+  // app bar
   authBtn: $('auth-btn'), authStatus: $('auth-status'),
+  saveState: $('save-state'), saveDot: $('save-dot'), saveLabel: $('save-label'),
+  // screens
+  home: $('screen-home'), editor: $('screen-editor'),
+  // home
+  newTrivia: $('new-trivia'), newGuys: $('new-guys'),
+  grid: $('project-grid'), libraryEmpty: $('library-empty'),
+  // editor bar
+  back: $('back-btn'), formatChip: $('format-chip'), projectName: $('project-name'),
+  download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
+  // trivia pane
+  paneTrivia: $('pane-trivia'), file: $('file-input'), videoNote: $('video-note'),
+  video: $('video'), range: $('scrub-range'), timecode: $('timecode'),
+  grab: $('grab-btn'), grabIcon: $('grab-icon'), grabLabel: $('grab-label'),
+  cancelEdit: $('cancel-edit'),
+  titleToggle: $('title-toggle'), movieTitle: $('movie-title'),
   autopilot: $('autopilot-btn'), autopilotPrompt: $('autopilot-prompt'),
-  cancelEdit: $('cancel-edit'), addScene: $('add-scene'),
-  download: $('download-btn'),
+  // guys pane
+  paneGuys: $('pane-guys'), actorInput: $('actor-input'), findRoles: $('find-roles-btn'),
+  rolesBox: $('roles-box'), rolesList: $('roles-list'),
+  rolesAll: $('roles-all'), rolesNone: $('roles-none'), pickedCount: $('picked-count'),
+  writeBlurbs: $('write-blurbs-btn'), writeBlurbsLabel: $('write-blurbs-label'),
+  // post details
+  postTitleInput: $('post-title-input'), postDescInput: $('post-desc-input'), postReset: $('post-reset'),
+  // slides pane
+  count: $('slide-count'), list: $('slide-list'), addScene: $('add-scene'), slidesHint: $('slides-hint'),
+  imgFile: $('img-file-input'),
 };
 
-let slides = [];               // [{ id, bitmap, caption, timecode }]
+// ---- State ----
+let project = null;            // active project record (metadata; slides live below)
+let slides = [];               // [{ id, bitmap, blob?, caption, timecode?, grabHint, fontScale, role? }]
 let nextId = 1;
 let dragFrom = null;
-let editingId = null;          // slide id whose frame is being re-grabbed, or null
+let editingId = null;          // slide id whose frame is being replaced, or null
+let pickTargetId = null;       // slide id the hidden image-file input feeds
 let videoReady = false;        // metadata loaded → grabbing is possible
-let aiBusy = false;            // an AI action (autopilot/add/redo) is in flight
-let movie = { title: '', year: null, query: '' }; // parsed from the filename
+let aiBusy = false;            // an AI action is in flight
+let movie = { title: '', year: null, query: '' }; // parsed from the filename (trivia)
+let dirty = false;
+let saveTimer = null;
+let savePromise = null;        // in-flight save chain — awaiting it guarantees the latest state hit IDB
+let openSeq = 0;               // open/new/teardown generation — stale openProject loads abort
+let thumbUrls = [];            // library-card object URLs, revoked on re-render
 const PREVIEW_SCALE = 0.25;    // quarter-res preview thumbnails; uploads stay full-res
+const MAX_PICK = 12;           // Some Guys: max roles per slideshow
+const GUYS_ACCENT = '#22d3ee';
+
+const uuid = () => crypto.randomUUID?.() ??
+  Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
 
 // A Material Symbols icon element (for JS-created buttons).
 function iconSpan(name, sizeClass = 'text-[18px]') {
@@ -44,21 +83,24 @@ initScrubber({
 
 els.video.addEventListener('loadedmetadata', () => {
   videoReady = true;
+  els.videoNote.classList.add('hidden');
   els.autopilot.disabled = aiBusy; // stay disabled if a job is mid-flight
   els.autopilot.title = '';
   render(); // updates the Add-scene button state
 });
 
-// One AI action at a time. Background jobs can run for minutes now, so ALL the
+// One AI action at a time. Background jobs can run for minutes, so ALL the
 // AI entry points must visibly disable together — not just the button clicked.
 function setAiBusy(v) {
   aiBusy = v;
   els.autopilot.disabled = v || !videoReady;
   els.addScene.disabled = v || !videoReady || !canAddSlide(slides);
+  els.findRoles.disabled = v;
+  els.writeBlurbs.disabled = v || pickedRoles().length === 0;
 }
 
 // TikTok pulls slide images over the public internet, so posting only works from
-// a publicly reachable origin. Grab / caption / compose work anywhere.
+// a publicly reachable origin. Everything else works anywhere.
 function isPublicOrigin() {
   const h = location.hostname;
   if (h === 'localhost' || h === '127.0.0.1' || h === '::1' || h.endsWith('.local')) return false;
@@ -72,18 +114,398 @@ async function grabAt(timecode) {
   return grabFrame(els.video);
 }
 
-// Branded outro slide: the VHS Garage logo as the "frame" + a follow CTA as the
-// caption, flowing through the normal slide pipeline (editable, reorderable).
+// Branded outro slide: the VHS Garage logo as the "frame" + a follow CTA,
+// flowing through the normal slide pipeline (editable, reorderable).
 const OUTRO_LOGO_URL = '/images/vhs-garage-logo-square.png'; // yellow lockup (V mark), black field
-const OUTRO_CAPTION = 'Follow VHS Garage for more movie trivia';
+const OUTRO_CAPTIONS = {
+  trivia: 'Follow VHS Garage for more movie trivia',
+  guys: 'Follow VHS Garage, we remember more guys every week',
+};
 async function makeOutroSlide() {
   const res = await fetch(OUTRO_LOGO_URL);
   if (!res.ok) throw new Error(`Couldn't load the outro logo (${res.status})`);
-  const bitmap = await createImageBitmap(await res.blob());
-  return { id: String(nextId++), bitmap, caption: OUTRO_CAPTION, grabHint: '' };
+  const blob = await res.blob();
+  const bitmap = await createImageBitmap(blob);
+  return {
+    id: String(nextId++), bitmap, blob,
+    caption: OUTRO_CAPTIONS[project?.format] || OUTRO_CAPTIONS.trivia,
+    grabHint: '', fontScale: 1, role: null, kind: 'outro',
+  };
 }
 
-// ---- Auth ----
+// ================= Persistence =================
+// Slides carry their frame as a cached Blob (`slide.blob`) so autosave never
+// re-encodes 35 full-res JPEGs; any code that swaps `bitmap` must null it.
+async function bitmapToBlob(bitmap) {
+  const c = document.createElement('canvas');
+  c.width = bitmap.width;
+  c.height = bitmap.height;
+  c.getContext('2d').drawImage(bitmap, 0, 0);
+  return await new Promise((resolve, reject) => {
+    c.toBlob((b) => (b ? resolve(b) : reject(new Error('Frame encode failed'))), 'image/jpeg', 0.92);
+  });
+}
+async function frameBlobFor(slide) {
+  if (!slide.blob) slide.blob = await bitmapToBlob(slide.bitmap);
+  return slide.blob;
+}
+
+// Library-card thumbnail: the first slide, fully composed, small.
+async function makeThumbBlob(slide) {
+  const c = document.createElement('canvas');
+  composeToCanvas(c, slide.bitmap, slide.caption, {
+    titleLine: currentTitleLine(), scale: 0.12, fontScale: slide.fontScale || 1,
+  });
+  return await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.7));
+}
+
+async function serializeProject() {
+  const slideRecs = [];
+  for (const s of slides) {
+    slideRecs.push({
+      id: s.id, caption: s.caption, timecode: s.timecode, grabHint: s.grabHint || '',
+      fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
+      frame: await frameBlobFor(s),
+    });
+  }
+  let thumb = null;
+  if (slides[0]) {
+    try { thumb = await makeThumbBlob(slides[0]); }
+    catch (e) { console.warn('[tik] thumb render failed:', e); }
+  }
+  return { ...project, updatedAt: Date.now(), slides: slideRecs, thumb };
+}
+
+function setSaveState(state) {
+  const show = state !== 'off';
+  els.saveState.classList.toggle('hidden', !show);
+  els.saveState.classList.toggle('flex', show);
+  els.saveDot.classList.remove('save-pulse', 'bg-amber-400', 'bg-green-500', 'bg-red-500', 'bg-neutral-600');
+  if (state === 'saving') { els.saveDot.classList.add('bg-amber-400', 'save-pulse'); els.saveLabel.textContent = 'Saving…'; }
+  else if (state === 'saved') { els.saveDot.classList.add('bg-green-500'); els.saveLabel.textContent = 'Saved'; }
+  else if (state === 'error') { els.saveDot.classList.add('bg-red-500'); els.saveLabel.textContent = 'Save failed'; }
+  else els.saveDot.classList.add('bg-neutral-600');
+}
+
+// Debounced autosave: call after ANY project/slide mutation.
+function markDirty() {
+  if (!project) return;
+  if (!storageAvailable()) return;
+  dirty = true;
+  setSaveState('saving');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { saveNow().catch((e) => console.error('[tik] autosave failed:', e)); }, 1200);
+}
+
+// Single-flight but awaitable: concurrent calls chain onto the in-flight save,
+// so `await saveNow()` ALWAYS means "my latest state is in IndexedDB" — goHome
+// and the post-success path rely on that. (The old savingNow flag returned
+// early instead, silently dropping the caller's edits on the floor.)
+function saveNow() {
+  if (!project || !storageAvailable()) return Promise.resolve();
+  clearTimeout(saveTimer);
+  const run = async () => {
+    if (!project) return; // torn down while queued
+    setSaveState('saving');
+    // Clear BEFORE serializing: an edit landing mid-save re-arms the flag, so
+    // the goHome/pagehide "flush if dirty" gates can't skip an unsaved edit.
+    dirty = false;
+    try {
+      const record = await serializeProject();
+      await putProject(record);
+      setSaveState('saved');
+    } catch (e) {
+      dirty = true; // this state did NOT persist
+      console.error('[tik] save failed:', e);
+      setSaveState('error');
+      throw e; // awaiting callers (goHome flush, post-success) must see failures
+    }
+  };
+  // Single-flight chain: a failed predecessor must not block the next attempt.
+  const p = (savePromise ? savePromise.catch(() => {}) : Promise.resolve()).then(run);
+  savePromise = p;
+  p.catch(() => {}).finally(() => { if (savePromise === p) savePromise = null; });
+  return p;
+}
+
+// ================= Routing =================
+function showScreen(name) {
+  els.home.classList.toggle('hidden', name !== 'home');
+  els.editor.classList.toggle('hidden', name !== 'editor');
+}
+
+async function teardownProject() {
+  clearTimeout(saveTimer);
+  // Let any in-flight save finish before closing the bitmaps it may still be
+  // encoding (drawImage on a closed ImageBitmap throws).
+  if (savePromise) {
+    try { await savePromise; } catch (e) { console.error('[tik] pending save failed during teardown:', e); }
+  }
+  slides.forEach((s) => s.bitmap?.close?.());
+  slides = [];
+  project = null;
+  dirty = false;
+  resetEditState();
+  pickTargetId = null;
+  editingId = null;
+  videoReady = false;
+  els.video.removeAttribute('src');
+  els.video.load?.();
+  movie = { title: '', year: null, query: '' };
+  // Reset the trivia pane: a lingering file-input value means re-picking the
+  // SAME movie file fires no 'change' event (silent no-op), and the reopened-
+  // project banner/autopilot state must not leak into the next project.
+  els.file.value = '';
+  els.videoNote.classList.add('hidden');
+  els.autopilot.disabled = true;
+  els.autopilot.title = 'Load a video first';
+  els.range.value = '0';
+  els.list.innerHTML = '';
+  els.status.textContent = '';
+  setSaveState('off');
+}
+
+async function goHome() {
+  openSeq++; // abort any in-flight openProject load
+  if (project && dirty) {
+    try {
+      await saveNow();
+    } catch (e) {
+      console.error('[tik] exit save failed:', e);
+      if (!confirm('Saving failed (storage full?) — leave anyway and lose the latest changes?')) return;
+    }
+  }
+  await teardownProject();
+  history.replaceState({}, '', location.pathname + location.search);
+  showScreen('home');
+  await renderLibrary();
+}
+
+function enterEditor() {
+  showScreen('editor');
+  history.replaceState({}, '', `${location.pathname}${location.search}#p/${project.id}`);
+  applyFormatUI();
+  els.projectName.value = project.name || '';
+  els.postTitleInput.value = project.postTitle || '';
+  els.postDescInput.value = project.postDesc || '';
+  els.titleToggle.checked = !!project.titleOn;
+  els.movieTitle.value = project.titleLine || '';
+  els.movieTitle.disabled = !project.titleOn;
+  els.actorInput.value = project.actor || '';
+  els.autopilotPrompt.value = '';
+  renderRolesPicker();
+  setSaveState(storageAvailable() ? (dirty ? 'saving' : 'saved') : 'off');
+  render();
+}
+
+// Appends a persistent warning when local saving can't work in this browser.
+function withStorageWarning(msg) {
+  return storageAvailable() ? msg : `${msg} (Local saving is unavailable in this browser — work here won’t persist.)`;
+}
+
+async function newProject(format) {
+  openSeq++; // abort any in-flight openProject load
+  await teardownProject();
+  project = makeProject({ id: uuid(), format, now: Date.now() });
+  const d = defaultPostFields(format, '');
+  project.postTitle = d.title;
+  project.postDesc = d.description;
+  nextId = 1;
+  enterEditor();
+  els.status.textContent = withStorageWarning(format === 'guys'
+    ? 'Name the guy, and the agent lists his most memorable roles.'
+    : 'Pick a movie file to start grabbing frames, or run Autopilot.');
+}
+
+async function openProject(id) {
+  const seq = ++openSeq; // superseded by any later open/new/goHome
+  const rec = await getProject(id);
+  if (seq !== openSeq) return;
+  if (!rec) throw new Error('Project not found');
+  await teardownProject();
+  if (seq !== openSeq) return; // superseded while flushing the previous save
+  project = { ...rec, slides: [], thumb: null };
+  movie = rec.movie || { title: '', year: null, query: '' };
+  nextId = 1;
+  const loaded = [];
+  for (const s of rec.slides || []) {
+    try {
+      const bitmap = await createImageBitmap(s.frame);
+      if (seq !== openSeq) { // another project opened while decoding — abort
+        bitmap.close?.();
+        loaded.forEach((l) => l.bitmap?.close?.());
+        return;
+      }
+      loaded.push({
+        id: String(nextId++), bitmap, blob: s.frame,
+        caption: s.caption || '', timecode: s.timecode, grabHint: s.grabHint || '',
+        fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
+      });
+    } catch (e) {
+      console.error('[tik] could not decode a saved frame; slide dropped', e);
+    }
+  }
+  if (seq !== openSeq) { loaded.forEach((l) => l.bitmap?.close?.()); return; }
+  slides = loaded;
+  dirty = false;
+  enterEditor();
+  if (project.format === 'trivia') {
+    els.videoNote.classList.toggle('hidden', slides.length === 0);
+    els.status.textContent = withStorageWarning(slides.length
+      ? 'Reopened from your library — captions, fonts, and posting all work; re-pick the movie file to grab new frames.'
+      : 'Reopened — pick the movie file to start.');
+  } else {
+    els.status.textContent = withStorageWarning('Reopened from your library.');
+  }
+}
+
+// ---- Format-specific UI wiring ----
+function applyFormatUI() {
+  const f = formatOf(project);
+  const isTrivia = f.key === 'trivia';
+  els.paneTrivia.classList.toggle('hidden', !isTrivia);
+  els.paneTrivia.classList.toggle('flex', isTrivia);
+  els.paneGuys.classList.toggle('hidden', isTrivia);
+  els.paneGuys.classList.toggle('flex', !isTrivia);
+  els.addScene.classList.toggle('hidden', !isTrivia);
+  els.formatChip.textContent = f.label;
+  els.formatChip.className = 'rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ' +
+    (isTrivia ? 'bg-amber-400/15 text-amber-300' : 'bg-cyan-400/15 text-cyan-300');
+  els.slidesHint.textContent = isTrivia
+    ? 'Click a slide’s preview to re-grab its frame, or paste/drop/pick a custom image while it’s selected. Drag to reorder.'
+    : 'Click a slide, then paste, drop, or pick a photo of the guy. Drag to reorder.';
+}
+
+// Keep the suggested post title/description fresh until the user edits them.
+function syncPostDefaults() {
+  if (!project || project.postEdited) return;
+  const name = project.format === 'guys' ? (project.actor || project.name) : (movie.query || project.name);
+  const d = defaultPostFields(project.format, name);
+  project.postTitle = d.title;
+  project.postDesc = d.description;
+  els.postTitleInput.value = d.title;
+  els.postDescInput.value = d.description;
+}
+
+// ================= Library =================
+function formatBadge(rec) {
+  const f = FORMATS[rec.format] || FORMATS.trivia;
+  const cls = f.key === 'trivia' ? 'bg-amber-400/15 text-amber-300' : 'bg-cyan-400/15 text-cyan-300';
+  return `<span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${cls}">${f.label}</span>`;
+}
+
+async function renderLibrary() {
+  thumbUrls.forEach((u) => URL.revokeObjectURL(u));
+  thumbUrls = [];
+  els.grid.innerHTML = '';
+  if (!storageAvailable()) {
+    els.libraryEmpty.textContent = 'Local storage is unavailable in this browser, so projects can’t be saved here.';
+    els.libraryEmpty.classList.remove('hidden');
+    return;
+  }
+  let list = [];
+  try {
+    list = await listProjects();
+  } catch (e) {
+    console.error('[tik] library load failed:', e);
+    els.libraryEmpty.textContent = 'Couldn’t open the local library — check the console.';
+    els.libraryEmpty.classList.remove('hidden');
+    return;
+  }
+  els.libraryEmpty.classList.toggle('hidden', list.length > 0);
+
+  for (const rec of list) {
+    const card = document.createElement('button');
+    card.className = 'group relative overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900 text-left transition hover:border-neutral-600';
+    card.title = `Open ${projectDisplayName(rec)}`;
+
+    const frame = document.createElement('div');
+    frame.className = 'relative aspect-[9/14] w-full overflow-hidden bg-neutral-950';
+    if (rec.thumb) {
+      const url = URL.createObjectURL(rec.thumb);
+      thumbUrls.push(url);
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = '';
+      img.className = 'h-full w-full object-cover opacity-90 transition group-hover:opacity-100';
+      frame.appendChild(img);
+    } else {
+      const ph = document.createElement('div');
+      ph.className = 'flex h-full w-full items-center justify-center text-neutral-700';
+      ph.appendChild(iconSpan((FORMATS[rec.format] || FORMATS.trivia).icon, 'text-[40px]'));
+      frame.appendChild(ph);
+    }
+    const posted = rec.status === 'posted';
+    const badge = document.createElement('span');
+    badge.className = `absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${posted ? 'bg-green-500/90 text-neutral-950' : 'bg-neutral-950/80 text-amber-300'}`;
+    badge.textContent = posted ? 'Posted' : 'Draft';
+    frame.appendChild(badge);
+
+    const del = document.createElement('span');
+    del.className = 'absolute right-2 top-2 hidden rounded-md bg-neutral-950/80 p-1 text-neutral-400 hover:text-red-400 group-hover:block';
+    del.title = 'Delete project';
+    del.setAttribute('role', 'button');
+    del.appendChild(iconSpan('delete', 'text-[16px]'));
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete "${projectDisplayName(rec)}"? This can't be undone.`)) return;
+      try {
+        await deleteProject(rec.id);
+        await renderLibrary();
+      } catch (err) {
+        console.error('[tik] delete failed:', err);
+        alert('Couldn’t delete that project — check the console.');
+      }
+    });
+    frame.appendChild(del);
+
+    const meta = document.createElement('div');
+    meta.className = 'flex flex-col gap-1 p-2.5';
+    const name = document.createElement('span');
+    name.className = 'truncate text-sm font-bold tracking-tight';
+    name.textContent = projectDisplayName(rec);
+    const sub = document.createElement('span');
+    sub.className = 'flex items-center gap-1.5 text-[11px] text-neutral-500';
+    sub.innerHTML = `${formatBadge(rec)} <span>${(rec.slides || []).length} slides · ${relativeTime(rec.updatedAt || 0, Date.now())}</span>`;
+    meta.append(name, sub);
+
+    card.append(frame, meta);
+    card.addEventListener('click', () => {
+      openProject(rec.id).catch((e) => {
+        console.error('[tik] open failed:', e);
+        alert('Couldn’t open that project — check the console.');
+      });
+    });
+    els.grid.appendChild(card);
+  }
+}
+
+els.newTrivia.addEventListener('click', () => { newProject('trivia').catch((e) => console.error('[tik] new project failed:', e)); });
+els.newGuys.addEventListener('click', () => { newProject('guys').catch((e) => console.error('[tik] new project failed:', e)); });
+
+// A drop that misses a slide card must not navigate the tab away to the
+// dropped file (the UI actively invites drag-and-drop onto slides).
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => e.preventDefault());
+
+// Best-effort flush when the tab is backgrounded/closed mid-debounce — async
+// IndexedDB writes generally complete during pagehide.
+window.addEventListener('pagehide', () => {
+  if (project && dirty) saveNow().catch((e) => console.error('[tik] pagehide save failed:', e));
+});
+els.back.addEventListener('click', () => {
+  if (aiBusy && !confirm('An AI job is still running — leave this project anyway?')) return;
+  goHome().catch((e) => console.error('[tik] goHome failed:', e));
+});
+
+els.projectName.addEventListener('input', () => {
+  if (!project) return;
+  project.name = els.projectName.value.trim();
+  syncPostDefaults();
+  markDirty();
+});
+
+// ================= Auth =================
 function refreshAuthUI() {
   const signed = isSignedIn();
   els.authStatus.textContent = signed ? 'signed in' : 'not signed in';
@@ -97,11 +519,17 @@ els.authBtn.addEventListener('click', async () => {
   refreshAuthUI();
 });
 
-// ---- File load ----
+// ================= Tape Trivia =================
 els.file.addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
-  if (!file) return;
+  if (!file || !project) return;
   movie = parseMovieName(file.name);
+  project.movie = movie;
+  if (!project.name) {
+    project.name = movie.query;
+    els.projectName.value = movie.query;
+  }
+  syncPostDefaults();
   try {
     await loadVideoFile(file, els.video);
     els.status.textContent = `Loaded ${movie.query}. Scrub and grab frames, or run Autopilot.`;
@@ -109,15 +537,23 @@ els.file.addEventListener('change', async (e) => {
     console.error('[tik] failed to load video file:', err);
     els.status.textContent = err.message;
   }
+  markDirty();
 });
 
 // ---- Title prefix toggle ----
 els.titleToggle.addEventListener('change', () => {
   els.movieTitle.disabled = !els.titleToggle.checked;
+  if (project) project.titleOn = els.titleToggle.checked;
   redrawAllThumbs(); // title line appears/disappears on every slide preview
+  markDirty();
 });
-els.movieTitle.addEventListener('input', redrawAllThumbs);
+els.movieTitle.addEventListener('input', () => {
+  if (project) project.titleLine = els.movieTitle.value;
+  redrawAllThumbs();
+  markDirty();
+});
 function currentTitleLine() {
+  if (project?.format === 'guys') return '';
   return els.titleToggle.checked ? els.movieTitle.value.trim() : '';
 }
 
@@ -128,63 +564,17 @@ els.grab.addEventListener('click', async () => {
     const bitmap = await grabFrame(els.video);
     if (editingId) {
       slides = updateSlideFrame(slides, editingId, bitmap, els.video.currentTime);
+      slides = slides.map((s) => (s.id === editingId ? { ...s, blob: null } : s));
       exitEdit();
       els.status.textContent = 'Frame updated.';
     } else {
       if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
-      slides = addSlide(slides, { id: String(nextId++), bitmap, caption: '', timecode: els.video.currentTime });
+      slides = addSlide(slides, { id: String(nextId++), bitmap, blob: null, caption: '', timecode: els.video.currentTime, fontScale: 1 });
       render();
     }
+    markDirty();
   } catch (err) { console.error('[tik] grab failed:', err); els.status.textContent = err.message; }
 });
-
-// ---- Edit a slide's frame: tap thumb → seek there → Save replaces it ----
-async function enterEdit(id) {
-  const slide = slides.find((s) => s.id === id);
-  if (!slide) return;
-  editingId = id;
-  els.grabIcon.textContent = 'save';
-  els.grabLabel.textContent = 'Save frame';
-  els.cancelEdit.classList.remove('hidden');
-  render(); // apply the highlight
-  els.status.textContent = slide.grabHint
-    ? `Editing — GRAB: ${slide.grabHint}  (or paste an image)`
-    : 'Editing this slide — scrub to a new frame and Save, or paste an image.';
-  if (Number.isFinite(slide.timecode)) await seekAndSettle(els.video, slide.timecode);
-}
-
-// While a slide is being edited, pasting an image from the clipboard sets it as
-// that slide's frame (a custom image, not from the movie file). Text pastes and
-// pastes outside edit mode fall through untouched (so caption/prompt paste works).
-document.addEventListener('paste', async (e) => {
-  if (!editingId) return;
-  const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
-  if (!item) return;
-  e.preventDefault();
-  const blob = item.getAsFile();
-  if (!blob) return;
-  const id = editingId;
-  try {
-    const bitmap = await createImageBitmap(blob);
-    // Custom image: no movie timecode, and clear any stale GRAB hint so a later
-    // thumb-tap doesn't re-seek the video to an unrelated frame.
-    slides = updateSlideFrame(slides, id, bitmap, undefined);
-    slides = slides.map((s) => (s.id === id ? { ...s, grabHint: '' } : s));
-    exitEdit();
-    els.status.textContent = 'Pasted image set as this slide’s frame.';
-  } catch (err) {
-    console.error('[tik] paste image failed:', err);
-    els.status.textContent = 'Couldn’t read the pasted image.';
-  }
-});
-function resetEditState() {
-  editingId = null;
-  els.grabIcon.textContent = 'photo_camera';
-  els.grabLabel.textContent = 'Grab frame';
-  els.cancelEdit.classList.add('hidden');
-}
-function exitEdit() { resetEditState(); render(); }
-els.cancelEdit.addEventListener('click', () => { exitEdit(); els.status.textContent = 'Edit cancelled.'; });
 
 // ---- Autopilot: preload a full slideshow ----
 els.autopilot.addEventListener('click', async () => {
@@ -192,6 +582,7 @@ els.autopilot.addEventListener('click', async () => {
   if (!canAddSlide(slides)) { els.status.textContent = `Slide cap reached (${MAX_SLIDES}) — delete some first.`; return; }
   if (aiBusy) return;
   setAiBusy(true);
+  const ticket = project?.id; // bail if the user opens another project mid-job
   try {
     els.status.textContent = `Researching ${movie.query || 'the film'}…`;
     // If the starter box holds a list of pasted facts, make one slide per fact
@@ -206,16 +597,18 @@ els.autopilot.addEventListener('click', async () => {
     });
     let added = 0;
     for (let i = 0; i < scenes.length; i++) {
+      if (project?.id !== ticket) return; // navigated away — don't pollute another project
       if (!canAddSlide(slides)) break;
       els.status.textContent = `Grabbing frame ${i + 1}/${scenes.length}…`;
       const bitmap = await grabAt(scenes[i].timecode);
       slides = addSlide(slides, {
-        id: String(nextId++), bitmap,
-        caption: scenes[i].caption, timecode: scenes[i].timecode, grabHint: scenes[i].grab || '',
+        id: String(nextId++), bitmap, blob: null,
+        caption: scenes[i].caption, timecode: scenes[i].timecode, grabHint: scenes[i].grab || '', fontScale: 1,
       });
       added++;
     }
     // Cap off with the branded outro (logo + follow CTA). Never fatal.
+    if (project?.id !== ticket) return;
     let outroAdded = false;
     if (added > 0 && canAddSlide(slides)) {
       try {
@@ -224,6 +617,7 @@ els.autopilot.addEventListener('click', async () => {
       } catch (e) { console.error('[tik] outro slide failed:', e); }
     }
     render();
+    markDirty();
     if (added === 0) {
       els.status.textContent = `Slide cap reached (${MAX_SLIDES}) — nothing added.`;
     } else {
@@ -244,6 +638,7 @@ els.addScene.addEventListener('click', async () => {
   if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
   if (aiBusy) return;
   setAiBusy(true);
+  const ticket = project?.id; // bail if the user opens another project mid-job
   try {
     els.status.textContent = 'Finding another scene…';
     const [scene] = await fetchScenes({
@@ -251,12 +646,15 @@ els.addScene.addEventListener('click', async () => {
       count: 1, exclude: slides.map((s) => s.caption),
       onProgress: (m) => { els.status.textContent = `Finding another scene — ${m}`; },
     });
+    if (project?.id !== ticket) return;
     const bitmap = await grabAt(scene.timecode);
+    if (project?.id !== ticket) return;
     slides = addSlide(slides, {
-      id: String(nextId++), bitmap,
-      caption: scene.caption, timecode: scene.timecode, grabHint: scene.grab || '',
+      id: String(nextId++), bitmap, blob: null,
+      caption: scene.caption, timecode: scene.timecode, grabHint: scene.grab || '', fontScale: 1,
     });
     render();
+    markDirty();
     els.status.textContent = 'Added a new AI scene — tweak it or add more.';
   } catch (err) {
     console.error('[tik] add scene failed:', err);
@@ -267,8 +665,242 @@ els.addScene.addEventListener('click', async () => {
   }
 });
 
-// ---- Slide list rendering ----
+// ================= Remembering Some Guys =================
+function pickedRoles() {
+  return (project?.roles || []).filter((r) => r.picked);
+}
+
+els.findRoles.addEventListener('click', async () => {
+  if (!project || aiBusy) return;
+  const actor = els.actorInput.value.trim();
+  if (!actor) { els.status.textContent = 'Enter an actor name first.'; return; }
+  setAiBusy(true);
+  try {
+    project.actor = actor;
+    if (!project.name) { project.name = actor; els.projectName.value = actor; }
+    syncPostDefaults();
+    markDirty(); // persist the actor/draft even if the lookup fails
+    const ticket = project.id; // bail if the user opens another project mid-job
+    els.status.textContent = `Remembering ${actor}…`;
+    const roles = await fetchRoles({
+      actor, count: 20,
+      onProgress: (m) => { els.status.textContent = `Remembering ${actor} — ${m}`; },
+    });
+    if (project?.id !== ticket) return;
+    project.roles = roles.map((r) => ({ ...r, picked: false }));
+    renderRolesPicker();
+    markDirty();
+    els.status.textContent = `Found ${roles.length} roles — pick up to ${MAX_PICK}, then write the slides.`;
+  } catch (err) {
+    console.error('[tik] find roles failed:', err);
+    els.status.textContent = err.message;
+  } finally {
+    setAiBusy(false);
+  }
+});
+
+function updatePickedCount() {
+  const n = pickedRoles().length;
+  els.pickedCount.textContent = `${n} picked`;
+  els.writeBlurbs.disabled = aiBusy || n === 0;
+  els.writeBlurbsLabel.textContent = n ? `Write the slides for ${n} role${n === 1 ? '' : 's'}` : 'Write the slides';
+}
+
+function renderRolesPicker() {
+  const roles = project?.roles || [];
+  els.rolesBox.classList.toggle('hidden', roles.length === 0);
+  els.rolesList.innerHTML = '';
+  roles.forEach((r, i) => {
+    const row = document.createElement('label');
+    row.className = 'flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-neutral-800/60';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!r.picked;
+    cb.className = 'mt-1 accent-cyan-400';
+    cb.addEventListener('change', () => {
+      if (cb.checked && pickedRoles().length >= MAX_PICK) {
+        cb.checked = false;
+        els.status.textContent = `Max ${MAX_PICK} roles per slideshow — uncheck one first.`;
+        return;
+      }
+      project.roles[i].picked = cb.checked;
+      updatePickedCount();
+      markDirty();
+    });
+    const txt = document.createElement('span');
+    txt.className = 'min-w-0 flex-1 text-sm leading-snug';
+    const yr = r.year ? ` <span class="text-neutral-500">(${r.year})</span>` : '';
+    txt.innerHTML = `<b>${escapeHtml(r.movie)}</b>${yr} · ${escapeHtml(r.role)}` +
+      (r.hook ? `<br><span class="text-[11px] text-neutral-500">${escapeHtml(r.hook)}</span>` : '');
+    row.append(cb, txt);
+    els.rolesList.appendChild(row);
+  });
+  updatePickedCount();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+els.rolesAll.addEventListener('click', () => {
+  if (!project?.roles) return;
+  let n = pickedRoles().length;
+  project.roles.forEach((r) => { if (!r.picked && n < MAX_PICK) { r.picked = true; n++; } });
+  renderRolesPicker();
+  markDirty();
+});
+els.rolesNone.addEventListener('click', () => {
+  if (!project?.roles) return;
+  project.roles.forEach((r) => { r.picked = false; });
+  renderRolesPicker();
+  markDirty();
+});
+
+els.writeBlurbs.addEventListener('click', async () => {
+  if (!project || aiBusy) return;
+  const picked = pickedRoles();
+  if (!picked.length) return;
+  if (slides.length && !confirm('Replace the current slides with fresh ones for these picks?')) return;
+  setAiBusy(true);
+  try {
+    const ticket = project.id; // bail if the user opens another project mid-job
+    els.status.textContent = `Writing blurbs for ${picked.length} role${picked.length === 1 ? '' : 's'}…`;
+    const { intro, blurbs } = await fetchBlurbs({
+      actor: project.actor,
+      roles: picked.map(({ movie: m, year, role }) => ({ movie: m, year, role })),
+      onProgress: (m) => { els.status.textContent = `Writing blurbs — ${m}`; },
+    });
+    if (project?.id !== ticket) return;
+
+    // Blurbs can come back short (blurbless entries are dropped server-side),
+    // which would shift blurbs[i] off picked[i] — match on the movie+role echo
+    // first, index second; captionForRole falls back to the picker hook last.
+    const keyOf = (m, r) => `${String(m || '').toLowerCase()}::${String(r || '').toLowerCase()}`;
+    const byKey = new Map();
+    blurbs.forEach((b) => { const k = keyOf(b.movie, b.role); if (!byKey.has(k)) byKey.set(k, b); });
+    const blurbFor = (role, i) => (byKey.get(keyOf(role.movie, role.role)) || blurbs[i])?.blurb || '';
+
+    resetEditState(); // the selected slide is about to be replaced wholesale
+    pickTargetId = null;
+    slides.forEach((s) => s.bitmap?.close?.());
+    const next = [];
+    // Title slide: the actor's name card; paste a good photo of the guy over it.
+    const titleBitmap = await makeCardBitmap({
+      heading: project.actor, sub: 'Remembering some guys', hint: 'Paste a photo of the guy', accent: GUYS_ACCENT,
+    });
+    next.push({
+      id: String(nextId++), bitmap: titleBitmap, blob: null,
+      caption: `${project.actor}\n${intro || 'Remembering some guys tonight.'}`,
+      grabHint: '', fontScale: 1, role: null, kind: 'title',
+    });
+    // One slide per picked role, blurbs matched by index (fall back to the hook).
+    for (let i = 0; i < picked.length && next.length < MAX_SLIDES - 1; i++) {
+      const role = picked[i];
+      const bitmap = await makeCardBitmap({
+        heading: role.movie,
+        sub: [role.year, role.role].filter(Boolean).join(' · '),
+        accent: GUYS_ACCENT,
+      });
+      next.push({
+        id: String(nextId++), bitmap, blob: null,
+        caption: captionForRole(role, blurbFor(role, i)),
+        grabHint: '', fontScale: 1,
+        role: { movie: role.movie, year: role.year, role: role.role },
+      });
+    }
+    try { next.push(await makeOutroSlide()); }
+    catch (e) { console.error('[tik] outro slide failed:', e); }
+    slides = next;
+    render();
+    markDirty();
+    els.status.textContent = 'Slides ready — click a slide, then paste, drop, or pick a photo of the guy. Captions are editable.';
+  } catch (err) {
+    console.error('[tik] write blurbs failed:', err);
+    els.status.textContent = err.message;
+  } finally {
+    setAiBusy(false);
+  }
+});
+
+// ================= Slide images: edit / paste / drop / pick =================
+// ---- Select a slide: in trivia the scrubber jumps there for a re-grab; in
+// both formats a selected slide accepts paste / drop / picked images. ----
+async function enterEdit(id) {
+  const slide = slides.find((s) => s.id === id);
+  if (!slide) return;
+  editingId = id;
+  els.grabIcon.textContent = 'save';
+  els.grabLabel.textContent = 'Save frame';
+  els.cancelEdit.classList.remove('hidden');
+  render(); // apply the highlight
+  const isTrivia = project?.format === 'trivia';
+  if (isTrivia) {
+    els.status.textContent = slide.grabHint
+      ? `Editing — GRAB: ${slide.grabHint}  (or paste/drop an image)`
+      : 'Editing this slide — scrub to a new frame and Save, or paste/drop an image. Esc cancels.';
+    if (videoReady && Number.isFinite(slide.timecode)) await seekAndSettle(els.video, slide.timecode);
+  } else {
+    els.status.textContent = 'Slide selected — paste, drop, or pick a photo for it. Esc cancels.';
+  }
+}
+
+function resetEditState() {
+  editingId = null;
+  els.grabIcon.textContent = 'photo_camera';
+  els.grabLabel.textContent = 'Grab frame';
+  els.cancelEdit.classList.add('hidden');
+}
+function exitEdit() { resetEditState(); render(); }
+els.cancelEdit.addEventListener('click', () => { exitEdit(); els.status.textContent = 'Edit cancelled.'; });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && editingId) { exitEdit(); els.status.textContent = 'Edit cancelled.'; }
+});
+
+// Set a custom image (paste/drop/pick) as a slide's frame. Custom images have
+// no movie timecode, and any stale GRAB hint is cleared so a later thumb-tap
+// doesn't re-seek the video to an unrelated frame.
+async function setSlideImage(id, blob) {
+  const ticket = project?.id;
+  try {
+    const bitmap = await createImageBitmap(blob);
+    if (project?.id !== ticket) return; // navigated away mid-decode
+    slides = updateSlideFrame(slides, id, bitmap, undefined);
+    slides = slides.map((s) => (s.id === id ? { ...s, grabHint: '', blob } : s));
+    if (id === editingId) exitEdit(); else render();
+    markDirty();
+    els.status.textContent = 'Image set as this slide’s frame.';
+  } catch (err) {
+    console.error('[tik] set image failed:', err);
+    els.status.textContent = 'Couldn’t read that image.';
+  }
+}
+
+// While a slide is selected, pasting an image from the clipboard sets its
+// frame. Text pastes and pastes with nothing selected fall through untouched
+// (so caption/prompt paste keeps working).
+document.addEventListener('paste', async (e) => {
+  if (!editingId) return;
+  const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
+  if (!item) return;
+  e.preventDefault();
+  const blob = item.getAsFile();
+  if (!blob) return;
+  await setSlideImage(editingId, blob);
+});
+
+// Hidden file input, shared by every slide's "pick image" button.
+els.imgFile.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  const target = pickTargetId;
+  pickTargetId = null;
+  els.imgFile.value = ''; // same file can be re-picked later
+  if (!file || !target) return;
+  await setSlideImage(target, file);
+});
+
+// ================= Slide list =================
 function render() {
+  if (!project) return;
   els.count.textContent = String(slides.length);
   els.grab.disabled = !editingId && !canAddSlide(slides); // Save stays enabled at the cap
   els.addScene.disabled = aiBusy || !videoReady || !canAddSlide(slides);
@@ -288,9 +920,10 @@ function redrawAllThumbs() {
 }
 
 function renderSlide(slide, index) {
+  const isTrivia = project?.format === 'trivia';
   const li = document.createElement('li');
-  li.className = 'flex flex-col gap-2 rounded-lg bg-neutral-900 p-2';
-  if (slide.id === editingId) li.className += ' ring-2 ring-red-500'; // being re-grabbed
+  li.className = 'flex flex-col gap-2 rounded-xl border border-neutral-800 bg-neutral-900 p-2';
+  if (slide.id === editingId) li.className += ' ring-2 ring-red-500';
   li.draggable = true;
   li.dataset.index = String(index);
 
@@ -299,12 +932,14 @@ function renderSlide(slide, index) {
 
   // Live preview: the FULL composed slide (frame + caption pills), rendered at
   // 1080x1920 by composeToCanvas and shrunk to a thumbnail with CSS.
-  // Tap it to load its frame into the scrubber and re-grab.
   const thumb = document.createElement('canvas');
   thumb.dataset.thumb = slide.id;
-  thumb.className = 'flex-none cursor-pointer rounded bg-black w-[72px] h-auto';
-  thumb.title = 'Click to re-grab this frame';
-  thumb.addEventListener('click', () => enterEdit(slide.id));
+  thumb.className = 'w-[72px] flex-none cursor-pointer rounded-md bg-black h-auto';
+  thumb.title = isTrivia ? 'Click to re-grab or replace this frame' : 'Click to select, then paste/drop/pick a photo';
+  thumb.addEventListener('click', () => {
+    if (slide.id === editingId) { exitEdit(); els.status.textContent = 'Edit cancelled.'; return; }
+    enterEdit(slide.id);
+  });
 
   // Text fields inside a draggable <li> lose mouse text-selection to the drag
   // handler — suspend dragging while a field is being used.
@@ -314,13 +949,13 @@ function renderSlide(slide, index) {
   };
 
   const mid = document.createElement('div');
-  mid.className = 'flex flex-1 flex-col gap-1 min-w-0';
+  mid.className = 'flex min-w-0 flex-1 flex-col gap-1';
 
   const ta = document.createElement('textarea');
-  ta.className = 'w-full rounded bg-neutral-950 border border-neutral-800 p-2 text-sm text-neutral-100';
+  ta.className = 'w-full rounded-md border border-neutral-800 bg-neutral-950 p-2 text-sm text-neutral-100';
   ta.rows = 3;
   ta.maxLength = 300; // AI caps at 180; give manual edits headroom but keep slides renderable
-  ta.placeholder = 'Trivia for this frame…';
+  ta.placeholder = isTrivia ? 'Trivia for this frame…' : 'Blurb for this guy…';
   ta.value = slide.caption;
   suspendDragWhileEditing(ta);
 
@@ -333,6 +968,7 @@ function renderSlide(slide, index) {
   ta.addEventListener('input', () => {
     slides = editCaption(slides, slide.id, ta.value);
     redrawThumb();
+    markDirty();
   });
   mid.append(ta);
 
@@ -340,24 +976,30 @@ function renderSlide(slide, index) {
   // Never baked into the slide or sent to TikTok.
   if (slide.grabHint) {
     const hint = document.createElement('p');
-    hint.className = 'text-[11px] uppercase tracking-wide text-neutral-500 truncate';
+    hint.className = 'truncate text-[11px] uppercase tracking-wide text-neutral-500';
     hint.title = slide.grabHint;
     hint.textContent = `GRAB: ${slide.grabHint}`;
     mid.append(hint);
   }
 
-  // Per-slide toolbar: caption font sizing + two AI actions. No prompt — one
-  // button rewrites this fact, the other creates a new one. Both run on Opus.
+  // Per-slide toolbar: image pick + caption font sizing + AI actions.
   const toolbar = document.createElement('div');
   toolbar.className = 'flex flex-wrap items-center gap-1';
   const tbBtn = (icon, label, tip, extra = '') => {
     const b = document.createElement('button');
-    b.className = `flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 disabled:opacity-40 ${extra}`;
+    b.className = `flex items-center gap-1 rounded-md bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40 ${extra}`;
     b.title = tip;
     b.append(iconSpan(icon, 'text-[16px]'));
     if (label) b.append(document.createTextNode(label));
     return b;
   };
+
+  // Bring-your-own-image: opens a file picker for this slide.
+  const pickBtn = tbBtn('add_photo_alternate', '', 'Use your own image (or paste/drop one while the slide is selected)');
+  pickBtn.addEventListener('click', () => {
+    pickTargetId = slide.id;
+    els.imgFile.click();
+  });
 
   // Font sizing (per slide): scales the caption up/down for the amount of text.
   const fontDown = tbBtn('text_decrease', '', 'Smaller caption');
@@ -367,95 +1009,148 @@ function renderSlide(slide, index) {
     slide.fontScale = next; // keep the closure current for redraws
     slides = slides.map((s) => (s.id === slide.id ? { ...s, fontScale: next } : s));
     redrawThumb();
+    markDirty();
   };
   fontDown.addEventListener('click', () => nudgeFont(-0.1));
   fontUp.addEventListener('click', () => nudgeFont(0.1));
 
-  const rewriteBtn = tbBtn('auto_awesome', 'Rewrite this fact', 'New wording for this same fact, keeps the frame', 'text-fuchsia-300');
-  const newFactBtn = tbBtn('refresh', 'Create a new fact', 'A different fact, with a new frame');
+  toolbar.append(pickBtn, fontDown, fontUp);
 
-  const runAi = async (mode) => {
-    if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
-    if (aiBusy) return;
-    setAiBusy(true);
-    rewriteBtn.disabled = true; newFactBtn.disabled = true;
-    try {
-      if (mode === 'rewrite') {
-        // A fresh take on THIS fact; the frame stays.
-        els.status.textContent = 'Rewriting this fact…';
-        const exclude = slides.filter((s) => s.id !== slide.id).map((s) => s.caption);
-        const [scene] = await fetchScenes({
-          title: movie.title, year: movie.year, durationSeconds: els.video.duration,
-          count: 1, exclude, focusTimecode: slide.timecode, model: 'claude-opus-4-8',
-          onProgress: (m) => { els.status.textContent = `Rewriting this fact — ${m}`; },
-        });
-        slides = editCaption(slides, slide.id, scene.caption);
-        ta.value = scene.caption;
-        redrawThumb();
-        els.status.textContent = 'Fact rewritten.';
-      } else {
-        // A different fact entirely, with a new frame at its timecode.
-        els.status.textContent = 'Creating a new fact…';
-        const exclude = slides.map((s) => s.caption);
-        const [scene] = await fetchScenes({
-          title: movie.title, year: movie.year, durationSeconds: els.video.duration,
-          count: 1, exclude, model: 'claude-opus-4-8',
-          onProgress: (m) => { els.status.textContent = `Creating a new fact — ${m}`; },
-        });
-        const bitmap = await grabAt(scene.timecode);
-        slides = updateSlideFrame(slides, slide.id, bitmap, scene.timecode);
-        slides = editCaption(slides, slide.id, scene.caption);
-        slides = slides.map((s) => (s.id === slide.id ? { ...s, grabHint: scene.grab || '' } : s));
-        render();
-        els.status.textContent = 'Created a new fact and frame.';
+  if (isTrivia) {
+    // Two AI actions, no prompt: one rewrites this fact, the other creates a
+    // new one (new frame). Both run on Opus.
+    const rewriteBtn = tbBtn('auto_awesome', 'Rewrite this fact', 'New wording for this same fact, keeps the frame', 'text-fuchsia-300');
+    const newFactBtn = tbBtn('refresh', 'Create a new fact', 'A different fact, with a new frame');
+
+    const runAi = async (mode) => {
+      if (aiBusy) return;
+      if (mode === 'newFact' && !videoReady) { els.status.textContent = 'Load the movie file first — a new fact needs a new frame.'; return; }
+      setAiBusy(true);
+      const ticket = project?.id; // bail if the user opens another project mid-job
+      rewriteBtn.disabled = true; newFactBtn.disabled = true;
+      try {
+        if (mode === 'rewrite') {
+          // A fresh take on THIS fact; the frame stays.
+          els.status.textContent = 'Rewriting this fact…';
+          const exclude = slides.filter((s) => s.id !== slide.id).map((s) => s.caption);
+          const [scene] = await fetchScenes({
+            title: movie.title || project.name, year: movie.year,
+            durationSeconds: els.video.duration || 7200,
+            count: 1, exclude, focusTimecode: slide.timecode, model: 'claude-opus-4-8',
+            onProgress: (m) => { els.status.textContent = `Rewriting this fact — ${m}`; },
+          });
+          if (project?.id !== ticket) return;
+          slides = editCaption(slides, slide.id, scene.caption);
+          ta.value = scene.caption;
+          redrawThumb();
+          els.status.textContent = 'Fact rewritten.';
+        } else {
+          // A different fact entirely, with a new frame at its timecode.
+          els.status.textContent = 'Creating a new fact…';
+          const exclude = slides.map((s) => s.caption);
+          const [scene] = await fetchScenes({
+            title: movie.title, year: movie.year, durationSeconds: els.video.duration,
+            count: 1, exclude, model: 'claude-opus-4-8',
+            onProgress: (m) => { els.status.textContent = `Creating a new fact — ${m}`; },
+          });
+          if (project?.id !== ticket) return;
+          const bitmap = await grabAt(scene.timecode);
+          if (project?.id !== ticket) return;
+          slides = updateSlideFrame(slides, slide.id, bitmap, scene.timecode);
+          slides = editCaption(slides, slide.id, scene.caption);
+          slides = slides.map((s) => (s.id === slide.id ? { ...s, grabHint: scene.grab || '', blob: null } : s));
+          render();
+          els.status.textContent = 'Created a new fact and frame.';
+        }
+        markDirty();
+      } catch (err) {
+        console.error('[tik] slide AI action failed:', err);
+        els.status.textContent = err.message;
+      } finally {
+        setAiBusy(false);
+        rewriteBtn.disabled = false; newFactBtn.disabled = false;
       }
-    } catch (err) {
-      console.error('[tik] slide AI action failed:', err);
-      els.status.textContent = err.message;
-    } finally {
-      setAiBusy(false);
-      rewriteBtn.disabled = false; newFactBtn.disabled = false;
-    }
-  };
-  rewriteBtn.addEventListener('click', () => runAi('rewrite'));
-  newFactBtn.addEventListener('click', () => runAi('newFact'));
-
-  toolbar.append(fontDown, fontUp, rewriteBtn, newFactBtn);
+    };
+    rewriteBtn.addEventListener('click', () => runAi('rewrite'));
+    newFactBtn.addEventListener('click', () => runAi('newFact'));
+    toolbar.append(rewriteBtn, newFactBtn);
+  } else if (slide.role) {
+    // Some Guys: rewrite this role's blurb (title/outro slides have no role).
+    const rewriteBtn = tbBtn('auto_awesome', 'Rewrite blurb', 'A fresh blurb for this role', 'text-cyan-300');
+    rewriteBtn.addEventListener('click', async () => {
+      if (aiBusy) return;
+      setAiBusy(true);
+      const ticket = project?.id; // bail if the user opens another project mid-job
+      rewriteBtn.disabled = true;
+      try {
+        els.status.textContent = `Rewriting the ${slide.role.movie} blurb…`;
+        const { blurbs } = await fetchBlurbs({
+          actor: project.actor, roles: [slide.role], exclude: [ta.value], model: 'claude-opus-4-8',
+          onProgress: (m) => { els.status.textContent = `Rewriting the blurb — ${m}`; },
+        });
+        if (project?.id !== ticket) return;
+        const caption = captionForRole(slide.role, blurbs[0]?.blurb || '');
+        slides = editCaption(slides, slide.id, caption);
+        ta.value = caption;
+        redrawThumb();
+        markDirty();
+        els.status.textContent = 'Blurb rewritten.';
+      } catch (err) {
+        console.error('[tik] rewrite blurb failed:', err);
+        els.status.textContent = err.message;
+      } finally {
+        setAiBusy(false);
+        rewriteBtn.disabled = false;
+      }
+    });
+    toolbar.append(rewriteBtn);
+  }
   mid.append(toolbar);
 
   // Delete (top-right).
   const del = document.createElement('button');
-  del.className = 'rounded bg-neutral-800 px-2 py-1 text-neutral-400 self-start disabled:opacity-40';
+  del.className = 'self-start rounded-md bg-neutral-800 px-2 py-1 text-neutral-400 hover:bg-neutral-700 hover:text-red-400 disabled:opacity-40';
   del.title = 'Delete slide';
   del.append(iconSpan('delete'));
   del.addEventListener('click', () => {
     slides = removeSlide(slides, slide.id);
     if (slide.id === editingId) resetEditState(); // don't leave edit mode dangling
     render();
+    markDirty();
   });
 
   row.append(thumb, mid, del);
   li.append(row);
 
-  // Drag to reorder.
+  // Drag: reorder slides, or drop an image FILE from the desktop onto a slide.
   li.addEventListener('dragstart', () => { dragFrom = index; });
   li.addEventListener('dragover', (e) => e.preventDefault());
-  li.addEventListener('drop', (e) => {
+  li.addEventListener('drop', async (e) => {
     e.preventDefault();
+    const file = [...(e.dataTransfer?.files || [])].find((f) => f.type.startsWith('image/'));
+    if (file) {
+      dragFrom = null;
+      await setSlideImage(slide.id, file);
+      return;
+    }
     const to = Number(li.dataset.index);
-    if (dragFrom !== null && dragFrom !== to) { slides = reorderSlide(slides, dragFrom, to); render(); }
+    if (dragFrom !== null && dragFrom !== to) {
+      slides = reorderSlide(slides, dragFrom, to);
+      render();
+      markDirty();
+    }
     dragFrom = null;
   });
 
   return li;
 }
 
-// ---- Download slides (no-API path: post them manually in the TikTok app) ----
+// ================= Download =================
 els.download.addEventListener('click', async () => {
   if (!slides.length) return;
   els.download.disabled = true;
   try {
-    const slug = (movie.title || 'trivia').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'trivia';
+    const slug = projectDisplayName(project).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'slides';
     const titleLine = currentTitleLine();
     for (let i = 0; i < slides.length; i++) {
       els.status.textContent = `Rendering slide ${i + 1}/${slides.length}…`;
@@ -477,47 +1172,67 @@ els.download.addEventListener('click', async () => {
   }
 });
 
-// ---- Post ----
+// ================= Post details =================
+els.postTitleInput.addEventListener('input', () => {
+  if (!project) return;
+  project.postTitle = els.postTitleInput.value;
+  project.postEdited = true;
+  markDirty();
+});
+els.postDescInput.addEventListener('input', () => {
+  if (!project) return;
+  project.postDesc = els.postDescInput.value;
+  project.postEdited = true;
+  markDirty();
+});
+els.postReset.addEventListener('click', () => {
+  if (!project) return;
+  project.postEdited = false;
+  syncPostDefaults();
+  markDirty();
+});
+
+// ================= Post =================
 function updatePostButton() {
   const publicOrigin = isPublicOrigin();
-  els.post.disabled = !(isSignedIn() && slides.length > 0 && publicOrigin);
+  els.post.disabled = !(project && isSignedIn() && slides.length > 0 && publicOrigin);
   els.post.title = publicOrigin ? '' : 'Posting to TikTok needs the deployed site';
 }
 els.post.addEventListener('click', async () => {
   els.post.disabled = true;
+  const ticket = project?.id; // navigating mid-post must not mark another project posted
   try {
-    // Always send a real post title + description (they prefill the draft in
-    // the TikTok app — previously we sent the toggle's title line, which is
-    // empty when the toggle is off, so drafts arrived blank).
     const titleLine = currentTitleLine();
-    const postTitle = movie.query
-      ? `${movie.query} — movie trivia & behind-the-scenes facts`
-      : (titleLine || 'Movie trivia & behind-the-scenes facts');
-    const postDesc = [
-      movie.query
-        ? `Behind-the-scenes facts and hidden details from ${movie.query}.`
-        : 'Behind-the-scenes movie facts and hidden details.',
-      // Main ask: viewers love dropping quotes/one-liners, so ask for them outright.
-      'What’s your favorite quote from the movie? Drop it in the comments.',
-      'Save this for your next movie night, and follow VHS Garage for more.',
-      // TikTok effectively honors ~5 hashtags — keep them broad, skip niche tags.
-      '#movietrivia #moviefacts #behindthescenes #movietok #moviequotes',
-    ].join(' ');
+    const fallback = defaultPostFields(project.format, projectDisplayName(project));
     const result = await publishSlideshow(slides, {
       titleLine,
-      title: postTitle,
-      description: postDesc,
+      title: (project.postTitle || '').trim() || fallback.title,
+      description: (project.postDesc || '').trim() || fallback.description,
       onProgress: (m) => { els.status.textContent = m; },
     });
+    if (project?.id !== ticket) {
+      console.warn('[tik] post finished after navigating away; library status left as draft', { ticket, status: result?.status });
+      return;
+    }
     if (result.status === 'FAILED') {
       console.error('[tik] TikTok post FAILED', result);
       els.status.textContent = result.failReason
         ? `TikTok rejected the post: ${result.failReason}`
         : 'TikTok reported a failure — check the app.';
-    } else if (result.status === 'SEND_TO_USER_INBOX' || result.status === 'PUBLISH_COMPLETE') {
-      els.status.textContent = 'Draft sent to your TikTok inbox. Open the app to publish.';
     } else {
-      els.status.textContent = 'Uploaded — still processing. Check your TikTok inbox shortly.';
+      // Mark it posted and save immediately, so the library reflects reality.
+      project.status = 'posted';
+      project.postedAt = Date.now();
+      let savedNote = 'Saved to your library as posted.';
+      try {
+        await saveNow();
+      } catch (e) {
+        console.error('[tik] post-success save failed:', e);
+        savedNote = 'Heads up: saving to your library failed (storage full?) — the post itself went through.';
+      }
+      els.status.textContent = (result.status === 'SEND_TO_USER_INBOX' || result.status === 'PUBLISH_COMPLETE')
+        ? `Draft sent to your TikTok inbox — open the app to publish. ${savedNote}`
+        : `Uploaded — still processing. Check your TikTok inbox shortly. ${savedNote}`;
     }
   } catch (err) {
     console.error('[tik] post failed:', err);
@@ -528,14 +1243,35 @@ els.post.addEventListener('click', async () => {
   }
 });
 
-// ---- Boot ----
+// ================= Boot =================
 (async () => {
+  let authMsg = '';
   try {
-    if (await handleRedirect()) els.status.textContent = 'Signed in to TikTok.';
-  } catch (e) { console.error('[tik] sign-in failed:', e); els.status.textContent = e.message; }
-  if (!isPublicOrigin()) {
-    els.status.textContent = 'Grab & caption work here; posting to TikTok needs the deployed site (TikTok can’t fetch images from a local address).';
-  }
+    if (await handleRedirect()) authMsg = 'Signed in to TikTok.';
+  } catch (e) { console.error('[tik] sign-in failed:', e); authMsg = e.message; }
   refreshAuthUI();
-  render();
+
+  // Canvas previews render with the system stack until Inter arrives; upgrade
+  // them in place once it has.
+  document.fonts?.ready?.then(() => { if (project) redrawAllThumbs(); })
+    .catch((e) => console.warn('[tik] fonts.ready failed:', e));
+
+  // Deep link: #p/<id> reopens a saved project (survives reloads).
+  const m = location.hash.match(/^#p\/([A-Za-z0-9-]+)$/);
+  if (m && storageAvailable()) {
+    try {
+      await openProject(m[1]);
+      if (authMsg) els.status.textContent = authMsg;
+      return;
+    } catch (e) {
+      console.warn('[tik] deep link failed; falling back to home', e);
+    }
+  }
+  history.replaceState({}, '', location.pathname + location.search);
+  showScreen('home');
+  setSaveState('off');
+  await renderLibrary();
+  if (!isPublicOrigin()) {
+    console.warn('[tik] local origin: posting to TikTok is disabled here (it can’t fetch images from a local address)');
+  }
 })();

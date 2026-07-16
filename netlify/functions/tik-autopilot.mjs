@@ -8,6 +8,7 @@
 //   lives under Netlify's 10s function ceiling so it uses a fast model + 9s abort.
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, normalizeSuggestions, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
+import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
 
 // Sync-path default: must fit the 9s abort, so use the fast tier here. The
@@ -46,10 +47,16 @@ export default async (req) => {
   let body;
   try { body = await req.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
 
-  const { title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, model: requested } = body;
-  if (!title) return json({ error: 'Missing movie title' }, 400);
+  const { kind = 'trivia', title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, actor, roles, model: requested } = body;
+  if (kind === 'trivia' && !title) return json({ error: 'Missing movie title' }, 400);
+  if ((kind === 'roles' || kind === 'blurbs') && !actor) return json({ error: 'Missing actor name' }, 400);
+  if (kind === 'blurbs' && !(Array.isArray(roles) && roles.length)) return json({ error: 'No roles picked' }, 400);
   const model = pickModel(requested);
-  const prompt = buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide });
+  const prompt = kind === 'roles'
+    ? buildRolesPrompt({ actor, count: Number(count) || ROLES_COUNT, exclude })
+    : kind === 'blurbs'
+      ? buildBlurbsPrompt({ actor, roles, exclude })
+      : buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide });
 
   // Abort before Netlify's 10s function ceiling so we return a graceful
   // fallback instead of a platform 502.
@@ -57,6 +64,22 @@ export default async (req) => {
   const timer = setTimeout(() => controller.abort(), 9000);
   try {
     const raw = await callModel(prompt, model, controller.signal);
+    if (kind === 'roles') {
+      const list = normalizeRoles(parseModelJson(raw));
+      if (!list.length) {
+        console.warn('[tik-autopilot] model returned no usable roles', { model, rawPreview: String(raw).slice(0, 300) });
+        return json({ roles: [], model, aiFallback: true, error: 'The AI returned no usable roles — try again.' });
+      }
+      return json({ roles: list, model, aiFallback: false });
+    }
+    if (kind === 'blurbs') {
+      const { intro, blurbs } = normalizeBlurbs(parseModelJson(raw));
+      if (!blurbs.length) {
+        console.warn('[tik-autopilot] model returned no usable blurbs', { model, rawPreview: String(raw).slice(0, 300) });
+        return json({ blurbs: [], model, aiFallback: true, error: 'The AI returned no usable blurbs — try again.' });
+      }
+      return json({ intro, blurbs, model, aiFallback: false });
+    }
     const base = Number(count) || AUTOPILOT_COUNT;
     const max = includeTitleSlide ? base + 1 : base;
     const suggestions = normalizeSuggestions(parseModelJson(raw), durationSeconds, max);
@@ -66,11 +89,11 @@ export default async (req) => {
     }
     return json({ suggestions, model, aiFallback: false });
   } catch (e) {
-    console.error('[tik-autopilot] AI call failed', { model, name: e.name, message: e.message });
+    console.error('[tik-autopilot] AI call failed', { kind, model, name: e.name, message: e.message });
     const reason = e.name === 'AbortError'
       ? 'the AI took too long to respond — try again'
       : e.message;
-    return json({ suggestions: [], model, aiFallback: true, error: `Autopilot failed: ${reason}` });
+    return json({ suggestions: [], model, aiFallback: true, error: `The AI call failed: ${reason}` });
   } finally {
     clearTimeout(timer);
   }

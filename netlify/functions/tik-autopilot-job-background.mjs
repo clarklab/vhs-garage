@@ -1,14 +1,20 @@
-// Background autopilot worker — beats Netlify's 10s sync-function ceiling.
+// Background AI-job worker — beats Netlify's 10s sync-function ceiling.
 // The "-background" filename suffix makes this a Background Function (15-min
 // budget) on EVERY bundler version — the in-source `config = { background }`
 // key is silently stripped by older zip-it-and-ship-it releases, so don't
 // rely on it. The browser POSTs a job (immediate 202), this writes a start
 // marker, runs the AI call, and writes the result to Blobs; the browser polls
 // GET tik-autopilot?job=<id> for it.
+//
+// Job kinds (body.kind):
+// - 'trivia' (default): movie trivia suggestions → { suggestions }
+// - 'roles': an actor's memorable cult roles      → { roles }
+// - 'blurbs': slide blurbs for picked roles       → { intro, blurbs }
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, normalizeSuggestions, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
+import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
-import { fetchFilmSource } from './lib/wiki.mjs';
+import { fetchFilmSource, fetchActorSource } from './lib/wiki.mjs';
 
 const JOB_MAX_AGE_MS = 60 * 60 * 1000; // sweep results older than 1h
 // Keep the AI budget BELOW the client's poll cap (4 min) so every job resolves
@@ -18,12 +24,34 @@ const AI_TIMEOUT_MS = 3.5 * 60 * 1000;
 // With the sync ceiling gone, default to the strongest model for trivia.
 const DEFAULT_MODEL = process.env.TIK_AUTOPILOT_MODEL || 'claude-opus-4-8';
 
+// Ground the model in Wikipedia (film production sections, or the actor's
+// career sections). Best-effort: a Wikipedia hiccup must never sink the job.
+async function fetchSource(kind, { title, year, actor }, jobId) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    const source = kind === 'trivia'
+      ? await fetchFilmSource(title, year, controller.signal).finally(() => clearTimeout(timer))
+      : await fetchActorSource(actor, controller.signal).finally(() => clearTimeout(timer));
+    if (source) console.log('[tik-autopilot-job] grounded in Wikipedia', { jobId, kind, page: source.pageTitle, chars: source.text.length });
+    return source;
+  } catch (e) {
+    console.warn('[tik-autopilot-job] Wikipedia fetch failed; proceeding on recall', { jobId, kind, message: e.message });
+    return null;
+  }
+}
+
 export default async (req) => {
   if (req.method !== 'POST') return new Response(null, { status: 405 });
   let body;
   try { body = await req.json(); } catch { return new Response(null, { status: 400 }); }
 
-  const { jobId, title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, model: requested } = body;
+  const {
+    jobId, kind = 'trivia',
+    title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide,
+    actor, roles,
+    model: requested,
+  } = body;
   if (!jobId || !/^[a-zA-Z0-9-]{8,64}$/.test(jobId)) {
     console.error('[tik-autopilot-job] missing/invalid jobId');
     return new Response(null, { status: 400 });
@@ -34,30 +62,33 @@ export default async (req) => {
   let store;
   try {
     store = getStore(JOBS_STORE);
-    if (!title) throw new Error('Missing movie title');
+    if (kind === 'trivia' && !title) throw new Error('Missing movie title');
+    if ((kind === 'roles' || kind === 'blurbs') && !actor) throw new Error('Missing actor name');
+    if (kind === 'blurbs' && !(Array.isArray(roles) && roles.length)) throw new Error('No roles picked');
 
     // Start marker: lets the poller distinguish "running" from "never started",
     // so the client can bail early instead of polling a dead job for minutes.
     await store.setJSON(jobId, { started: true }, { metadata: { createdAt: Date.now() } });
     await sweepOldJobs(store);
 
-    // Ground the model in Wikipedia's production/filming sections — recall
-    // alone is consistently weaker than the published source material.
-    // Best-effort: a Wikipedia hiccup must never sink the job.
-    let source = null;
-    try {
-      const wikiController = new AbortController();
-      const wikiTimer = setTimeout(() => wikiController.abort(), 10_000);
-      source = await fetchFilmSource(title, year, wikiController.signal).finally(() => clearTimeout(wikiTimer));
-      if (source) console.log('[tik-autopilot-job] grounded in Wikipedia', { jobId, page: source.pageTitle, chars: source.text.length });
-    } catch (e) {
-      console.warn('[tik-autopilot-job] Wikipedia fetch failed; proceeding on recall', { jobId, message: e.message });
+    // Blurbs run on already-picked roles; no grounding needed there.
+    const source = kind === 'blurbs' ? null : await fetchSource(kind, { title, year, actor }, jobId);
+
+    let prompt;
+    if (kind === 'roles') {
+      prompt = buildRolesPrompt({
+        actor, count: Number(count) || ROLES_COUNT, exclude,
+        sourceMaterial: source?.text || '', sourceName: source?.pageTitle || '',
+      });
+    } else if (kind === 'blurbs') {
+      prompt = buildBlurbsPrompt({ actor, roles, exclude });
+    } else {
+      prompt = buildAutopilotPrompt({
+        title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide,
+        sourceMaterial: source?.text || '', sourceName: source?.pageTitle || '',
+      });
     }
 
-    const prompt = buildAutopilotPrompt({
-      title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide,
-      sourceMaterial: source?.text || '', sourceName: source?.pageTitle || '',
-    });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
     let raw;
@@ -67,20 +98,32 @@ export default async (req) => {
       clearTimeout(timer);
     }
 
-    const base = Number(count) || AUTOPILOT_COUNT;
-    const max = includeTitleSlide ? base + 1 : base;
-    const suggestions = normalizeSuggestions(parseModelJson(raw), durationSeconds, max);
-    if (!suggestions.length) {
-      console.warn('[tik-autopilot-job] no usable suggestions', { jobId, model, rawPreview: String(raw).slice(0, 300) });
-      await store.setJSON(jobId, { ok: false, model, error: 'The AI returned no usable trivia — try again.' }, { metadata: { createdAt: Date.now() } });
+    let result;
+    if (kind === 'roles') {
+      const list = normalizeRoles(parseModelJson(raw));
+      result = list.length
+        ? { ok: true, model, roles: list }
+        : { ok: false, model, error: 'The AI returned no usable roles — try again.' };
+    } else if (kind === 'blurbs') {
+      const { intro, blurbs } = normalizeBlurbs(parseModelJson(raw));
+      result = blurbs.length
+        ? { ok: true, model, intro, blurbs }
+        : { ok: false, model, error: 'The AI returned no usable blurbs — try again.' };
     } else {
-      await store.setJSON(jobId, { ok: true, model, suggestions }, { metadata: { createdAt: Date.now() } });
+      const base = Number(count) || AUTOPILOT_COUNT;
+      const max = includeTitleSlide ? base + 1 : base;
+      const suggestions = normalizeSuggestions(parseModelJson(raw), durationSeconds, max);
+      result = suggestions.length
+        ? { ok: true, model, suggestions }
+        : { ok: false, model, error: 'The AI returned no usable trivia — try again.' };
     }
+    if (!result.ok) console.warn('[tik-autopilot-job] no usable result', { jobId, kind, model, rawPreview: String(raw).slice(0, 300) });
+    await store.setJSON(jobId, result, { metadata: { createdAt: Date.now() } });
   } catch (e) {
     const reason = e.name === 'AbortError' ? 'the AI took too long even for a background job — try again' : e.message;
-    console.error('[tik-autopilot-job] failed', { jobId, model, name: e.name, message: e.message });
+    console.error('[tik-autopilot-job] failed', { jobId, kind, model, name: e.name, message: e.message });
     if (store) {
-      await store.setJSON(jobId, { ok: false, model, error: `Autopilot failed: ${reason}` }, { metadata: { createdAt: Date.now() } })
+      await store.setJSON(jobId, { ok: false, model, error: `The AI job failed: ${reason}` }, { metadata: { createdAt: Date.now() } })
         .catch((we) => console.error('[tik-autopilot-job] could not write error result', { jobId, message: we.message }));
     }
   }
