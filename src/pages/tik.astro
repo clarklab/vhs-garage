@@ -60,6 +60,25 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{if(document.g
         </button>
       </div>
 
+      <!-- Followers chart: current count from TikTok, history snapshotted per
+           visit (TikTok has no history API, so the line grows from day one). -->
+      <div id="stats-card" class="mt-10 hidden rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+        <div class="flex flex-wrap items-end gap-x-6 gap-y-1">
+          <div>
+            <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Followers · @vhsgarage.com</h2>
+            <p class="mt-1 flex items-baseline gap-2.5">
+              <span id="stats-count" class="text-3xl font-extrabold tabular-nums tracking-tight">—</span>
+              <span id="stats-delta" class="text-xs font-semibold tabular-nums text-neutral-500"></span>
+            </p>
+          </div>
+          <p id="stats-note" class="ml-auto max-w-64 text-right text-[11px] leading-snug text-neutral-600">Logged each time you open the studio</p>
+        </div>
+        <div id="stats-plot" class="relative mt-3 hidden">
+          <canvas id="stats-chart" class="block h-36 w-full"></canvas>
+          <div id="stats-tip" class="pointer-events-none absolute hidden rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] tabular-nums text-neutral-200 shadow-lg"></div>
+        </div>
+      </div>
+
       <div class="mt-10 flex items-center justify-between">
         <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Open</h2>
         <span class="text-xs text-neutral-600">Saved on this device</span>

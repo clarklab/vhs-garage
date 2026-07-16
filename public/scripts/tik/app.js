@@ -13,6 +13,7 @@ import { composeToCanvas, composeSlide } from './compose.js';
 import { FORMATS, formatOf, makeProject, defaultPostFields, captionForRole, relativeTime, projectDisplayName } from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
+import { fetchFollowerStats, renderFollowerChart, fmtCount } from './stats.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -24,6 +25,8 @@ const els = {
   // home
   newTrivia: $('new-trivia'), newGuys: $('new-guys'),
   grid: $('project-grid'), libraryEmpty: $('library-empty'),
+  statsCard: $('stats-card'), statsCount: $('stats-count'), statsDelta: $('stats-delta'),
+  statsNote: $('stats-note'), statsPlot: $('stats-plot'), statsChart: $('stats-chart'), statsTip: $('stats-tip'),
   // editor bar
   back: $('back-btn'), formatChip: $('format-chip'), projectName: $('project-name'),
   download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
@@ -278,6 +281,7 @@ async function goHome() {
   await teardownProject();
   history.replaceState({}, '', location.pathname + location.search);
   showScreen('home');
+  refreshStatsCard(); // non-blocking; errors handled inside
   await renderLibrary();
 }
 
@@ -482,6 +486,57 @@ async function renderLibrary() {
 
 els.newTrivia.addEventListener('click', () => { newProject('trivia').catch((e) => console.error('[tik] new project failed:', e)); });
 els.newGuys.addEventListener('click', () => { newProject('guys').catch((e) => console.error('[tik] new project failed:', e)); });
+
+// ---- Followers card (home) ----
+// Current count from TikTok when signed in (snapshotted at most hourly);
+// the accumulated series renders as a line chart once it has 2+ days.
+let lastStatsSeries = null;
+async function refreshStatsCard() {
+  try {
+    const data = await fetchFollowerStats();
+    const series = data.series || [];
+    const latest = data.profile?.followers ?? (series.length ? series[series.length - 1].c : null);
+    if (latest === null && !isSignedIn()) { els.statsCard.classList.add('hidden'); return; }
+    els.statsCard.classList.remove('hidden');
+    els.statsCount.textContent = latest === null ? '—' : fmtCount(latest);
+    if (data.delta) {
+      const { delta, days } = data.delta;
+      els.statsDelta.textContent = `${delta >= 0 ? '+' : '−'}${fmtCount(Math.abs(delta))} · last ${days}d`;
+      els.statsDelta.className = `text-xs font-semibold tabular-nums ${delta > 0 ? 'text-green-400' : delta < 0 ? 'text-red-400' : 'text-neutral-500'}`;
+    } else {
+      els.statsDelta.textContent = '';
+    }
+    els.statsNote.textContent = series.length < 2
+      ? 'First snapshot logged — the line starts with tomorrow’s visit (TikTok has no history API)'
+      : 'Logged each time you open the studio';
+    if (series.length >= 2) {
+      els.statsPlot.classList.remove('hidden');
+      lastStatsSeries = series;
+      // Render on the next frame so layout reflects the just-unhidden plot —
+      // measuring too early bakes a 0-width fallback into the raster.
+      requestAnimationFrame(() => renderFollowerChart(els.statsChart, series, els.statsTip));
+    } else {
+      els.statsPlot.classList.add('hidden');
+      lastStatsSeries = null;
+    }
+  } catch (e) {
+    console.error('[tik] follower stats failed:', e);
+    if (e.reauth) { clearLocalToken(); refreshAuthUI(); }
+    if (!isSignedIn()) { els.statsCard.classList.add('hidden'); return; }
+    els.statsCard.classList.remove('hidden');
+    els.statsNote.textContent = e.scope
+      ? (e.hint || e.message)
+      : (e.reauth ? 'Sign in again to track followers.' : 'Follower stats are unavailable right now.');
+  }
+}
+
+// Re-render the chart on resize (debounced) so it tracks the card's width.
+let statsResizeTimer = null;
+window.addEventListener('resize', () => {
+  if (!lastStatsSeries || els.home.classList.contains('hidden')) return;
+  clearTimeout(statsResizeTimer);
+  statsResizeTimer = setTimeout(() => renderFollowerChart(els.statsChart, lastStatsSeries, els.statsTip), 150);
+});
 
 // A drop that misses a slide card must not navigate the tab away to the
 // dropped file (the UI actively invites drag-and-drop onto slides).
@@ -1270,6 +1325,7 @@ els.post.addEventListener('click', async () => {
   history.replaceState({}, '', location.pathname + location.search);
   showScreen('home');
   setSaveState('off');
+  refreshStatsCard(); // non-blocking; errors handled inside
   await renderLibrary();
   if (!isPublicOrigin()) {
     console.warn('[tik] local origin: posting to TikTok is disabled here (it can’t fetch images from a local address)');

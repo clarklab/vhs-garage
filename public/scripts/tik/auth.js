@@ -5,7 +5,9 @@
 // (sessionStorage, localStorage, location) and only inside functions.
 
 const AUTHORIZE_BASE = 'https://www.tiktok.com/v2/auth/authorize/';
-const SCOPE = 'user.info.basic,video.upload';
+// user.info.stats powers the follower chart — it must also be enabled on the
+// app in the TikTok developer portal, or the authorize page rejects the scope.
+const SCOPE = 'user.info.basic,user.info.stats,video.upload';
 const LS_REFRESH = 'tik_refresh_token';
 const SS_STATE = 'tik_oauth_state';
 
