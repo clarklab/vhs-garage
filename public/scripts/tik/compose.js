@@ -8,7 +8,9 @@ import { wrapLines, fitFontSize } from './caption.js';
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
-const FONT = (size) => `700 ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+// Inter first (loaded by the page); system stack until it arrives. app.js
+// redraws thumbnails on document.fonts.ready so previews upgrade in place.
+const FONT = (size) => `700 ${size}px Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
 const TEXT_MAX_W = CANVAS_W - 220; // generous side padding for the text block
 const GAP = 52;                    // gap between frame and text block
 const MIN_VPAD = 100;              // minimum space above/below the centered group

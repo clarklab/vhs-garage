@@ -90,7 +90,8 @@ Return ONLY valid JSON in this exact shape, nothing else:
 // them). Turn a dash into a comma, then clean up the artifacts that creates
 // (doubled commas, comma-before-period, edge commas). Newlines are preserved
 // (title slide is two lines): the edge trim runs per line via the m flag.
-function stripDashes(s) {
+// Exported: someguys.mjs applies the same rule to hooks/blurbs.
+export function stripDashes(s) {
   return s
     .replace(/[ \t]*[—–][ \t]*/g, ', ')   // dash → comma
     .replace(/,\s*,/g, ',')                // ",," → ","
