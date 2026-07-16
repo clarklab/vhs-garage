@@ -11,7 +11,8 @@ test('buildAuthorizeUrl builds the TikTok Web login URL', () => {
   assert.equal(u.origin + u.pathname, 'https://www.tiktok.com/v2/auth/authorize/');
   assert.equal(u.searchParams.get('client_key'), 'ck123');
   assert.equal(u.searchParams.get('response_type'), 'code');
-  assert.equal(u.searchParams.get('scope'), 'user.info.basic,video.upload');
+  // user.info.stats powers the follower chart on the studio home screen.
+  assert.equal(u.searchParams.get('scope'), 'user.info.basic,user.info.stats,video.upload');
   assert.equal(u.searchParams.get('redirect_uri'), 'https://vhs.example/tik');
   assert.equal(u.searchParams.get('state'), 'st');
 });
