@@ -13,6 +13,7 @@ import { composeToCanvas, composeSlide } from './compose.js';
 import { FORMATS, formatOf, makeProject, defaultPostFields, captionForRole, relativeTime, projectDisplayName } from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
+import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
 import { fetchFollowerStats, renderFollowerChart, fmtCount } from './stats.js';
 
 const $ = (id) => document.getElementById(id);
@@ -841,7 +842,7 @@ els.writeBlurbs.addEventListener('click', async () => {
     const next = [];
     // Title slide: the actor's name card; paste a good photo of the guy over it.
     const titleBitmap = await makeCardBitmap({
-      heading: project.actor, sub: 'Remembering some guys', hint: 'Paste a photo of the guy', accent: GUYS_ACCENT,
+      heading: project.actor, sub: 'Remembering some guys', hint: 'Paste 2–4 photos for a mosaic', accent: GUYS_ACCENT,
     });
     next.push({
       id: String(nextId++), bitmap: titleBitmap, blob: null,
@@ -868,7 +869,7 @@ els.writeBlurbs.addEventListener('click', async () => {
     slides = next;
     render();
     markDirty();
-    els.status.textContent = 'Slides ready — click a slide, then paste, drop, or pick a photo of the guy. Captions are editable.';
+    els.status.textContent = 'Slides ready — the opener takes 2–4 photos as a mosaic; other slides take one photo of the guy. Click a slide, then paste, drop, or pick. Captions are editable.';
   } catch (err) {
     console.error('[tik] write blurbs failed:', err);
     els.status.textContent = err.message;
@@ -911,6 +912,48 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && editingId) { exitEdit(); els.status.textContent = 'Edit cancelled.'; }
 });
 
+// The "Remembering Some Guys" opener is a photo mosaic: its frame is built from
+// 1–4 pasted photos instead of a single image. Only that first title slide gets
+// the mosaic treatment; every other guy slide is a plain single photo.
+function isMosaicSlide(slide) {
+  return project?.format === 'guys' && slide?.kind === 'title';
+}
+
+// Build the title slide's frame from 1–4 photos. A batch (multi-file paste/drop/
+// pick) replaces the set; a single photo appends to it, up to MOSAIC_MAX — and a
+// single photo pasted once the mosaic is full starts a fresh mosaic. The source
+// photos live on the slide (in memory) so each add can recomposite from scratch.
+async function setMosaicPhotos(id, blobs) {
+  const slide = slides.find((s) => s.id === id);
+  if (!slide || !blobs?.length) return;
+  const cur = slide.mosaicPhotos || [];
+  let next;
+  if (blobs.length > 1) next = blobs.slice(0, MOSAIC_MAX);            // batch: replace
+  else if (cur.length >= MOSAIC_MAX) next = blobs.slice(0, 1);        // full: start over
+  else next = [...cur, blobs[0]].slice(0, MOSAIC_MAX);               // append one
+  const ticket = project?.id;
+  try {
+    const bitmap = await composeMosaic(next);
+    if (project?.id !== ticket) return; // navigated away mid-decode/compose
+    const old = slide.bitmap;
+    slides = slides.map((s) => (s.id === id
+      ? { ...s, bitmap, blob: null, grabHint: '', timecode: undefined, mosaicPhotos: next }
+      : s));
+    old?.close?.();
+    if (id === editingId) exitEdit(); else render();
+    markDirty();
+    const n = next.length;
+    els.status.textContent = n === 1
+      ? 'Mosaic: 1 photo. Paste, drop, or pick up to 3 more for a side-by-side or 2×2.'
+      : `Mosaic: ${n} photos ${n === 4 ? 'in a 2×2 grid' : 'side by side'}. ` +
+        (n < MOSAIC_MAX ? 'Paste another to add one, or a fresh set to restart.'
+                        : 'Paste a new photo to start the mosaic over.');
+  } catch (err) {
+    console.error('[tik] mosaic compose failed:', err);
+    els.status.textContent = 'Couldn’t build the photo mosaic.';
+  }
+}
+
 // Set a custom image (paste/drop/pick) as a slide's frame. Custom images have
 // no movie timecode, and any stale GRAB hint is cleared so a later thumb-tap
 // doesn't re-seek the video to an unrelated frame.
@@ -935,22 +978,27 @@ async function setSlideImage(id, blob) {
 // (so caption/prompt paste keeps working).
 document.addEventListener('paste', async (e) => {
   if (!editingId) return;
-  const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
-  if (!item) return;
+  const blobs = [...(e.clipboardData?.items || [])]
+    .filter((i) => i.type.startsWith('image/'))
+    .map((i) => i.getAsFile())
+    .filter(Boolean);
+  if (!blobs.length) return;
   e.preventDefault();
-  const blob = item.getAsFile();
-  if (!blob) return;
-  await setSlideImage(editingId, blob);
+  const slide = slides.find((s) => s.id === editingId);
+  if (slide && isMosaicSlide(slide)) await setMosaicPhotos(editingId, blobs);
+  else await setSlideImage(editingId, blobs[0]);
 });
 
 // Hidden file input, shared by every slide's "pick image" button.
 els.imgFile.addEventListener('change', async (e) => {
-  const file = e.target.files?.[0];
+  const files = [...(e.target.files || [])].filter((f) => f.type.startsWith('image/'));
   const target = pickTargetId;
   pickTargetId = null;
   els.imgFile.value = ''; // same file can be re-picked later
-  if (!file || !target) return;
-  await setSlideImage(target, file);
+  if (!files.length || !target) return;
+  const slide = slides.find((s) => s.id === target);
+  if (slide && isMosaicSlide(slide)) await setMosaicPhotos(target, files);
+  else await setSlideImage(target, files[0]);
 });
 
 // ================= Slide list =================
@@ -1182,10 +1230,11 @@ function renderSlide(slide, index) {
   li.addEventListener('dragover', (e) => e.preventDefault());
   li.addEventListener('drop', async (e) => {
     e.preventDefault();
-    const file = [...(e.dataTransfer?.files || [])].find((f) => f.type.startsWith('image/'));
-    if (file) {
+    const files = [...(e.dataTransfer?.files || [])].filter((f) => f.type.startsWith('image/'));
+    if (files.length) {
       dragFrom = null;
-      await setSlideImage(slide.id, file);
+      if (isMosaicSlide(slide)) await setMosaicPhotos(slide.id, files);
+      else await setSlideImage(slide.id, files[0]);
       return;
     }
     const to = Number(li.dataset.index);
