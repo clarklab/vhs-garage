@@ -1117,7 +1117,26 @@ function renderSlide(slide, index) {
   fontDown.addEventListener('click', () => nudgeFont(-0.1));
   fontUp.addEventListener('click', () => nudgeFont(0.1));
 
-  toolbar.append(pickBtn, fontDown, fontUp);
+  // Some Guys: a one-tap link to a Google image search for this slide's subject
+  // — the actor for the opener, "actor + movie" for a role — so grabbing a real
+  // photo and coming right back is a single click. No API: just a preloaded URL.
+  let photoSearch = null;
+  if (project?.format === 'guys') {
+    const q = slide.role
+      ? [project.actor, slide.role.movie].filter(Boolean).join(' ')
+      : (slide.kind === 'title' ? (project.actor || '') : '');
+    if (q.trim()) {
+      photoSearch = document.createElement('a');
+      photoSearch.href = 'https://www.google.com/search?tbm=isch&q=' + encodeURIComponent(q);
+      photoSearch.target = '_blank';
+      photoSearch.rel = 'noopener noreferrer';
+      photoSearch.className = 'flex items-center gap-1 rounded-md bg-neutral-800 px-2 py-1 text-xs text-cyan-300 hover:bg-neutral-700';
+      photoSearch.title = `Search Google Images for “${q}”`;
+      photoSearch.append(iconSpan('image_search', 'text-[16px]'), document.createTextNode('Find photos'));
+    }
+  }
+
+  toolbar.append(pickBtn, ...(photoSearch ? [photoSearch] : []), fontDown, fontUp);
 
   if (isTrivia) {
     // Two AI actions, no prompt: one rewrites this fact, the other creates a
