@@ -180,7 +180,7 @@ async function makeThumbBlob(slide) {
   const c = document.createElement('canvas');
   composeToCanvas(c, slide.bitmap, slide.caption, {
     titleLine: currentTitleLine(), scale: 0.12, fontScale: slide.fontScale || 1,
-    fillFrame: fillFrameFormat(),
+    maxFrameHeightRatio: frameHeightRatio(),
   });
   return await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.7));
 }
@@ -1421,14 +1421,7 @@ async function setSlideImage(id, blob) {
     slides = slides.map((s) => (s.id === id ? { ...s, grabHint: '', blob } : s));
     if (id === editingId) exitEdit(); else render();
     markDirty();
-    // A caption sits below the image, so a full-height image has to shrink to
-    // make room for it. That's geometry, not a bug — but it's worth saying,
-    // because composed artwork usually already carries its own text.
-    const slide = slides.find((s) => s.id === id);
-    const tallAndCaptioned = fillFrameFormat() && bitmap.height > bitmap.width * 1.2 && (slide?.caption || '').trim();
-    els.status.textContent = tallAndCaptioned
-      ? 'Image set, shown whole. Clear this slide’s caption to run it edge to edge.'
-      : 'Image set as this slide’s frame.';
+    els.status.textContent = 'Image set as this slide’s frame.';
   } catch (err) {
     console.error('[tik] set image failed:', err);
     els.status.textContent = 'Couldn’t read that image.';
@@ -1475,10 +1468,12 @@ function render() {
   updatePostButton();
 }
 
-// A Year Snapshot's slides are pasted, already-composed artwork, so they get
-// the whole canvas rather than the 60% cap the grabbed-frame formats use.
-function fillFrameFormat() {
-  return project?.format === 'year';
+// A Year Snapshot's slides are pasted, already-composed artwork, shown whole:
+// bounded by HEIGHT so the caption never gets pushed down the slide, while a
+// square or widescreen image still runs the full width.
+const YEAR_FRAME_HEIGHT_RATIO = 0.6;
+function frameHeightRatio() {
+  return project?.format === 'year' ? YEAR_FRAME_HEIGHT_RATIO : null;
 }
 
 // Redraw the preview thumbnails in place (no full re-render) so editing a caption
@@ -1486,7 +1481,7 @@ function fillFrameFormat() {
 function redrawAllThumbs() {
   slides.forEach((slide) => {
     const thumb = els.list.querySelector(`canvas[data-thumb="${slide.id}"]`);
-    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, fillFrame: fillFrameFormat() });
+    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, maxFrameHeightRatio: frameHeightRatio() });
   });
 }
 
@@ -1535,7 +1530,7 @@ function renderSlide(slide, index) {
   // Redraw this slide's preview from the live caption + its per-slide font scale.
   const redrawThumb = () => composeToCanvas(thumb, slide.bitmap, ta.value, {
     titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1,
-    fillFrame: fillFrameFormat(),
+    maxFrameHeightRatio: frameHeightRatio(),
   });
   redrawThumb();
 
@@ -1754,7 +1749,7 @@ els.download.addEventListener('click', async () => {
     const titleLine = currentTitleLine();
     for (let i = 0; i < slides.length; i++) {
       els.status.textContent = `Rendering slide ${i + 1}/${slides.length}…`;
-      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, fillFrame: fillFrameFormat() });
+      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio: frameHeightRatio() });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `${slug}-${String(i + 1).padStart(2, '0')}.jpg`;
@@ -1806,7 +1801,7 @@ els.post.addEventListener('click', async () => {
     const fallback = defaultPostFields(project.format, projectDisplayName(project));
     const result = await publishSlideshow(slides, {
       titleLine,
-      fillFrame: fillFrameFormat(),
+      maxFrameHeightRatio: frameHeightRatio(),
       title: (project.postTitle || '').trim() || fallback.title,
       description: (project.postDesc || '').trim() || fallback.description,
       onProgress: (m) => { els.status.textContent = m; },
