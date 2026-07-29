@@ -13,6 +13,11 @@ export const LIST_COUNT = 8;      // "top eight" — the whole point of the form
 export const YEAR_MIN = 1930;     // before this there is no meaningful chart data
 export const YEAR_MAX = 2035;
 export const DEFAULT_MIN_VOTES = 100_000; // IMDb vote floor, matching the search UI
+// Two lists of eight, each row carrying a title, a figure and a note, runs
+// ~1000 output tokens and can go higher with long notes. The shared 2048
+// default was sized for a 6-row trivia reply, so this format asks for more:
+// a reply cut off mid-array is unparseable and reads as a total failure.
+export const YEAR_MAX_TOKENS = 4096;
 
 // The lists, in slide order. `key` is the JSON key the model returns and the
 // key the client builds a section from.
@@ -74,10 +79,14 @@ ${ratedBlock}
 
 2. "boxoffice": the ${count} highest-grossing films of ${y} by WORLDWIDE box office for that release year. Each entry's "value" is the gross written short, like "$1.05B worldwide" or "$306M worldwide". If you are only confident about the domestic number, write it as "$306M domestic" instead.
 
-Rules that matter more than filling the lists:
-- Only include titles and numbers you are genuinely confident are real. NEVER invent a film, a rating, or a gross.
-- If you are not confident about a whole list, return that list as an EMPTY array. A missing list is fine. A fabricated one is not.
-- Do not pad a list with guesses to reach ${count}. Fewer real entries beats ${count} shaky ones.
+These are among the best documented films ever made, so both lists are normally answerable. Fill them.
+
+About the numbers: a rating or a gross is a well-known approximate figure here, not a citation. Ratings drift and gross totals get restated, so the reader expects "about right", and giving your best current figure is the correct behaviour, not a guess. Do NOT withhold an entry, and do NOT leave a list empty, because you cannot pin a number to the decimal.
+
+What honesty means on this task:
+- Never invent a FILM. Every title must be a real film from the right year.
+- Get the ORDER right. A ranking that puts the wrong film at number one is the failure that shows.
+- Leave a list empty ONLY if you genuinely do not know the films for this year, which for a modern year should not happen. Uncertainty about an exact number is not a reason.
 - No duplicate titles inside a list. The same film may legitimately appear in both lists.
 
 For every entry, give:
@@ -134,4 +143,23 @@ export function normalizeYearSnapshot(raw, max = LIST_COUNT) {
 // snapshot as a failed job rather than shipping a one-slide slideshow.
 export function hasAnyEntries(snapshot) {
   return YEAR_LIST_KEYS.some((k) => (snapshot?.[k] || []).length > 0);
+}
+
+// Why a year job produced nothing, in words the user can act on. "No usable
+// lists" covers three very different failures (the model said nothing, its
+// reply was not JSON, or it returned empty arrays) and they need different
+// responses, so name which one happened instead of collapsing them.
+// `raw` is the model's text, `parsed` the result of parseModelJson on it.
+export function yearFailureReason(raw, parsed) {
+  if (!String(raw || '').trim()) {
+    return 'The AI returned an empty response for that year — try again.';
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    return 'The AI’s reply for that year wasn’t valid JSON, usually a reply that got cut off — try again.';
+  }
+  const missing = YEAR_LIST_KEYS.filter((k) => !Array.isArray(parsed[k]));
+  if (missing.length === YEAR_LIST_KEYS.length) {
+    return 'The AI replied in the wrong shape for that year — try again.';
+  }
+  return 'The AI returned empty lists for that year. Try again, or paste an IMDb list to give it the rated titles.';
 }

@@ -9,7 +9,7 @@
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, normalizeSuggestions, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
-import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, LIST_COUNT } from './lib/yearsnapshot.mjs';
+import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
 
 // Sync-path default: must fit the 9s abort, so use the fast tier here. The
@@ -67,7 +67,7 @@ export default async (req) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 9000);
   try {
-    const raw = await callModel(prompt, model, controller.signal);
+    const raw = await callModel(prompt, model, controller.signal, kind === 'year' ? YEAR_MAX_TOKENS : undefined);
     if (kind === 'roles') {
       const list = normalizeRoles(parseModelJson(raw));
       if (!list.length) {
@@ -85,10 +85,11 @@ export default async (req) => {
       return json({ intro, blurbs, model, aiFallback: false });
     }
     if (kind === 'year') {
-      const snapshot = normalizeYearSnapshot(parseModelJson(raw), Number(count) || LIST_COUNT);
+      const parsed = parseModelJson(raw);
+      const snapshot = normalizeYearSnapshot(parsed, Number(count) || LIST_COUNT);
       if (!hasAnyEntries(snapshot)) {
         console.warn('[tik-autopilot] model returned no usable year lists', { model, rawPreview: String(raw).slice(0, 300) });
-        return json({ rated: [], boxoffice: [], model, aiFallback: true, error: 'The AI returned no usable lists for that year — try again.' });
+        return json({ rated: [], boxoffice: [], model, aiFallback: true, error: yearFailureReason(raw, parsed) });
       }
       return json({ year: normalizeYearInput(year), ...snapshot, model, aiFallback: false });
     }

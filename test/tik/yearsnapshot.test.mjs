@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  LIST_COUNT, YEAR_LIST_KEYS, DEFAULT_MIN_VOTES, normalizeYearInput, normalizeMinVotes,
-  buildYearPrompt, normalizeYearSnapshot, hasAnyEntries,
+  LIST_COUNT, YEAR_LIST_KEYS, DEFAULT_MIN_VOTES, YEAR_MAX_TOKENS,
+  normalizeYearInput, normalizeMinVotes,
+  buildYearPrompt, normalizeYearSnapshot, hasAnyEntries, yearFailureReason,
 } from '../../netlify/functions/lib/yearsnapshot.mjs';
+import { DEFAULT_MAX_TOKENS } from '../../netlify/functions/lib/ai-providers.mjs';
 
 // ---- year input ----
 
@@ -16,6 +18,12 @@ test('normalizeYearInput accepts plausible film years, rejects everything else',
   assert.equal(normalizeYearInput('nineteen ninety four'), null);
   assert.equal(normalizeYearInput(null), null);
   assert.equal(normalizeYearInput(undefined), null);
+});
+
+test('the year format asks for more output room than the shared default', () => {
+  // 16 rows with notes overrun the 6-row trivia budget, and a cut-off reply is
+  // unparseable JSON rather than a short list.
+  assert.ok(YEAR_MAX_TOKENS > DEFAULT_MAX_TOKENS, 'year needs more than the default cap');
 });
 
 // ---- vote floor ----
@@ -82,11 +90,16 @@ test('buildYearPrompt drops titleless given entries and caps them at the count',
   assert.match(buildYearPrompt({ year: 1994, ratedGiven: [] }), /highest IMDb-rated feature films RELEASED/);
 });
 
-test('buildYearPrompt would rather have an empty list than an invented one', () => {
+test('buildYearPrompt forbids inventing a FILM without making empty lists the safe answer', () => {
   const p = buildYearPrompt({ year: 1994 });
-  assert.match(p, /NEVER invent a film, a rating, or a gross/);
-  assert.match(p, /return that list as an EMPTY array/);
-  assert.match(p, /Do not pad a list with guesses/);
+  assert.match(p, /Never invent a FILM/);
+  assert.match(p, /Get the ORDER right/);
+  // The escape hatch is scoped to not knowing the films, not to number precision
+  // — the earlier wording let a careful model return two empty arrays instead.
+  assert.match(p, /Leave a list empty ONLY if you genuinely do not know the films/);
+  assert.match(p, /Uncertainty about an exact number is not a reason/);
+  assert.match(p, /do NOT leave a list empty, because you cannot pin a number to the decimal/);
+  assert.match(p, /both lists are normally answerable\. Fill them\./);
 });
 
 test('buildYearPrompt asks for an intro that invites comments and bans hype/dashes', () => {
@@ -164,4 +177,25 @@ test('hasAnyEntries is true when any single list survived', () => {
   assert.equal(hasAnyEntries(normalizeYearSnapshot({ boxoffice: [{ title: 'A' }] })), true);
   assert.equal(hasAnyEntries(normalizeYearSnapshot({ intro: 'just an intro' })), false);
   assert.equal(hasAnyEntries(null), false);
+});
+
+// ---- naming the failure ----
+
+test('yearFailureReason separates the three ways a year job comes back empty', () => {
+  // Nothing at all.
+  assert.match(yearFailureReason('', null), /empty response/i);
+  assert.match(yearFailureReason('   ', null), /empty response/i);
+  // Text that isn't JSON — overwhelmingly a reply cut off mid-array.
+  assert.match(yearFailureReason('{"intro":"1994 was', null), /wasn’t valid JSON/);
+  assert.match(yearFailureReason('I cannot help with that.', null), /wasn’t valid JSON/);
+  // Parsed, but no list keys at all.
+  assert.match(yearFailureReason('{"films":[]}', { films: [] }), /wrong shape/);
+  // Parsed with real list keys, just empty — the model declined to fill them.
+  const empty = yearFailureReason('{"rated":[],"boxoffice":[]}', { rated: [], boxoffice: [] });
+  assert.match(empty, /empty lists/);
+  assert.match(empty, /paste an IMDb list/);
+});
+
+test('yearFailureReason treats a half-present shape as empty lists, not wrong shape', () => {
+  assert.match(yearFailureReason('{"rated":[]}', { rated: [] }), /empty lists/);
 });

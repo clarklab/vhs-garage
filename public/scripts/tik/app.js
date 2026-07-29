@@ -1080,10 +1080,22 @@ els.yearLookup.addEventListener('click', async () => {
     els.status.textContent = given.length
       ? `Looking up ${y} from your ${given.length} IMDb titles…`
       : `Looking up ${y}…`;
-    const snapshot = await fetchYearSnapshot({
-      year: y, minVotes: project.minVotes, ratedGiven: given,
-      onProgress: (m) => { els.status.textContent = `Looking up ${y} — ${m}`; },
-    });
+
+    // A paste is data we already hold, so an AI failure must not throw it away:
+    // fall back to a rated-only snapshot built entirely from what was pasted.
+    let snapshot;
+    let aiFailed = '';
+    try {
+      snapshot = await fetchYearSnapshot({
+        year: y, minVotes: project.minVotes, ratedGiven: given,
+        onProgress: (m) => { els.status.textContent = `Looking up ${y} — ${m}`; },
+      });
+    } catch (err) {
+      if (!given.length) throw err;
+      console.warn('[tik] year lookup failed; building from the IMDb paste alone', err);
+      snapshot = { intro: '', rated: [], boxoffice: [] };
+      aiFailed = err.message;
+    }
     if (project?.id !== ticket) return;
 
     // Belt and braces: the prompt says copy the pasted titles and values
@@ -1107,7 +1119,8 @@ els.yearLookup.addEventListener('click', async () => {
     const { sections, entries } = await buildYearSlides(snapshot);
     if (project?.id !== ticket) return;
     const missing = YEAR_LISTS.filter((l) => !(snapshot[l.key] || []).length).map((l) => l.label);
-    els.status.textContent = `Built ${sections} list${sections === 1 ? '' : 's'} and ${entries} movie slides for ${y}` +
+    els.status.textContent = (aiFailed ? `${aiFailed} Built what your paste covers instead: ` : '') +
+      `${sections} list${sections === 1 ? '' : 's'} and ${entries} movie slides for ${y}` +
       (missing.length ? ` (no data for: ${missing.join(', ')}).` : '.') +
       ' Click a slide, hit Find images, then paste the artwork in.';
   } catch (err) {

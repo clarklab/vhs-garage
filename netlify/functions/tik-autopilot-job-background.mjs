@@ -14,7 +14,7 @@
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, normalizeSuggestions, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
-import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, LIST_COUNT } from './lib/yearsnapshot.mjs';
+import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
 import { fetchFilmSource, fetchActorSource, fetchYearSource } from './lib/wiki.mjs';
 
@@ -105,7 +105,7 @@ export default async (req) => {
     const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
     let raw;
     try {
-      raw = await callModel(prompt, model, controller.signal);
+      raw = await callModel(prompt, model, controller.signal, kind === 'year' ? YEAR_MAX_TOKENS : undefined);
     } finally {
       clearTimeout(timer);
     }
@@ -122,10 +122,11 @@ export default async (req) => {
         ? { ok: true, model, intro, blurbs }
         : { ok: false, model, error: 'The AI returned no usable blurbs — try again.' };
     } else if (kind === 'year') {
-      const snapshot = normalizeYearSnapshot(parseModelJson(raw), Number(count) || LIST_COUNT);
+      const parsed = parseModelJson(raw);
+      const snapshot = normalizeYearSnapshot(parsed, Number(count) || LIST_COUNT);
       result = hasAnyEntries(snapshot)
         ? { ok: true, model, year: normalizeYearInput(year), ...snapshot }
-        : { ok: false, model, error: 'The AI returned no usable lists for that year — try again.' };
+        : { ok: false, model, error: yearFailureReason(raw, parsed) };
     } else {
       const base = Number(count) || AUTOPILOT_COUNT;
       const max = includeTitleSlide ? base + 1 : base;
