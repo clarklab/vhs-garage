@@ -9,6 +9,8 @@ export const FORMATS = {
     tagline: 'Deep-cut trivia over frames from the movie',
     icon: 'movie',           // Material Symbols name
     accent: 'amber',         // Tailwind hue used for chips/cards
+    chip: 'bg-amber-400/15 text-amber-300',
+    editorHint: 'Click a slide’s preview to re-grab its frame, or paste/drop/pick a custom image while it’s selected. Drag to reorder.',
   },
   guys: {
     key: 'guys',
@@ -16,8 +18,27 @@ export const FORMATS = {
     tagline: 'One actor’s most memorable cult roles',
     icon: 'theater_comedy',
     accent: 'cyan',
+    chip: 'bg-cyan-400/15 text-cyan-300',
+    editorHint: 'Click a slide, then paste, drop, or pick a photo of the guy. Drag to reorder.',
+  },
+  year: {
+    key: 'year',
+    label: 'Year Snapshot',
+    tagline: 'One year’s top eight rated, grossing, and rented',
+    icon: 'calendar_month',
+    accent: 'violet',
+    chip: 'bg-violet-400/15 text-violet-300',
+    editorHint: 'Click a slide, then paste, drop, or pick the poster. Every slide has a one-click image search. Drag to reorder.',
   },
 };
+
+// The three ranked lists in a Year Snapshot, in slide order. `key` matches the
+// key the agent returns; `heading` is the big line on the section slide's card.
+export const YEAR_LISTS = [
+  { key: 'rated', label: 'Top rated', heading: 'Top 8 Rated', search: 'best movies' },
+  { key: 'boxoffice', label: 'Box office', heading: 'Top 8 Box Office', search: 'box office hits' },
+  { key: 'rentals', label: 'VHS rentals', heading: 'Top 8 VHS Rentals', search: 'vhs rentals' },
+];
 
 export function formatOf(project) {
   return FORMATS[project?.format] || FORMATS.trivia;
@@ -40,6 +61,9 @@ export function makeProject({ id, format, now }) {
     // Remembering Some Guys:
     actor: '',
     roles: [],                 // [{ movie, year, role, hook, picked }]
+    // Year Snapshot:
+    year: null,                // the four-digit year being snapshotted
+    snapshot: null,            // { intro, rated[], boxoffice[], rentals[] } from the agent
     // Post details (editable; regenerated from defaults until postEdited):
     postTitle: '',
     postDesc: '',
@@ -53,6 +77,19 @@ export function makeProject({ id, format, now }) {
 // Suggested TikTok post title + description per format. TikTok effectively
 // honors ~5 hashtags — keep them broad, skip niche tags.
 export function defaultPostFields(format, name = '') {
+  if (format === 'year') {
+    const y = String(name || '').trim();
+    const when = y || 'that year';
+    return {
+      title: y ? `${y} at the movies: rated, grossed, and rented` : 'A year at the movies: rated, grossed, and rented',
+      description: [
+        `The top rated, top grossing, and most rented movies of ${when}.`,
+        `What were you watching in ${when}? Drop it in the comments.`,
+        'Save this for your next movie night, and follow VHS Garage for more.',
+        '#movietok #boxoffice #vhs #videostore #retromovies',
+      ].join(' '),
+    };
+  }
   if (format === 'guys') {
     const who = name || 'one great character actor';
     return {
@@ -88,6 +125,47 @@ export function captionForRole(role, blurb = '') {
   const year = role.year ? ` (${role.year})` : '';
   const body = (blurb || role.hook || role.role || '').trim();
   return `${role.movie}${year}${body ? `\n${body}` : ''}`;
+}
+
+// Year Snapshot: the lead-in slide that announces each top-eight list. Worded
+// exactly as it reads on screen, so the section is unmistakable mid-scroll.
+const SECTION_CAPTIONS = {
+  rated: (y) => `These are the top eight rated movies of ${y}.`,
+  boxoffice: (y) => `These are the top eight box office numbers of ${y}.`,
+  rentals: (y) => `These are the top eight VHS rentals of ${y}.`,
+};
+export function sectionCaption(listKey, year) {
+  const fn = SECTION_CAPTIONS[listKey];
+  return fn ? fn(year) : '';
+}
+
+// Year Snapshot slide caption: rank + title, the number line, then the note.
+// Any of the three can be missing without leaving a blank line behind.
+export function captionForYearEntry(entry) {
+  if (!entry?.title) return '';
+  const head = `#${entry.rank || 1} ${entry.title}`;
+  return [head, (entry.value || '').trim(), (entry.note || '').trim()].filter(Boolean).join('\n');
+}
+
+// The Google Images query for a slide, or '' when the slide has no subject
+// worth searching (the outro). Both bring-your-own-image formats lean on this:
+// one click out to find artwork, one paste back in.
+export function photoQueryFor(project, slide) {
+  if (!project || !slide) return '';
+  if (project.format === 'guys') {
+    if (slide.role) return [project.actor, slide.role.movie].filter(Boolean).join(' ').trim();
+    return slide.kind === 'title' ? String(project.actor || '').trim() : '';
+  }
+  if (project.format === 'year') {
+    const y = project.year ? String(project.year) : '';
+    if (slide.entry?.title) return [slide.entry.title, y, 'movie poster'].filter(Boolean).join(' ');
+    if (slide.kind === 'title') return [y, 'movie posters'].filter(Boolean).join(' ').trim();
+    if (slide.kind === 'section') {
+      const list = YEAR_LISTS.find((l) => l.key === slide.section);
+      return [y, list?.search || 'movies'].filter(Boolean).join(' ').trim();
+    }
+  }
+  return '';
 }
 
 // Compact "how long ago" for library cards. Pass `now` for testability.

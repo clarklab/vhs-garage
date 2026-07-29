@@ -35,7 +35,7 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{if(document.g
     <!-- ============ HOME ============ -->
     <section id="screen-home" class="mx-auto w-full max-w-5xl px-4 py-8">
       <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">New TikTok</h2>
-      <div class="mt-3 grid gap-3 sm:grid-cols-2">
+      <div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <button id="new-trivia" class="group relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900 p-5 text-left transition hover:border-amber-400/60">
           <div class="tape-lines pointer-events-none absolute inset-0 opacity-40"></div>
           <div class="relative">
@@ -56,6 +56,17 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{if(document.g
             <h3 class="mt-3 text-lg font-bold tracking-tight">Remembering Some Guys</h3>
             <p class="mt-1 text-sm text-neutral-400">One actor's most memorable cult roles. The agent lists and writes, you pick and bring the photos.</p>
             <p class="mt-3 text-xs font-semibold text-cyan-300/90">Actor + your images <span aria-hidden="true">→</span></p>
+          </div>
+        </button>
+        <button id="new-year" class="group relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900 p-5 text-left transition hover:border-violet-400/60">
+          <div class="tape-lines pointer-events-none absolute inset-0 opacity-40"></div>
+          <div class="relative">
+            <span class="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-violet-400/15 text-violet-300">
+              <span class="material-symbols-outlined">calendar_month</span>
+            </span>
+            <h3 class="mt-3 text-lg font-bold tracking-tight">Year Snapshot</h3>
+            <p class="mt-1 text-sm text-neutral-400">How one year did: the top eight by IMDb rating, by box office, and by VHS rentals. The agent researches, you bring the posters.</p>
+            <p class="mt-3 text-xs font-semibold text-violet-300/90">A year + your images <span aria-hidden="true">→</span></p>
           </div>
         </button>
       </div>
@@ -209,6 +220,39 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{if(document.g
                       class="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-neutral-950 hover:bg-cyan-400 disabled:opacity-40">
                 <span class="material-symbols-outlined text-[18px] leading-none">auto_awesome</span>
                 <span id="write-blurbs-label">Write the slides</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Year Snapshot -->
+          <div id="pane-year" class="hidden flex-col gap-3">
+            <label class="block">
+              <span class="text-xs uppercase tracking-wide text-neutral-500">Year</span>
+              <div class="mt-1 flex gap-2">
+                <input id="year-input" type="number" inputmode="numeric" min="1930" max="2035" step="1" placeholder="e.g. 1994"
+                       class="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm tabular-nums text-neutral-100 placeholder:text-neutral-600" />
+                <button id="year-lookup-btn"
+                        class="flex items-center gap-1.5 rounded-lg bg-violet-500 px-4 py-2 text-sm font-bold text-neutral-950 hover:bg-violet-400 disabled:opacity-40">
+                  <span class="material-symbols-outlined text-[18px] leading-none">travel_explore</span>
+                  <span id="year-lookup-label">Look up the year</span>
+                </button>
+              </div>
+            </label>
+            <p class="text-[11px] leading-snug text-neutral-500">
+              The agent pulls three top-eight lists for that year: highest IMDb-rated, biggest box office, and the year-end VHS rental chart when the numbers exist.
+              Each list gets its own lead-in slide. You bring the artwork: click a slide, hit <b>Find images</b>, then paste, drop, or pick.
+            </p>
+
+            <div id="year-summary" class="hidden rounded-xl border border-neutral-800 bg-neutral-900 p-3">
+              <div class="flex items-center gap-2 pb-2">
+                <span class="text-xs font-semibold uppercase tracking-wide text-neutral-400">Snapshot</span>
+                <span id="year-summary-year" class="text-xs font-semibold tabular-nums text-violet-300"></span>
+              </div>
+              <div id="year-summary-lists" class="flex flex-col gap-1"></div>
+              <button id="year-rebuild-btn"
+                      class="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-violet-500 px-4 py-2 text-sm font-bold text-neutral-950 hover:bg-violet-400 disabled:opacity-40">
+                <span class="material-symbols-outlined text-[18px] leading-none">auto_awesome</span>
+                Rebuild the slides from this snapshot
               </button>
             </div>
           </div>

@@ -9,6 +9,7 @@
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, normalizeSuggestions, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
+import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, LIST_COUNT } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
 
 // Sync-path default: must fit the 9s abort, so use the fast tier here. The
@@ -51,12 +52,15 @@ export default async (req) => {
   if (kind === 'trivia' && !title) return json({ error: 'Missing movie title' }, 400);
   if ((kind === 'roles' || kind === 'blurbs') && !actor) return json({ error: 'Missing actor name' }, 400);
   if (kind === 'blurbs' && !(Array.isArray(roles) && roles.length)) return json({ error: 'No roles picked' }, 400);
+  if (kind === 'year' && normalizeYearInput(year) === null) return json({ error: 'Enter a four digit year' }, 400);
   const model = pickModel(requested);
   const prompt = kind === 'roles'
     ? buildRolesPrompt({ actor, count: Number(count) || ROLES_COUNT, exclude })
     : kind === 'blurbs'
       ? buildBlurbsPrompt({ actor, roles, exclude })
-      : buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide });
+      : kind === 'year'
+        ? buildYearPrompt({ year, count: Number(count) || LIST_COUNT })
+        : buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide });
 
   // Abort before Netlify's 10s function ceiling so we return a graceful
   // fallback instead of a platform 502.
@@ -79,6 +83,14 @@ export default async (req) => {
         return json({ blurbs: [], model, aiFallback: true, error: 'The AI returned no usable blurbs — try again.' });
       }
       return json({ intro, blurbs, model, aiFallback: false });
+    }
+    if (kind === 'year') {
+      const snapshot = normalizeYearSnapshot(parseModelJson(raw), Number(count) || LIST_COUNT);
+      if (!hasAnyEntries(snapshot)) {
+        console.warn('[tik-autopilot] model returned no usable year lists', { model, rawPreview: String(raw).slice(0, 300) });
+        return json({ rated: [], boxoffice: [], rentals: [], model, aiFallback: true, error: 'The AI returned no usable lists for that year — try again.' });
+      }
+      return json({ year: normalizeYearInput(year), ...snapshot, model, aiFallback: false });
     }
     const base = Number(count) || AUTOPILOT_COUNT;
     const max = includeTitleSlide ? base + 1 : base;

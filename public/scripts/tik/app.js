@@ -7,10 +7,13 @@ import { initScrubber } from './scrubber.js';
 import { addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame } from './slides.js';
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken } from './auth.js';
 import { publishSlideshow } from './publish.js';
-import { fetchScenes, fetchRoles, fetchBlurbs } from './autopilot.js';
+import { fetchScenes, fetchRoles, fetchBlurbs, fetchYearSnapshot } from './autopilot.js';
 import { parseMovieName } from './filename.js';
 import { composeToCanvas, composeSlide } from './compose.js';
-import { FORMATS, formatOf, makeProject, defaultPostFields, captionForRole, relativeTime, projectDisplayName } from './project.js';
+import {
+  FORMATS, YEAR_LISTS, formatOf, makeProject, defaultPostFields, captionForRole,
+  sectionCaption, captionForYearEntry, photoQueryFor, relativeTime, projectDisplayName,
+} from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
@@ -24,7 +27,7 @@ const els = {
   // screens
   home: $('screen-home'), editor: $('screen-editor'),
   // home
-  newTrivia: $('new-trivia'), newGuys: $('new-guys'),
+  newTrivia: $('new-trivia'), newGuys: $('new-guys'), newYear: $('new-year'),
   grid: $('project-grid'), libraryEmpty: $('library-empty'),
   statsCard: $('stats-card'), statsCount: $('stats-count'), statsDelta: $('stats-delta'),
   statsNote: $('stats-note'), statsPlot: $('stats-plot'), statsChart: $('stats-chart'), statsTip: $('stats-tip'),
@@ -43,6 +46,11 @@ const els = {
   rolesBox: $('roles-box'), rolesList: $('roles-list'),
   rolesAll: $('roles-all'), rolesNone: $('roles-none'), pickedCount: $('picked-count'),
   writeBlurbs: $('write-blurbs-btn'), writeBlurbsLabel: $('write-blurbs-label'),
+  // year pane
+  paneYear: $('pane-year'), yearInput: $('year-input'),
+  yearLookup: $('year-lookup-btn'), yearLookupLabel: $('year-lookup-label'),
+  yearSummary: $('year-summary'), yearSummaryYear: $('year-summary-year'),
+  yearSummaryLists: $('year-summary-lists'), yearRebuild: $('year-rebuild-btn'),
   // post details
   postTitleInput: $('post-title-input'), postDescInput: $('post-desc-input'), postReset: $('post-reset'),
   // slides pane
@@ -68,6 +76,7 @@ let thumbUrls = [];            // library-card object URLs, revoked on re-render
 const PREVIEW_SCALE = 0.25;    // quarter-res preview thumbnails; uploads stay full-res
 const MAX_PICK = 12;           // Some Guys: max roles per slideshow
 const GUYS_ACCENT = '#22d3ee';
+const YEAR_ACCENT = '#a78bfa';
 
 const uuid = () => crypto.randomUUID?.() ??
   Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
@@ -101,6 +110,8 @@ function setAiBusy(v) {
   els.addScene.disabled = v || !videoReady || !canAddSlide(slides);
   els.findRoles.disabled = v;
   els.writeBlurbs.disabled = v || pickedRoles().length === 0;
+  els.yearLookup.disabled = v;
+  els.yearRebuild.disabled = v || !project?.snapshot;
 }
 
 // TikTok pulls slide images over the public internet, so posting only works from
@@ -124,6 +135,7 @@ const OUTRO_LOGO_URL = '/images/vhs-garage-logo-square.png'; // yellow lockup (V
 const OUTRO_CAPTIONS = {
   trivia: 'Follow VHS Garage for more movie trivia',
   guys: 'Follow VHS Garage, we remember more guys every week',
+  year: 'Follow VHS Garage, we rewind another year every week',
 };
 async function makeOutroSlide() {
   const res = await fetch(OUTRO_LOGO_URL);
@@ -169,6 +181,7 @@ async function serializeProject() {
     slideRecs.push({
       id: s.id, caption: s.caption, timecode: s.timecode, grabHint: s.grabHint || '',
       fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
+      entry: s.entry || null, section: s.section || null,
       frame: await frameBlobFor(s),
     });
   }
@@ -264,6 +277,7 @@ async function teardownProject() {
   els.autopilot.disabled = true;
   els.autopilot.title = 'Load a video first';
   els.range.value = '0';
+  els.yearSummary.classList.add('hidden');
   els.list.innerHTML = '';
   els.status.textContent = '';
   setSaveState('off');
@@ -297,8 +311,10 @@ function enterEditor() {
   els.movieTitle.value = project.titleLine || '';
   els.movieTitle.disabled = !project.titleOn;
   els.actorInput.value = project.actor || '';
+  els.yearInput.value = project.year || '';
   els.autopilotPrompt.value = '';
   renderRolesPicker();
+  renderYearSummary();
   setSaveState(storageAvailable() ? (dirty ? 'saving' : 'saved') : 'off');
   render();
 }
@@ -317,9 +333,12 @@ async function newProject(format) {
   project.postDesc = d.description;
   nextId = 1;
   enterEditor();
-  els.status.textContent = withStorageWarning(format === 'guys'
-    ? 'Name the guy, and the agent lists his most memorable roles.'
-    : 'Pick a movie file to start grabbing frames, or run Autopilot.');
+  const opener = {
+    guys: 'Name the guy, and the agent lists his most memorable roles.',
+    year: 'Pick a year, and the agent pulls its top eight rated, grossing, and rented.',
+  };
+  els.status.textContent = withStorageWarning(opener[format]
+    || 'Pick a movie file to start grabbing frames, or run Autopilot.');
 }
 
 async function openProject(id) {
@@ -345,6 +364,7 @@ async function openProject(id) {
         id: String(nextId++), bitmap, blob: s.frame,
         caption: s.caption || '', timecode: s.timecode, grabHint: s.grabHint || '',
         fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
+        entry: s.entry || null, section: s.section || null,
       });
     } catch (e) {
       console.error('[tik] could not decode a saved frame; slide dropped', e);
@@ -365,26 +385,30 @@ async function openProject(id) {
 }
 
 // ---- Format-specific UI wiring ----
+// One source pane per format; only the active one is shown (panes are flex
+// columns, so "hidden" has to be swapped for "flex", not just removed).
+const PANES = { trivia: els.paneTrivia, guys: els.paneGuys, year: els.paneYear };
 function applyFormatUI() {
   const f = formatOf(project);
-  const isTrivia = f.key === 'trivia';
-  els.paneTrivia.classList.toggle('hidden', !isTrivia);
-  els.paneTrivia.classList.toggle('flex', isTrivia);
-  els.paneGuys.classList.toggle('hidden', isTrivia);
-  els.paneGuys.classList.toggle('flex', !isTrivia);
-  els.addScene.classList.toggle('hidden', !isTrivia);
+  for (const [key, pane] of Object.entries(PANES)) {
+    const on = key === f.key;
+    pane.classList.toggle('hidden', !on);
+    pane.classList.toggle('flex', on);
+  }
+  els.addScene.classList.toggle('hidden', f.key !== 'trivia');
   els.formatChip.textContent = f.label;
-  els.formatChip.className = 'rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ' +
-    (isTrivia ? 'bg-amber-400/15 text-amber-300' : 'bg-cyan-400/15 text-cyan-300');
-  els.slidesHint.textContent = isTrivia
-    ? 'Click a slide’s preview to re-grab its frame, or paste/drop/pick a custom image while it’s selected. Drag to reorder.'
-    : 'Click a slide, then paste, drop, or pick a photo of the guy. Drag to reorder.';
+  els.formatChip.className = `rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${f.chip}`;
+  els.slidesHint.textContent = f.editorHint;
 }
 
 // Keep the suggested post title/description fresh until the user edits them.
 function syncPostDefaults() {
   if (!project || project.postEdited) return;
-  const name = project.format === 'guys' ? (project.actor || project.name) : (movie.query || project.name);
+  const name = project.format === 'guys'
+    ? (project.actor || project.name)
+    : project.format === 'year'
+      ? (project.year ? String(project.year) : project.name)
+      : (movie.query || project.name);
   const d = defaultPostFields(project.format, name);
   project.postTitle = d.title;
   project.postDesc = d.description;
@@ -395,8 +419,7 @@ function syncPostDefaults() {
 // ================= Library =================
 function formatBadge(rec) {
   const f = FORMATS[rec.format] || FORMATS.trivia;
-  const cls = f.key === 'trivia' ? 'bg-amber-400/15 text-amber-300' : 'bg-cyan-400/15 text-cyan-300';
-  return `<span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${cls}">${f.label}</span>`;
+  return `<span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${f.chip}">${f.label}</span>`;
 }
 
 async function renderLibrary() {
@@ -487,6 +510,7 @@ async function renderLibrary() {
 
 els.newTrivia.addEventListener('click', () => { newProject('trivia').catch((e) => console.error('[tik] new project failed:', e)); });
 els.newGuys.addEventListener('click', () => { newProject('guys').catch((e) => console.error('[tik] new project failed:', e)); });
+els.newYear.addEventListener('click', () => { newProject('year').catch((e) => console.error('[tik] new project failed:', e)); });
 
 // ---- Followers card (home) ----
 // Current count from TikTok when signed in (snapshotted at most hourly);
@@ -609,7 +633,9 @@ els.movieTitle.addEventListener('input', () => {
   markDirty();
 });
 function currentTitleLine() {
-  if (project?.format === 'guys') return '';
+  // The title prefix is a Tape Trivia affordance; the other formats bake their
+  // heading into the caption itself.
+  if (project && project.format !== 'trivia') return '';
   return els.titleToggle.checked ? els.movieTitle.value.trim() : '';
 }
 
@@ -878,6 +904,163 @@ els.writeBlurbs.addEventListener('click', async () => {
   }
 });
 
+// ================= Year Snapshot =================
+// One year, three ranked top-eight lists. Unlike Some Guys there's no picking
+// step: the lookup writes every slide, and the user's whole job is dropping the
+// right artwork onto each one (every slide carries an image-search link).
+
+// Read the year box, or null when it isn't a plausible film year.
+function yearFromInput() {
+  const y = Number(els.yearInput.value.trim());
+  return Number.isInteger(y) && y >= 1930 && y <= 2035 ? y : null;
+}
+
+// What came back, per list — including the lists that came back empty, since
+// "no VHS rental chart for that year" is a real answer worth showing.
+function renderYearSummary() {
+  const snap = project?.snapshot;
+  const show = project?.format === 'year' && !!snap;
+  els.yearSummary.classList.toggle('hidden', !show);
+  els.yearRebuild.disabled = aiBusy || !snap;
+  if (!show) return;
+  els.yearSummaryYear.textContent = project.year || '';
+  els.yearSummaryLists.innerHTML = '';
+  for (const list of YEAR_LISTS) {
+    const n = (snap[list.key] || []).length;
+    const row = document.createElement('div');
+    row.className = 'flex items-center gap-2 text-sm';
+    const label = document.createElement('span');
+    label.className = 'flex-1 text-neutral-300';
+    label.textContent = list.label;
+    const count = document.createElement('span');
+    count.className = `text-xs font-semibold tabular-nums ${n ? 'text-violet-300' : 'text-neutral-600'}`;
+    count.textContent = n ? `${n} of 8` : 'no data found';
+    row.append(label, count);
+    els.yearSummaryLists.appendChild(row);
+  }
+}
+
+// Build the whole slideshow from a snapshot: opener, then a lead-in slide plus
+// eight entries per list that came back, then the branded outro. Lists that
+// came back empty are skipped entirely, lead-in and all.
+async function buildYearSlides(snapshot) {
+  const y = project.year;
+  const next = [];
+  const room = () => next.length < MAX_SLIDES - 1; // always leave the outro a seat
+
+  // Opener: the year as a big card, with the agent's lead-in as the caption.
+  // Like the Some Guys opener it takes a 2–4 photo mosaic.
+  const openerBitmap = await makeCardBitmap({
+    heading: String(y), sub: 'The year in movies', hint: 'Paste 2–4 posters for a mosaic', accent: YEAR_ACCENT,
+  });
+  next.push({
+    id: String(nextId++), bitmap: openerBitmap, blob: null,
+    caption: `${y}\n${snapshot.intro || `Let's see how ${y} did. What were you watching?`}`,
+    grabHint: '', fontScale: 1, kind: 'title',
+  });
+
+  let sections = 0;
+  let entries = 0;
+  for (const list of YEAR_LISTS) {
+    const items = snapshot[list.key] || [];
+    if (!items.length || !room()) continue;
+    const sectionBitmap = await makeCardBitmap({ heading: list.heading, sub: String(y), accent: YEAR_ACCENT });
+    next.push({
+      id: String(nextId++), bitmap: sectionBitmap, blob: null,
+      caption: sectionCaption(list.key, y),
+      grabHint: '', fontScale: 1, kind: 'section', section: list.key,
+    });
+    sections++;
+    for (const item of items) {
+      if (!room()) break;
+      const bitmap = await makeCardBitmap({
+        heading: item.title,
+        sub: [`#${item.rank}`, item.value].filter(Boolean).join(' · '),
+        accent: YEAR_ACCENT,
+      });
+      next.push({
+        id: String(nextId++), bitmap, blob: null,
+        caption: captionForYearEntry(item),
+        grabHint: '', fontScale: 1,
+        entry: { list: list.key, rank: item.rank, title: item.title, value: item.value, note: item.note },
+      });
+      entries++;
+    }
+  }
+
+  try { next.push(await makeOutroSlide()); }
+  catch (e) { console.error('[tik] outro slide failed:', e); }
+
+  resetEditState(); // the selected slide is about to be replaced wholesale
+  pickTargetId = null;
+  slides.forEach((s) => s.bitmap?.close?.());
+  slides = next;
+  render();
+  markDirty();
+  return { sections, entries };
+}
+
+// Look up a year, then build its slides. Re-running on a project that already
+// has slides replaces them (the snapshot is kept either way, so "Rebuild" can
+// re-run the slide build without spending another AI call).
+els.yearLookup.addEventListener('click', async () => {
+  if (!project || aiBusy) return;
+  const y = yearFromInput();
+  if (!y) { els.status.textContent = 'Enter a four digit year between 1930 and 2035.'; return; }
+  if (slides.length && !confirm(`Replace the current slides with a fresh ${y} snapshot?`)) return;
+  setAiBusy(true);
+  try {
+    project.year = y;
+    if (!project.name) { project.name = String(y); els.projectName.value = String(y); }
+    syncPostDefaults();
+    markDirty(); // persist the year/draft even if the lookup fails
+    const ticket = project.id; // bail if the user opens another project mid-job
+    els.status.textContent = `Looking up ${y}…`;
+    const snapshot = await fetchYearSnapshot({
+      year: y,
+      onProgress: (m) => { els.status.textContent = `Looking up ${y} — ${m}`; },
+    });
+    if (project?.id !== ticket) return;
+    project.snapshot = snapshot;
+    renderYearSummary();
+    const { sections, entries } = await buildYearSlides(snapshot);
+    if (project?.id !== ticket) return;
+    const missing = YEAR_LISTS.filter((l) => !(snapshot[l.key] || []).length).map((l) => l.label);
+    els.status.textContent = `Built ${sections} list${sections === 1 ? '' : 's'} and ${entries} movie slides for ${y}` +
+      (missing.length ? ` (no data for: ${missing.join(', ')}).` : '.') +
+      ' Click a slide, hit Find images, then paste the artwork in.';
+  } catch (err) {
+    console.error('[tik] year lookup failed:', err);
+    els.status.textContent = err.message;
+  } finally {
+    setAiBusy(false);
+  }
+});
+
+// Enter in the year box runs the lookup (it's a one-field form).
+els.yearInput.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  els.yearLookup.click();
+});
+
+// Rebuild from the snapshot already on the project — no AI call, so it's the
+// cheap way back after deleting or mangling slides.
+els.yearRebuild.addEventListener('click', async () => {
+  if (!project?.snapshot || aiBusy) return;
+  if (slides.length && !confirm('Rebuild the slides from this snapshot? Your current slides and pasted images are replaced.')) return;
+  setAiBusy(true);
+  try {
+    const { sections, entries } = await buildYearSlides(project.snapshot);
+    els.status.textContent = `Rebuilt ${sections} list${sections === 1 ? '' : 's'} and ${entries} movie slides for ${project.year}.`;
+  } catch (err) {
+    console.error('[tik] year rebuild failed:', err);
+    els.status.textContent = err.message;
+  } finally {
+    setAiBusy(false);
+  }
+});
+
 // ================= Slide images: edit / paste / drop / pick =================
 // ---- Select a slide: in trivia the scrubber jumps there for a re-grab; in
 // both formats a selected slide accepts paste / drop / picked images. ----
@@ -895,8 +1078,10 @@ async function enterEdit(id) {
       ? `Editing — GRAB: ${slide.grabHint}  (or paste/drop an image)`
       : 'Editing this slide — scrub to a new frame and Save, or paste/drop an image. Esc cancels.';
     if (videoReady && Number.isFinite(slide.timecode)) await seekAndSettle(els.video, slide.timecode);
+  } else if (isMosaicSlide(slide)) {
+    els.status.textContent = 'Opener selected — paste, drop, or pick 2–4 images for a mosaic. Esc cancels.';
   } else {
-    els.status.textContent = 'Slide selected — paste, drop, or pick a photo for it. Esc cancels.';
+    els.status.textContent = 'Slide selected — paste, drop, or pick an image for it. Esc cancels.';
   }
 }
 
@@ -912,11 +1097,12 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && editingId) { exitEdit(); els.status.textContent = 'Edit cancelled.'; }
 });
 
-// The "Remembering Some Guys" opener is a photo mosaic: its frame is built from
-// 1–4 pasted photos instead of a single image. Only that first title slide gets
-// the mosaic treatment; every other guy slide is a plain single photo.
+// The bring-your-own-image openers are photo mosaics: the frame is built from
+// 1–4 pasted photos instead of a single image (a few faces for Some Guys, a few
+// posters for a Year Snapshot). Only that first title slide gets the mosaic
+// treatment; every other slide is a plain single photo.
 function isMosaicSlide(slide) {
-  return project?.format === 'guys' && slide?.kind === 'title';
+  return (project?.format === 'guys' || project?.format === 'year') && slide?.kind === 'title';
 }
 
 // Build the title slide's frame from 1–4 photos. A batch (multi-file paste/drop/
@@ -1038,7 +1224,7 @@ function renderSlide(slide, index) {
   const thumb = document.createElement('canvas');
   thumb.dataset.thumb = slide.id;
   thumb.className = 'w-[72px] flex-none cursor-pointer rounded-md bg-black h-auto';
-  thumb.title = isTrivia ? 'Click to re-grab or replace this frame' : 'Click to select, then paste/drop/pick a photo';
+  thumb.title = isTrivia ? 'Click to re-grab or replace this frame' : 'Click to select, then paste/drop/pick an image';
   thumb.addEventListener('click', () => {
     if (slide.id === editingId) { exitEdit(); els.status.textContent = 'Edit cancelled.'; return; }
     enterEdit(slide.id);
@@ -1058,7 +1244,9 @@ function renderSlide(slide, index) {
   ta.className = 'w-full rounded-md border border-neutral-800 bg-neutral-950 p-2 text-sm text-neutral-100';
   ta.rows = 3;
   ta.maxLength = 300; // AI caps at 180; give manual edits headroom but keep slides renderable
-  ta.placeholder = isTrivia ? 'Trivia for this frame…' : 'Blurb for this guy…';
+  ta.placeholder = isTrivia ? 'Trivia for this frame…'
+    : project?.format === 'year' ? 'Caption for this slide…'
+      : 'Blurb for this guy…';
   ta.value = slide.caption;
   suspendDragWhileEditing(ta);
 
@@ -1117,23 +1305,22 @@ function renderSlide(slide, index) {
   fontDown.addEventListener('click', () => nudgeFont(-0.1));
   fontUp.addEventListener('click', () => nudgeFont(0.1));
 
-  // Some Guys: a one-tap link to a Google image search for this slide's subject
-  // — the actor for the opener, "actor + movie" for a role — so grabbing a real
-  // photo and coming right back is a single click. No API: just a preloaded URL.
+  // Bring-your-own-image formats get a one-tap link to a Google image search for
+  // this slide's subject — the actor or "actor + movie" for Some Guys, the film
+  // and year for a Year Snapshot entry — so grabbing real artwork and coming
+  // right back is a single click. No API: just a preloaded URL.
   let photoSearch = null;
-  if (project?.format === 'guys') {
-    const q = slide.role
-      ? [project.actor, slide.role.movie].filter(Boolean).join(' ')
-      : (slide.kind === 'title' ? (project.actor || '') : '');
-    if (q.trim()) {
-      photoSearch = document.createElement('a');
-      photoSearch.href = 'https://www.google.com/search?tbm=isch&q=' + encodeURIComponent(q);
-      photoSearch.target = '_blank';
-      photoSearch.rel = 'noopener noreferrer';
-      photoSearch.className = 'flex items-center gap-1 rounded-md bg-neutral-800 px-2 py-1 text-xs text-cyan-300 hover:bg-neutral-700';
-      photoSearch.title = `Search Google Images for “${q}”`;
-      photoSearch.append(iconSpan('image_search', 'text-[16px]'), document.createTextNode('Find photos'));
-    }
+  const photoQuery = photoQueryFor(project, slide);
+  if (photoQuery) {
+    const isYear = project?.format === 'year';
+    photoSearch = document.createElement('a');
+    photoSearch.href = 'https://www.google.com/search?tbm=isch&q=' + encodeURIComponent(photoQuery);
+    photoSearch.target = '_blank';
+    photoSearch.rel = 'noopener noreferrer';
+    photoSearch.className = 'flex items-center gap-1 rounded-md bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700 ' +
+      (isYear ? 'text-violet-300' : 'text-cyan-300');
+    photoSearch.title = `Search Google Images for “${photoQuery}”`;
+    photoSearch.append(iconSpan('image_search', 'text-[16px]'), document.createTextNode(isYear ? 'Find images' : 'Find photos'));
   }
 
   toolbar.append(pickBtn, ...(photoSearch ? [photoSearch] : []), fontDown, fontUp);

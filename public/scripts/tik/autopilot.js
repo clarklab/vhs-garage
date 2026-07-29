@@ -112,6 +112,25 @@ export async function fetchRoles(opts = {}) {
   return data.roles;
 }
 
+// opts: { year, count?, model?, onProgress? }
+// Returns { intro, rated, boxoffice, rentals } — each list [{ rank, title,
+// value, note }], any of which may be empty (VHS rental charts are patchy).
+// Throws only when the year came back with nothing usable at all.
+export async function fetchYearSnapshot(opts = {}) {
+  const data = await runJob({
+    kind: 'year',
+    year: opts.year,
+    count: opts.count,
+    model: opts.model,
+  }, opts.onProgress);
+  const lists = ['rated', 'boxoffice', 'rentals'].map((k) => data[k] || []);
+  if (!lists.some((l) => l.length)) {
+    throw new Error(data.error || 'The AI couldn’t pull that year — try again.');
+  }
+  const [rated, boxoffice, rentals] = lists;
+  return { intro: data.intro || '', rated, boxoffice, rentals };
+}
+
 // opts: { actor, roles: [{movie, year, role}], exclude?, model?, onProgress? }
 // Returns { intro, blurbs: [{ movie, year, role, blurb }] }. Throws on failure.
 export async function fetchBlurbs(opts = {}) {
