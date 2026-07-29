@@ -32,12 +32,11 @@ export const FORMATS = {
   },
 };
 
-// The three ranked lists in a Year Snapshot, in slide order. `key` matches the
-// key the agent returns; `heading` is the big line on the section slide's card.
+// The ranked lists in a Year Snapshot, in slide order. `key` matches the key
+// the agent returns; `heading` is the big line on the section slide's card.
 export const YEAR_LISTS = [
   { key: 'rated', label: 'Top rated', heading: 'Top 8 Rated', search: 'best movies' },
   { key: 'boxoffice', label: 'Box office', heading: 'Top 8 Box Office', search: 'box office hits' },
-  { key: 'rentals', label: 'VHS rentals', heading: 'Top 8 VHS Rentals', search: 'vhs rentals' },
 ];
 
 export function formatOf(project) {
@@ -63,7 +62,9 @@ export function makeProject({ id, format, now }) {
     roles: [],                 // [{ movie, year, role, hook, picked }]
     // Year Snapshot:
     year: null,                // the four-digit year being snapshotted
-    snapshot: null,            // { intro, rated[], boxoffice[], rentals[] } from the agent
+    minVotes: null,            // IMDb vote floor for the rated list
+    imdbPaste: '',             // the user's own IMDb results, when they pasted them
+    snapshot: null,            // { intro, rated[], boxoffice[] } from the agent
     // Post details (editable; regenerated from defaults until postEdited):
     postTitle: '',
     postDesc: '',
@@ -81,9 +82,9 @@ export function defaultPostFields(format, name = '') {
     const y = String(name || '').trim();
     const when = y || 'that year';
     return {
-      title: y ? `${y} at the movies: rated, grossed, and rented` : 'A year at the movies: rated, grossed, and rented',
+      title: y ? `${y} at the movies: the best and the biggest` : 'A year at the movies: the best and the biggest',
       description: [
-        `The top rated, top grossing, and most rented movies of ${when}.`,
+        `The highest rated and highest grossing movies of ${when}.`,
         `What were you watching in ${when}? Drop it in the comments.`,
         'Save this for your next movie night, and follow VHS Garage for more.',
         '#movietok #boxoffice #vhs #videostore #retromovies',
@@ -132,7 +133,6 @@ export function captionForRole(role, blurb = '') {
 const SECTION_CAPTIONS = {
   rated: (y) => `These are the top eight rated movies of ${y}.`,
   boxoffice: (y) => `These are the top eight box office numbers of ${y}.`,
-  rentals: (y) => `These are the top eight VHS rentals of ${y}.`,
 };
 export function sectionCaption(listKey, year) {
   const fn = SECTION_CAPTIONS[listKey];

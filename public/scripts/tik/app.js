@@ -17,6 +17,7 @@ import {
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
+import { parseImdbList, toRatedEntries, imdbSearchUrl, formatVotes } from './imdblist.js';
 import { fetchFollowerStats, renderFollowerChart, fmtCount } from './stats.js';
 
 const $ = (id) => document.getElementById(id);
@@ -51,6 +52,8 @@ const els = {
   yearLookup: $('year-lookup-btn'), yearLookupLabel: $('year-lookup-label'),
   yearSummary: $('year-summary'), yearSummaryYear: $('year-summary-year'),
   yearSummaryLists: $('year-summary-lists'), yearRebuild: $('year-rebuild-btn'),
+  minVotes: $('min-votes-input'), imdbSearchLink: $('imdb-search-link'),
+  imdbPaste: $('imdb-paste'), imdbPasteNote: $('imdb-paste-note'),
   // post details
   postTitleInput: $('post-title-input'), postDescInput: $('post-desc-input'), postReset: $('post-reset'),
   // slides pane
@@ -77,6 +80,8 @@ const PREVIEW_SCALE = 0.25;    // quarter-res preview thumbnails; uploads stay f
 const MAX_PICK = 12;           // Some Guys: max roles per slideshow
 const GUYS_ACCENT = '#22d3ee';
 const YEAR_ACCENT = '#a78bfa';
+const YEAR_LIST_SIZE = 8;      // "top eight", per list
+const DEFAULT_MIN_VOTES = 100_000; // IMDb vote floor, mirroring the server default
 
 const uuid = () => crypto.randomUUID?.() ??
   Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
@@ -312,9 +317,13 @@ function enterEditor() {
   els.movieTitle.disabled = !project.titleOn;
   els.actorInput.value = project.actor || '';
   els.yearInput.value = project.year || '';
+  els.minVotes.value = project.minVotes ?? DEFAULT_MIN_VOTES;
+  els.imdbPaste.value = project.imdbPaste || '';
   els.autopilotPrompt.value = '';
   renderRolesPicker();
   renderYearSummary();
+  refreshImdbLink();
+  refreshImdbPasteNote();
   setSaveState(storageAvailable() ? (dirty ? 'saving' : 'saved') : 'off');
   render();
 }
@@ -915,8 +924,50 @@ function yearFromInput() {
   return Number.isInteger(y) && y >= 1930 && y <= 2035 ? y : null;
 }
 
-// What came back, per list — including the lists that came back empty, since
-// "no VHS rental chart for that year" is a real answer worth showing.
+// The IMDb vote floor. A blank or junk box means the default, never "no floor"
+// — an unfloored rating list is exactly what this control exists to prevent.
+function minVotesFromInput() {
+  const n = Math.round(Number(els.minVotes.value));
+  return Number.isFinite(n) && n >= 0 ? Math.min(n, 10_000_000) : DEFAULT_MIN_VOTES;
+}
+
+// Keep the "Open this year on IMDb" link pointed at the current year + floor,
+// so the list the user sees is the list the slides will be built from.
+function refreshImdbLink() {
+  const y = yearFromInput();
+  els.imdbSearchLink.href = imdbSearchUrl(y || 1994, minVotesFromInput());
+  els.imdbSearchLink.title = y
+    ? `IMDb ${y} features, rated highest first, ${minVotesFromInput().toLocaleString()}+ votes`
+    : 'Enter a year first';
+}
+
+// What the paste box currently yields. Told separately from "what the agent
+// will do with it" so the note can say which of the two paths is live.
+function pastedRated() {
+  return parseImdbList(els.imdbPaste.value, YEAR_LIST_SIZE);
+}
+
+function refreshImdbPasteNote() {
+  const parsed = pastedRated();
+  if (!parsed.length) {
+    els.imdbPasteNote.textContent = 'Leave this empty and the agent picks the rated list from memory, applying the vote floor itself.';
+    els.imdbPasteNote.className = 'mt-1 text-[11px] leading-snug text-neutral-500';
+    return;
+  }
+  const rated = parsed.filter((p) => p.rating !== null).length;
+  const lowest = parsed.reduce((min, p) => (p.votes !== null && (min === null || p.votes < min) ? p.votes : min), null);
+  els.imdbPasteNote.textContent =
+    `Read ${parsed.length} title${parsed.length === 1 ? '' : 's'}` +
+    (rated < parsed.length ? ` (${rated} with a rating)` : '') +
+    (lowest !== null ? `, lowest ${formatVotes(lowest)}` : '') +
+    '. These become the rated list exactly as pasted; the agent only writes the notes.';
+  els.imdbPasteNote.className = 'mt-1 text-[11px] leading-snug text-violet-300';
+}
+
+// What came back, per list — including a list that came back empty, since
+// "the agent wasn't confident enough to fill this" is worth seeing before you
+// start hunting posters. Also flags whether the rated list is your data or the
+// model's recall.
 function renderYearSummary() {
   const snap = project?.snapshot;
   const show = project?.format === 'year' && !!snap;
@@ -931,10 +982,14 @@ function renderYearSummary() {
     row.className = 'flex items-center gap-2 text-sm';
     const label = document.createElement('span');
     label.className = 'flex-1 text-neutral-300';
-    label.textContent = list.label;
+    // Say where the rated list came from: pasted IMDb results are verified
+    // data, recall is not, and the difference should never be invisible.
+    label.textContent = list.key === 'rated' && snap.ratedFromPaste
+      ? `${list.label} (from your IMDb paste)`
+      : list.label;
     const count = document.createElement('span');
     count.className = `text-xs font-semibold tabular-nums ${n ? 'text-violet-300' : 'text-neutral-600'}`;
-    count.textContent = n ? `${n} of 8` : 'no data found';
+    count.textContent = n ? `${n} of ${YEAR_LIST_SIZE}` : 'no data found';
     row.append(label, count);
     els.yearSummaryLists.appendChild(row);
   }
@@ -1011,16 +1066,42 @@ els.yearLookup.addEventListener('click', async () => {
   setAiBusy(true);
   try {
     project.year = y;
+    project.minVotes = minVotesFromInput();
+    project.imdbPaste = els.imdbPaste.value;
     if (!project.name) { project.name = String(y); els.projectName.value = String(y); }
     syncPostDefaults();
     markDirty(); // persist the year/draft even if the lookup fails
     const ticket = project.id; // bail if the user opens another project mid-job
-    els.status.textContent = `Looking up ${y}…`;
+
+    // A paste makes the rated list the user's data, not the model's: it goes
+    // out as a fixed list and comes back with notes attached.
+    const parsed = pastedRated();
+    const given = toRatedEntries(parsed, YEAR_LIST_SIZE);
+    els.status.textContent = given.length
+      ? `Looking up ${y} from your ${given.length} IMDb titles…`
+      : `Looking up ${y}…`;
     const snapshot = await fetchYearSnapshot({
-      year: y,
+      year: y, minVotes: project.minVotes, ratedGiven: given,
       onProgress: (m) => { els.status.textContent = `Looking up ${y} — ${m}`; },
     });
     if (project?.id !== ticket) return;
+
+    // Belt and braces: the prompt says copy the pasted titles and values
+    // verbatim, and this makes sure of it. The model's notes are matched by
+    // title, then by position, so a reordered or renamed reply can't shuffle
+    // the ranking the user pulled off IMDb.
+    if (given.length) {
+      const byTitle = new Map();
+      for (const r of snapshot.rated || []) {
+        const k = String(r.title || '').toLowerCase();
+        if (!byTitle.has(k)) byTitle.set(k, r);
+      }
+      snapshot.rated = given.map((g, i) => ({
+        ...g,
+        note: (byTitle.get(g.title.toLowerCase()) || (snapshot.rated || [])[i])?.note || '',
+      }));
+      snapshot.ratedFromPaste = true;
+    }
     project.snapshot = snapshot;
     renderYearSummary();
     const { sections, entries } = await buildYearSlides(snapshot);
@@ -1042,6 +1123,18 @@ els.yearInput.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
   e.preventDefault();
   els.yearLookup.click();
+});
+
+// The year and the vote floor both feed the IMDb link, so it re-points as they
+// change rather than going stale behind a collapsed <details>.
+els.yearInput.addEventListener('input', refreshImdbLink);
+els.minVotes.addEventListener('input', () => {
+  refreshImdbLink();
+  if (project) { project.minVotes = minVotesFromInput(); markDirty(); }
+});
+els.imdbPaste.addEventListener('input', () => {
+  refreshImdbPasteNote();
+  if (project) { project.imdbPaste = els.imdbPaste.value; markDirty(); }
 });
 
 // Rebuild from the snapshot already on the project — no AI call, so it's the

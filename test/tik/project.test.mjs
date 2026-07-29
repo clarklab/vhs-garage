@@ -66,7 +66,8 @@ test('captionForRole formats "Movie (Year)" + blurb, hook fallback, no year fall
 test('year post defaults name the year and ask what viewers watched, ≤5 hashtags', () => {
   const d = defaultPostFields('year', '1994');
   assert.match(d.title, /1994/);
-  assert.match(d.description, /top rated, top grossing, and most rented movies of 1994/i);
+  assert.match(d.description, /highest rated and highest grossing movies of 1994/i);
+  assert.doesNotMatch(d.description, /rent/i);
   assert.match(d.description, /What were you watching in 1994\?/);
   const tags = d.description.match(/#\w+/g) || [];
   assert.ok(tags.length <= 5, `expected ≤5 hashtags, got ${tags.length}`);
@@ -79,8 +80,10 @@ test('year post defaults name the year and ask what viewers watched, ≤5 hashta
 test('sectionCaption announces each top-eight list by name and year', () => {
   assert.equal(sectionCaption('rated', 1994), 'These are the top eight rated movies of 1994.');
   assert.equal(sectionCaption('boxoffice', 1994), 'These are the top eight box office numbers of 1994.');
-  assert.equal(sectionCaption('rentals', 1994), 'These are the top eight VHS rentals of 1994.');
   assert.equal(sectionCaption('nope', 1994), '');
+  // Rentals were dropped as too obscure; nothing should still announce them.
+  assert.equal(sectionCaption('rentals', 1994), '');
+  assert.deepEqual(YEAR_LISTS.map((l) => l.key), ['rated', 'boxoffice']);
   // Every list the builder loops over must have a caption to announce it.
   for (const l of YEAR_LISTS) assert.ok(sectionCaption(l.key, 1994), `${l.key} has no section caption`);
 });
@@ -103,7 +106,9 @@ test('photoQueryFor gives every year slide a search but the outro', () => {
   assert.equal(photoQueryFor(p, { kind: 'title' }), '1994 movie posters');
   assert.equal(photoQueryFor(p, { kind: 'section', section: 'rated' }), '1994 best movies');
   assert.equal(photoQueryFor(p, { kind: 'section', section: 'boxoffice' }), '1994 box office hits');
-  assert.equal(photoQueryFor(p, { kind: 'section', section: 'rentals' }), '1994 vhs rentals');
+  // An unknown section (e.g. a project saved before rentals were dropped) still
+  // gets a usable search rather than a dead button.
+  assert.equal(photoQueryFor(p, { kind: 'section', section: 'rentals' }), '1994 movies');
   assert.equal(photoQueryFor(p, { entry: { list: 'rated', title: 'Pulp Fiction' } }), 'Pulp Fiction 1994 movie poster');
   assert.equal(photoQueryFor(p, { kind: 'outro' }), '');
 });
