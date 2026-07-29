@@ -9,6 +9,7 @@
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, normalizeSuggestions, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
+import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
 
 // Sync-path default: must fit the 9s abort, so use the fast tier here. The
@@ -47,23 +48,26 @@ export default async (req) => {
   let body;
   try { body = await req.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
 
-  const { kind = 'trivia', title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, actor, roles, model: requested } = body;
+  const { kind = 'trivia', title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, actor, roles, minVotes, ratedGiven, boxofficeGiven, model: requested } = body;
   if (kind === 'trivia' && !title) return json({ error: 'Missing movie title' }, 400);
   if ((kind === 'roles' || kind === 'blurbs') && !actor) return json({ error: 'Missing actor name' }, 400);
   if (kind === 'blurbs' && !(Array.isArray(roles) && roles.length)) return json({ error: 'No roles picked' }, 400);
+  if (kind === 'year' && normalizeYearInput(year) === null) return json({ error: 'Enter a four digit year' }, 400);
   const model = pickModel(requested);
   const prompt = kind === 'roles'
     ? buildRolesPrompt({ actor, count: Number(count) || ROLES_COUNT, exclude })
     : kind === 'blurbs'
       ? buildBlurbsPrompt({ actor, roles, exclude })
-      : buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide });
+      : kind === 'year'
+        ? buildYearPrompt({ year, count: Number(count) || LIST_COUNT, minVotes, ratedGiven, boxofficeGiven })
+        : buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide });
 
   // Abort before Netlify's 10s function ceiling so we return a graceful
   // fallback instead of a platform 502.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 9000);
   try {
-    const raw = await callModel(prompt, model, controller.signal);
+    const raw = await callModel(prompt, model, controller.signal, kind === 'year' ? YEAR_MAX_TOKENS : undefined);
     if (kind === 'roles') {
       const list = normalizeRoles(parseModelJson(raw));
       if (!list.length) {
@@ -79,6 +83,15 @@ export default async (req) => {
         return json({ blurbs: [], model, aiFallback: true, error: 'The AI returned no usable blurbs — try again.' });
       }
       return json({ intro, blurbs, model, aiFallback: false });
+    }
+    if (kind === 'year') {
+      const parsed = parseModelJson(raw);
+      const snapshot = normalizeYearSnapshot(parsed, Number(count) || LIST_COUNT);
+      if (!hasAnyEntries(snapshot)) {
+        console.warn('[tik-autopilot] model returned no usable year lists', { model, rawPreview: String(raw).slice(0, 300) });
+        return json({ rated: [], boxoffice: [], model, aiFallback: true, error: yearFailureReason(raw, parsed) });
+      }
+      return json({ year: normalizeYearInput(year), ...snapshot, model, aiFallback: false });
     }
     const base = Number(count) || AUTOPILOT_COUNT;
     const max = includeTitleSlide ? base + 1 : base;

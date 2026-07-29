@@ -8,6 +8,7 @@
 const UA = 'vhs-garage-tik/1.0 (https://vhsgarage.com)';
 const FILM_HEADING = /production|filming|develop|casting|effects|music|score|post-produc|pre-produc|writing|stunts|makeup|design|editing|cinematograph/i;
 const ACTOR_HEADING = /career|film|television|acting|roles|work|legacy|reception/i;
+const YEAR_HEADING = /highest-grossing|box office|event|award|notable|releases|home video|rental|film/i;
 const LEAD_MAX = 1500;
 
 // Given a plaintext Wikipedia extract ("== Heading ==" markers), keep the lead
@@ -38,6 +39,14 @@ export function extractFilmSections(plaintext, maxChars = 12000) {
 // Actor articles: lead + career/filmography-adjacent sections.
 export function extractActorSections(plaintext, maxChars = 10000) {
   return extractSections(plaintext, ACTOR_HEADING, maxChars);
+}
+
+// "<year> in film" articles: lead + box-office/events/awards sections. Note
+// that Wikipedia's plaintext extract drops tables, so the year's ranked
+// grosses mostly do NOT survive — this grounds the model in the year's
+// context and prose, and its own recall carries the numbers.
+export function extractYearSections(plaintext, maxChars = 10000) {
+  return extractSections(plaintext, YEAR_HEADING, maxChars);
 }
 
 // Shared: search for an article, fetch its plaintext extract. Returns
@@ -77,5 +86,15 @@ export async function fetchActorSource(name, signal) {
   if (!found) return null;
   const text = extractActorSections(found.extract);
   if (!text) { console.warn('[tik-wiki] no relevant actor sections', { pageTitle: found.pageTitle }); return null; }
+  return { pageTitle: found.pageTitle, text };
+}
+
+// Find the "<year> in film" article and return { pageTitle, text }, or null.
+// Throws only on abort.
+export async function fetchYearSource(year, signal) {
+  const found = await fetchExtract(`${year} in film`, signal);
+  if (!found) return null;
+  const text = extractYearSections(found.extract);
+  if (!text) { console.warn('[tik-wiki] no relevant year sections', { pageTitle: found.pageTitle }); return null; }
   return { pageTitle: found.pageTitle, text };
 }

@@ -2,6 +2,10 @@
 // copy, slide-caption formatting, relative timestamps. No DOM/IDB here —
 // unit-tested under node:test like the other pure modules.
 
+// How many films per list. The client sends this to the agent, so the number
+// in the prompt, on the section cards, and in the captions can never disagree.
+export const YEAR_LIST_SIZE = 10;
+
 export const FORMATS = {
   trivia: {
     key: 'trivia',
@@ -9,6 +13,8 @@ export const FORMATS = {
     tagline: 'Deep-cut trivia over frames from the movie',
     icon: 'movie',           // Material Symbols name
     accent: 'amber',         // Tailwind hue used for chips/cards
+    chip: 'bg-amber-400/15 text-amber-300',
+    editorHint: 'Click a slide’s preview to re-grab its frame, or paste/drop/pick a custom image while it’s selected. Drag to reorder.',
   },
   guys: {
     key: 'guys',
@@ -16,8 +22,26 @@ export const FORMATS = {
     tagline: 'One actor’s most memorable cult roles',
     icon: 'theater_comedy',
     accent: 'cyan',
+    chip: 'bg-cyan-400/15 text-cyan-300',
+    editorHint: 'Click a slide, then paste, drop, or pick a photo of the guy. Drag to reorder.',
+  },
+  year: {
+    key: 'year',
+    label: 'Year Snapshot',
+    tagline: `One year’s top ${YEAR_LIST_SIZE} rated and top ${YEAR_LIST_SIZE} grossing`,
+    icon: 'calendar_month',
+    accent: 'violet',
+    chip: 'bg-violet-400/15 text-violet-300',
+    editorHint: 'Click a slide, then paste, drop, or pick the poster. Every slide has a one-click image search. Drag to reorder.',
   },
 };
+
+// The ranked lists in a Year Snapshot, in slide order. `key` matches the key
+// the agent returns; `heading` is the big line on the section slide's card.
+export const YEAR_LISTS = [
+  { key: 'rated', label: 'Top rated', heading: `Top ${YEAR_LIST_SIZE} Rated`, search: 'best movies' },
+  { key: 'boxoffice', label: 'Box office', heading: `Top ${YEAR_LIST_SIZE} Box Office`, search: 'box office hits' },
+];
 
 export function formatOf(project) {
   return FORMATS[project?.format] || FORMATS.trivia;
@@ -40,6 +64,12 @@ export function makeProject({ id, format, now }) {
     // Remembering Some Guys:
     actor: '',
     roles: [],                 // [{ movie, year, role, hook, picked }]
+    // Year Snapshot:
+    year: null,                // the four-digit year being snapshotted
+    minVotes: null,            // IMDb vote floor for the rated list
+    imdbPaste: '',             // the user's own IMDb results, when they pasted them
+    mojoPaste: '',             // the user's own Box Office Mojo rows, likewise
+    snapshot: null,            // { intro, rated[], boxoffice[] } from the agent
     // Post details (editable; regenerated from defaults until postEdited):
     postTitle: '',
     postDesc: '',
@@ -53,6 +83,19 @@ export function makeProject({ id, format, now }) {
 // Suggested TikTok post title + description per format. TikTok effectively
 // honors ~5 hashtags — keep them broad, skip niche tags.
 export function defaultPostFields(format, name = '') {
+  if (format === 'year') {
+    const y = String(name || '').trim();
+    const when = y || 'that year';
+    return {
+      title: y ? `${y} at the movies: the best and the biggest` : 'A year at the movies: the best and the biggest',
+      description: [
+        `The highest rated and highest grossing movies of ${when}.`,
+        `What were you watching in ${when}? Drop it in the comments.`,
+        'Save this for your next movie night, and follow VHS Garage for more.',
+        '#movietok #boxoffice #vhs #videostore #retromovies',
+      ].join(' '),
+    };
+  }
   if (format === 'guys') {
     const who = name || 'one great character actor';
     return {
@@ -88,6 +131,79 @@ export function captionForRole(role, blurb = '') {
   const year = role.year ? ` (${role.year})` : '';
   const body = (blurb || role.hook || role.role || '').trim();
   return `${role.movie}${year}${body ? `\n${body}` : ''}`;
+}
+
+// Year Snapshot: the lead-in slide that announces each list. Worded exactly as
+// it reads on screen, so the section is unmistakable mid-scroll. The count is
+// spelled out ("top ten") and derived from YEAR_LIST_SIZE, so changing the list
+// length can't leave the slides saying the wrong number.
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+export function numberWord(n) {
+  return NUMBER_WORDS[n] || String(n);
+}
+const SECTION_CAPTIONS = {
+  rated: (y, w) => `These are the top ${w} rated movies of ${y}.`,
+  boxoffice: (y, w) => `These are the top ${w} box office numbers of ${y}.`,
+};
+export function sectionCaption(listKey, year, count = YEAR_LIST_SIZE) {
+  const fn = SECTION_CAPTIONS[listKey];
+  return fn ? fn(year, numberWord(count)) : '';
+}
+
+// Year Snapshot slide caption: rank + title, the number line, then the note.
+// Any of the three can be missing without leaving a blank line behind.
+export function captionForYearEntry(entry) {
+  if (!entry?.title) return '';
+  const head = `#${entry.rank || 1} ${entry.title}`;
+  return [head, (entry.value || '').trim(), (entry.note || '').trim()].filter(Boolean).join('\n');
+}
+
+// Re-rank a Year Snapshot's entry slides from their positions. Run after any
+// insert, delete, or drag so the "#4" printed on a slide always matches where
+// it actually sits — otherwise slipping a missed film into the middle leaves
+// every number below it lying.
+//
+// Position is the authority, not the stored rank: an entry dragged under a
+// different section slide is adopted by that section. Only the "#N" token at
+// the head of the caption is rewritten, so hand-edited wording survives.
+export function renumberYearEntries(slides) {
+  let list = null;
+  let n = 0;
+  return (slides || []).map((s) => {
+    if (s?.kind === 'section') { list = s.section || null; n = 0; return s; }
+    // The opener and the outro bracket the lists; neither sits inside one.
+    if (s?.kind === 'title' || s?.kind === 'outro') { list = null; n = 0; return s; }
+    if (!s?.entry) return s;
+    n += 1;
+    const rank = n;
+    const entryList = list || s.entry.list || null;
+    if (s.entry.rank === rank && s.entry.list === entryList) return s;
+    const caption = typeof s.caption === 'string' && /^#\d+(?=\s|$)/.test(s.caption)
+      ? s.caption.replace(/^#\d+/, `#${rank}`)
+      : s.caption;
+    return { ...s, caption, entry: { ...s.entry, rank, list: entryList } };
+  });
+}
+
+// The Google Images query for a slide, or '' when the slide has no subject
+// worth searching (the outro). Both bring-your-own-image formats lean on this:
+// one click out to find artwork, one paste back in.
+export function photoQueryFor(project, slide) {
+  if (!project || !slide) return '';
+  if (project.format === 'guys') {
+    if (slide.role) return [project.actor, slide.role.movie].filter(Boolean).join(' ').trim();
+    return slide.kind === 'title' ? String(project.actor || '').trim() : '';
+  }
+  if (project.format === 'year') {
+    const y = project.year ? String(project.year) : '';
+    if (slide.entry?.title) return [slide.entry.title, y, 'movie poster'].filter(Boolean).join(' ');
+    if (slide.kind === 'title') return [y, 'movie posters'].filter(Boolean).join(' ').trim();
+    if (slide.kind === 'section') {
+      const list = YEAR_LISTS.find((l) => l.key === slide.section);
+      return [y, list?.search || 'movies'].filter(Boolean).join(' ').trim();
+    }
+  }
+  return '';
 }
 
 // Compact "how long ago" for library cards. Pass `now` for testability.
