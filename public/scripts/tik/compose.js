@@ -3,7 +3,7 @@
 // Captions use the TikTok-native text treatment: bold black text on white
 // rounded "pills", one pill per wrapped line. composeToCanvas() draws onto a
 // canvas you own (live preview thumbs); composeSlide() renders → JPEG Blob.
-import { computeSlideLayout } from './layout.js';
+import { computeSlideLayout, containFrame } from './layout.js';
 import { wrapLines, fitFontSize } from './caption.js';
 
 const CANVAS_W = 1080;
@@ -20,6 +20,9 @@ const PILL_PAD_X = 26;             // pill padding around each line
 const PILL_PAD_Y = 12;
 const PILL_RADIUS = 18;
 const PILL_GAP = 8;                // vertical gap between line pills
+// Fill mode (bring-your-own-image formats) keeps only a thin margin, and none
+// at all when there's no caption — a pre-composed image should reach the edges.
+const FILL_VPAD = 40;
 
 // Rounded-rect path (fallback-safe: not all canvas impls have ctx.roundRect).
 function pillPath(ctx, x, y, w, h, r) {
@@ -38,7 +41,11 @@ function pillPath(ctx, x, y, w, h, r) {
 // bitmap: ImageBitmap; caption: string; titleLine?: prefix; scale?: raster scale;
 // fontScale?: per-slide caption sizing (1 = auto; the overflow guard still caps
 // scale-up, and scale-down goes below the usual minimum).
-export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1 } = {}) {
+// fillFrame: give the image every pixel the caption doesn't need, instead of
+// the fixed 60%-of-canvas cap. For a format where the user pastes one composed
+// image per slide, that cap shrank a poster to a third of the canvas with black
+// bars down both sides; with no caption at all the image now goes full bleed.
+export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, fillFrame = false } = {}) {
   const fs = Math.min(Math.max(Number(fontScale) || 1, 0.5), 1.6);
   const maxFont = Math.round(MAX_FONT * fs);
   const minFont = Math.max(12, Math.round(MIN_FONT * fs));
@@ -49,9 +56,6 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
 
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  // Frame size: full width, aspect preserved, capped so text always has room.
-  const F = computeSlideLayout(bitmap.width, bitmap.height).frame; // w/h only; we position ourselves
 
   const fullText = `${titleLine ? `${titleLine}\n` : ''}${caption}`.trim();
 
@@ -68,15 +72,37 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
 
   let fontSize = maxFont;
   let lines = [];
-  if (fullText) {
-    const maxTextH = maxGroupH - F.h - GAP;
-    fontSize = fitFontSize(wrapAt(fontSize).length, Math.max(maxTextH, lineBoxH(minFont)), {
-      maxFont, minFont, lineHeightFactor: 1.5,
-    });
-    lines = wrapAt(fontSize);
-    while (fontSize > minFont && F.h + GAP + blockH(lines.length, fontSize) > maxGroupH) {
-      fontSize -= 2;
+  let F;
+
+  if (fillFrame) {
+    // Caption first, at its natural size, then the image claims what's left.
+    // The order is the whole point: sizing the frame first is what forced a
+    // 60% cap, and the cap is what shrank pasted artwork.
+    if (fullText) {
       lines = wrapAt(fontSize);
+      // A caption still can't take more than half the slide.
+      while (fontSize > minFont && blockH(lines.length, fontSize) > CANVAS_H / 2) {
+        fontSize -= 2;
+        lines = wrapAt(fontSize);
+      }
+    }
+    const capH = lines.length ? blockH(lines.length, fontSize) : 0;
+    const pad = capH ? FILL_VPAD : 0; // no caption → edge to edge
+    const availH = Math.max(1, CANVAS_H - pad * 2 - (capH ? GAP + capH : 0));
+    F = containFrame(bitmap.width, bitmap.height, CANVAS_W, availH);
+  } else {
+    // Frame size: full width, aspect preserved, capped so text always has room.
+    F = computeSlideLayout(bitmap.width, bitmap.height).frame; // w/h only; we position ourselves
+    if (fullText) {
+      const maxTextH = maxGroupH - F.h - GAP;
+      fontSize = fitFontSize(wrapAt(fontSize).length, Math.max(maxTextH, lineBoxH(minFont)), {
+        maxFont, minFont, lineHeightFactor: 1.5,
+      });
+      lines = wrapAt(fontSize);
+      while (fontSize > minFont && F.h + GAP + blockH(lines.length, fontSize) > maxGroupH) {
+        fontSize -= 2;
+        lines = wrapAt(fontSize);
+      }
     }
   }
 

@@ -7,6 +7,23 @@ export const CANVAS_H = 1920;
 // Cap the frame height so a tall/portrait source can't swallow the caption band.
 export const MAX_FRAME_H_RATIO = 0.6;
 
+// "Contain" fit: the largest width×height with the source's aspect ratio that
+// fits inside availW × availH. Nothing is cropped and nothing is stretched —
+// used by the bring-your-own-image formats, where the pasted image is already
+// composed the way the user wants it and must be shown whole.
+export function containFrame(frameW, frameH, availW, availH) {
+  const fw = Math.max(1, Number(frameW) || 1);
+  const fh = Math.max(1, Number(frameH) || 1);
+  const ar = fh / fw;
+  let w = Math.max(1, Math.round(availW));
+  let h = Math.round(w * ar);
+  if (h > availH) {
+    h = Math.max(1, Math.round(availH));
+    w = Math.round(h / ar);
+  }
+  return { w, h };
+}
+
 export function computeSlideLayout(frameW, frameH, opts = {}) {
   const CW = opts.canvasW ?? CANVAS_W;
   const CH = opts.canvasH ?? CANVAS_H;

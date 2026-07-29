@@ -180,6 +180,7 @@ async function makeThumbBlob(slide) {
   const c = document.createElement('canvas');
   composeToCanvas(c, slide.bitmap, slide.caption, {
     titleLine: currentTitleLine(), scale: 0.12, fontScale: slide.fontScale || 1,
+    fillFrame: fillFrameFormat(),
   });
   return await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.7));
 }
@@ -1081,9 +1082,9 @@ async function buildYearSlides(snapshot) {
   const room = () => next.length < MAX_SLIDES - 1; // always leave the outro a seat
 
   // Opener: the year as a big card, with the agent's lead-in as the caption.
-  // Like the Some Guys opener it takes a 2–4 photo mosaic.
+  // One image, like every other slide in this format.
   const openerBitmap = await makeCardBitmap({
-    heading: String(y), sub: 'The year in movies', hint: 'Paste 2–4 posters for a mosaic', accent: YEAR_ACCENT,
+    heading: String(y), sub: 'The year in movies', hint: 'Paste your opener image', accent: YEAR_ACCENT,
   });
   next.push({
     id: String(nextId++), bitmap: openerBitmap, blob: null,
@@ -1363,12 +1364,14 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && editingId) { exitEdit(); els.status.textContent = 'Edit cancelled.'; }
 });
 
-// The bring-your-own-image openers are photo mosaics: the frame is built from
-// 1–4 pasted photos instead of a single image (a few faces for Some Guys, a few
-// posters for a Year Snapshot). Only that first title slide gets the mosaic
-// treatment; every other slide is a plain single photo.
+// The "Remembering Some Guys" opener is a photo mosaic: its frame is built from
+// 1–4 pasted photos instead of a single image. Only that first title slide gets
+// the mosaic treatment; every other guy slide is a plain single photo.
+//
+// A Year Snapshot never mosaics: every slide there takes one already-composed
+// image, so combining several would only fight what the user pasted in.
 function isMosaicSlide(slide) {
-  return (project?.format === 'guys' || project?.format === 'year') && slide?.kind === 'title';
+  return project?.format === 'guys' && slide?.kind === 'title';
 }
 
 // Build the title slide's frame from 1–4 photos. A batch (multi-file paste/drop/
@@ -1418,7 +1421,14 @@ async function setSlideImage(id, blob) {
     slides = slides.map((s) => (s.id === id ? { ...s, grabHint: '', blob } : s));
     if (id === editingId) exitEdit(); else render();
     markDirty();
-    els.status.textContent = 'Image set as this slide’s frame.';
+    // A caption sits below the image, so a full-height image has to shrink to
+    // make room for it. That's geometry, not a bug — but it's worth saying,
+    // because composed artwork usually already carries its own text.
+    const slide = slides.find((s) => s.id === id);
+    const tallAndCaptioned = fillFrameFormat() && bitmap.height > bitmap.width * 1.2 && (slide?.caption || '').trim();
+    els.status.textContent = tallAndCaptioned
+      ? 'Image set, shown whole. Clear this slide’s caption to run it edge to edge.'
+      : 'Image set as this slide’s frame.';
   } catch (err) {
     console.error('[tik] set image failed:', err);
     els.status.textContent = 'Couldn’t read that image.';
@@ -1465,12 +1475,18 @@ function render() {
   updatePostButton();
 }
 
+// A Year Snapshot's slides are pasted, already-composed artwork, so they get
+// the whole canvas rather than the 60% cap the grabbed-frame formats use.
+function fillFrameFormat() {
+  return project?.format === 'year';
+}
+
 // Redraw the preview thumbnails in place (no full re-render) so editing a caption
 // or the title updates the live preview without rebuilding the list / losing focus.
 function redrawAllThumbs() {
   slides.forEach((slide) => {
     const thumb = els.list.querySelector(`canvas[data-thumb="${slide.id}"]`);
-    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1 });
+    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, fillFrame: fillFrameFormat() });
   });
 }
 
@@ -1519,6 +1535,7 @@ function renderSlide(slide, index) {
   // Redraw this slide's preview from the live caption + its per-slide font scale.
   const redrawThumb = () => composeToCanvas(thumb, slide.bitmap, ta.value, {
     titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1,
+    fillFrame: fillFrameFormat(),
   });
   redrawThumb();
 
@@ -1737,7 +1754,7 @@ els.download.addEventListener('click', async () => {
     const titleLine = currentTitleLine();
     for (let i = 0; i < slides.length; i++) {
       els.status.textContent = `Rendering slide ${i + 1}/${slides.length}…`;
-      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1 });
+      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, fillFrame: fillFrameFormat() });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `${slug}-${String(i + 1).padStart(2, '0')}.jpg`;
@@ -1789,6 +1806,7 @@ els.post.addEventListener('click', async () => {
     const fallback = defaultPostFields(project.format, projectDisplayName(project));
     const result = await publishSlideshow(slides, {
       titleLine,
+      fillFrame: fillFrameFormat(),
       title: (project.postTitle || '').trim() || fallback.title,
       description: (project.postDesc || '').trim() || fallback.description,
       onProgress: (m) => { els.status.textContent = m; },
