@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseImdbList, parseVotes, formatVotes, ratingValue, toRatedEntries, imdbSearchUrl,
-} from '../../public/scripts/tik/imdblist.js';
+  parseGrossList, parseGross, formatGross, toGrossEntries, boxOfficeMojoUrl,
+} from '../../public/scripts/tik/charts.js';
 
 // ---- votes ----
 
@@ -138,4 +139,84 @@ test('imdbSearchUrl builds the rating-sorted, vote-floored advanced search', () 
   assert.equal(q.get('user_rating'), '1,');
   // A junk floor degrades to "no floor" in the URL rather than "NaN,".
   assert.equal(new URL(imdbSearchUrl(1994, 'lots')).searchParams.get('num_votes'), '0,');
+});
+
+// ================= Box office =================
+
+test('formatGross quotes figures the way box office numbers are normally written', () => {
+  assert.equal(formatGross(1_052_000_000), '$1.05B');
+  assert.equal(formatGross(2_800_000_000), '$2.8B');
+  assert.equal(formatGross(968_483_777), '$968M');
+  assert.equal(formatGross(45_200_000), '$45.2M');
+  assert.equal(formatGross(8_000_000), '$8M');
+  assert.equal(formatGross(123_456), '$123,456');
+  assert.equal(formatGross(0), '');
+  assert.equal(formatGross(NaN), '');
+});
+
+test('parseGross reads raw and abbreviated amounts', () => {
+  assert.equal(parseGross('$968,483,777'), 968_483_777);
+  assert.equal(parseGross('$968.5M'), 968_500_000);
+  assert.equal(parseGross('$1.05B'), 1_050_000_000);
+  assert.equal(parseGross('no money'), null);
+});
+
+test('parseGrossList reads the bookmarklet format and keeps its wording', () => {
+  const out = parseGrossList([
+    '1. The Lion King | $968.5M worldwide',
+    '2. Forrest Gump | $678.2M worldwide',
+  ].join('\n'));
+  assert.deepEqual(out.map((e) => [e.rank, e.title, e.value]), [
+    [1, 'The Lion King', '$968.5M worldwide'],
+    [2, 'Forrest Gump', '$678.2M worldwide'],
+  ]);
+});
+
+test('parseGrossList reads a raw Box Office Mojo table row, taking the worldwide column', () => {
+  const out = parseGrossList([
+    '1\tThe Lion King\t$968,483,777\t$312,855,561\t32.3%\t$655,628,216\t67.7%',
+    '2\tForrest Gump\t$678,226,465\t$330,455,270\t48.7%\t$347,771,195\t51.3%',
+  ].join('\n'));
+  assert.equal(out.length, 2);
+  // The first dollar column is worldwide; the domestic split must not win.
+  assert.deepEqual(out[0], { rank: 1, title: 'The Lion King', value: '$968M worldwide', gross: 968_483_777 });
+  assert.equal(out[1].value, '$678M worldwide');
+});
+
+test('parseGrossList handles a space-separated copy and a hand-typed line', () => {
+  const spaced = parseGrossList('1   The Lion King   $968,483,777   $312,855,561');
+  assert.deepEqual([spaced[0].title, spaced[0].value], ['The Lion King', '$968M worldwide']);
+  const typed = parseGrossList('The Lion King $968,483,777\nSpeed $350,448,145');
+  assert.deepEqual(typed.map((e) => [e.title, e.value]), [
+    ['The Lion King', '$968M worldwide'],
+    ['Speed', '$350M worldwide'],
+  ]);
+});
+
+test('parseGrossList takes a title with no figure, and a custom label', () => {
+  const out = parseGrossList('1. Some Film');
+  assert.deepEqual([out[0].title, out[0].value, out[0].gross], ['Some Film', '', null]);
+  const dom = parseGrossList('1\tSpeed\t$121,248,145', 10, 'domestic');
+  assert.equal(dom[0].value, '$121M domestic');
+});
+
+test('parseGrossList dedupes, renumbers, caps, and survives junk', () => {
+  const dup = parseGrossList('1. Dup | $10M worldwide\n2. dup | $10M worldwide\n3. Other | $9M worldwide');
+  assert.deepEqual(dup.map((e) => [e.rank, e.title]), [[1, 'Dup'], [2, 'Other']]);
+  const many = Array.from({ length: 30 }, (_, i) => `${i + 1}\tFilm ${i}\t$${i + 1},000,000`).join('\n');
+  assert.equal(parseGrossList(many, 10).length, 10);
+  assert.deepEqual(parseGrossList(''), []);
+  assert.deepEqual(parseGrossList(null), []);
+  assert.deepEqual(parseGrossList('1\t\t$5,000,000'), []);
+});
+
+test('toGrossEntries builds the snapshot shape', () => {
+  const parsed = parseGrossList('1. The Lion King | $968.5M worldwide\n2. Forrest Gump | $678.2M worldwide');
+  assert.deepEqual(toGrossEntries(parsed, 1), [
+    { rank: 1, title: 'The Lion King', value: '$968.5M worldwide', note: '' },
+  ]);
+});
+
+test('boxOfficeMojoUrl points at the worldwide yearly chart', () => {
+  assert.equal(boxOfficeMojoUrl(1994), 'https://www.boxofficemojo.com/year/world/1994/');
 });

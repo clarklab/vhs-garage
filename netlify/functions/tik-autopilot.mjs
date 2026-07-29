@@ -48,7 +48,7 @@ export default async (req) => {
   let body;
   try { body = await req.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
 
-  const { kind = 'trivia', title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, actor, roles, minVotes, ratedGiven, model: requested } = body;
+  const { kind = 'trivia', title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, actor, roles, minVotes, ratedGiven, boxofficeGiven, model: requested } = body;
   if (kind === 'trivia' && !title) return json({ error: 'Missing movie title' }, 400);
   if ((kind === 'roles' || kind === 'blurbs') && !actor) return json({ error: 'Missing actor name' }, 400);
   if (kind === 'blurbs' && !(Array.isArray(roles) && roles.length)) return json({ error: 'No roles picked' }, 400);
@@ -59,7 +59,7 @@ export default async (req) => {
     : kind === 'blurbs'
       ? buildBlurbsPrompt({ actor, roles, exclude })
       : kind === 'year'
-        ? buildYearPrompt({ year, count: Number(count) || LIST_COUNT, minVotes, ratedGiven })
+        ? buildYearPrompt({ year, count: Number(count) || LIST_COUNT, minVotes, ratedGiven, boxofficeGiven })
         : buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide });
 
   // Abort before Netlify's 10s function ceiling so we return a graceful

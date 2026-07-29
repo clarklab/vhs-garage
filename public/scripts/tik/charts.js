@@ -1,12 +1,15 @@
-// Parse a list of films pasted out of IMDb's advanced search. IMDb has no free
-// API and blocks server-side fetches, so the real rating-sorted, vote-floored
-// list can only come from the user's own browser: the bookmarklet on /tik reads
-// the results page they are looking at, or they copy the page text by hand.
+// Parse the ranked film charts a Year Snapshot is built from: IMDb's advanced
+// search (rating, vote-floored) and Box Office Mojo's yearly chart (gross).
+// Neither site has a free API and both block server-side fetches, so the real
+// numbers can only come from the user's own browser — the /tik bookmarklets
+// read the page they are looking at, or they copy the page text by hand.
 //
-// So this parser has to be forgiving. It handles three shapes:
+// So these parsers have to be forgiving. Between them they handle:
 //   bookmarklet:  "1. The Shawshank Redemption (1994) | 9.3 | 3.1M votes"
+//                 "1. The Lion King | $968.5M worldwide"
 //   raw paste:    "1. The Shawshank Redemption" / "1994" / "2h 22m" / "R" / "9.3" / "(3.1M)"
-//   hand-typed:   "The Shawshank Redemption 9.3"  (or just the title)
+//                 "1<tab>The Lion King<tab>$968,483,777<tab>$312,855,561<tab>32.3%"
+//   hand-typed:   "The Shawshank Redemption 9.3"   "The Lion King $968,483,777"
 // Pure (no DOM) so it unit-tests like the other helpers here.
 
 const MAX_ENTRIES = 100;
@@ -175,6 +178,103 @@ export function toRatedEntries(parsed, count) {
     note: '',
     votes: p.votes ?? null,
   }));
+}
+
+// ================= Box office =================
+
+// 968483777 → "$968M"; 1052000000 → "$1.05B". Two decimals past a billion,
+// one below a hundred million, none in between — the shape these figures are
+// normally quoted in.
+export function formatGross(n) {
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2).replace(/0$/, '')}B`;
+  if (n >= 1e8) return `$${Math.round(n / 1e6)}M`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1).replace(/\.0$/, '')}M`;
+  return `$${Math.round(n).toLocaleString('en-US')}`;
+}
+
+// "$968,483,777" → 968483777; "$968.5M" → 968500000.
+const MONEY = /\$\s*([\d.,]+)\s*([KMB])?/i;
+export function parseGross(text) {
+  const m = String(text || '').match(MONEY);
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, ''));
+  if (!Number.isFinite(n)) return null;
+  const mult = m[2] ? { k: 1e3, m: 1e6, b: 1e9 }[m[2].toLowerCase()] : 1;
+  return Math.round(n * mult);
+}
+
+// A value the bookmarklet already formatted ("$968.5M worldwide") is kept
+// verbatim; anything else is a raw figure we format ourselves.
+const FORMATTED_GROSS = /^\$[\d.,]+\s*[KMB]?\s+(worldwide|domestic|international|foreign)$/i;
+// Row fields arrive tab-separated (a real table copy), pipe-separated (the
+// bookmarklet), or run-of-spaces separated (a plain-text copy).
+const FIELD_SPLIT = /\t+|\s*\|\s*|\s{2,}/;
+const LEADING_RANK = /^\s*\d{1,3}\s*[.)]?\s*$/;
+const TRAILING_MONEY = /\s*\$\s*[\d.,]+\s*[KMB]?\s*$/i;
+const PERCENT_ONLY = /^-?[\d.]+%$/;
+
+// Parse a pasted box office chart into [{ rank, title, value, gross }].
+// `label` is the qualifier appended to figures we format ("worldwide"), so the
+// slide says what the number actually measures.
+export function parseGrossList(text, max = MAX_ENTRIES, label = 'worldwide') {
+  const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const out = [];
+  const seen = new Set();
+
+  for (const line of lines) {
+    if (out.length >= max) break;
+    let fields = line.split(FIELD_SPLIT).map((f) => f.trim()).filter(Boolean);
+    if (fields.length && LEADING_RANK.test(fields[0])) fields = fields.slice(1);
+    if (!fields.length) continue;
+
+    // A figure the bookmarklet already wrote out wins; otherwise take the first
+    // dollar amount on the row, which on Mojo's worldwide chart is the
+    // worldwide total (the columns after it are domestic and foreign splits).
+    const preformatted = fields.find((f) => FORMATTED_GROSS.test(f));
+    const moneyField = fields.find((f) => f !== preformatted && MONEY.test(f) && !PERCENT_ONLY.test(f));
+
+    let title = fields.find((f) => f !== preformatted && f !== moneyField && /[a-z]/i.test(f) && !MONEY.test(f)) || '';
+    let gross = moneyField ? parseGross(moneyField) : null;
+
+    // Hand-typed "The Lion King $968,483,777" arrives as one field: peel the
+    // amount off the end rather than dropping the row.
+    if (!title) {
+      const candidate = fields.find((f) => f !== preformatted && /[a-z]/i.test(f));
+      if (candidate) {
+        const stripped = candidate.replace(TRAILING_MONEY, '').trim();
+        if (stripped && /[a-z]/i.test(stripped)) {
+          title = stripped;
+          if (gross === null) gross = parseGross(candidate);
+        }
+      }
+    }
+    title = title.replace(/^\s*\d{1,3}\s*[.)]\s*/, '').replace(/\s{2,}/g, ' ').trim().slice(0, TITLE_MAX);
+    if (!title) continue;
+
+    const key = title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const value = preformatted
+      ? preformatted.replace(/\s+/g, ' ')
+      : (gross !== null ? `${formatGross(gross)} ${label}`.trim() : '');
+    out.push({ rank: out.length + 1, title, value, gross: gross ?? (preformatted ? parseGross(preformatted) : null) });
+  }
+  return out;
+}
+
+// Parsed gross rows → the snapshot's list shape (notes come from the agent).
+export function toGrossEntries(parsed, count) {
+  return parsed.slice(0, count).map((p, i) => ({
+    rank: i + 1, title: p.title, value: p.value, note: '',
+  }));
+}
+
+// Box Office Mojo's worldwide chart for a year — the box office equivalent of
+// the IMDb search this format leans on.
+export function boxOfficeMojoUrl(year) {
+  return `https://www.boxofficemojo.com/year/world/${Math.round(Number(year) || 0)}/`;
 }
 
 // The IMDb advanced-search URL for a year, rating-sorted with a vote floor —

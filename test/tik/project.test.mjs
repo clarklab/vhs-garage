@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   FORMATS, YEAR_LISTS, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, relativeTime, projectDisplayName,
+  YEAR_LIST_SIZE, numberWord, renumberYearEntries,
 } from '../../public/scripts/tik/project.js';
 
 test('makeProject builds a draft with the right shape and format fallback', () => {
@@ -77,9 +78,7 @@ test('year post defaults name the year and ask what viewers watched, ≤5 hashta
   assert.match(empty.description, /that year/);
 });
 
-test('sectionCaption announces each top-eight list by name and year', () => {
-  assert.equal(sectionCaption('rated', 1994), 'These are the top eight rated movies of 1994.');
-  assert.equal(sectionCaption('boxoffice', 1994), 'These are the top eight box office numbers of 1994.');
+test('sectionCaption announces each list by name and year', () => {
   assert.equal(sectionCaption('nope', 1994), '');
   // Rentals were dropped as too obscure; nothing should still announce them.
   assert.equal(sectionCaption('rentals', 1994), '');
@@ -137,4 +136,76 @@ test('projectDisplayName falls back to Untitled', () => {
   assert.equal(projectDisplayName({ name: 'Jaws (1975)' }), 'Jaws (1975)');
   assert.equal(projectDisplayName({ name: '   ' }), 'Untitled');
   assert.equal(projectDisplayName(null), 'Untitled');
+});
+
+// ---- Year Snapshot: re-ranking after edits ----
+
+const yearDeck = () => [
+  { kind: 'title' },
+  { kind: 'section', section: 'rated' },
+  { entry: { list: 'rated', rank: 1, title: 'A' }, caption: '#1 A\n9.3 on IMDb' },
+  { entry: { list: 'rated', rank: 2, title: 'B' }, caption: '#2 B\n8.9 on IMDb' },
+  { kind: 'section', section: 'boxoffice' },
+  { entry: { list: 'boxoffice', rank: 1, title: 'C' }, caption: '#1 C\n$968M worldwide' },
+  { kind: 'outro' },
+];
+
+test('renumberYearEntries re-ranks each section independently from position', () => {
+  const out = renumberYearEntries(yearDeck());
+  assert.deepEqual(out.map((s) => s.entry?.rank ?? null), [null, null, 1, 2, null, 1, null]);
+});
+
+test('renumberYearEntries fixes every number below an inserted film', () => {
+  const deck = yearDeck();
+  // Slip a missed film in between #1 and #2, numbered wrong on purpose.
+  deck.splice(3, 0, { entry: { list: 'rated', rank: 99, title: 'New' }, caption: '#99 New\n9.0 on IMDb' });
+  const out = renumberYearEntries(deck);
+  assert.deepEqual(out.slice(2, 5).map((s) => [s.entry.rank, s.entry.title]), [[1, 'A'], [2, 'New'], [3, 'B']]);
+  // The caption's visible number moves with the rank, and the rest is untouched.
+  assert.equal(out[3].caption, '#2 New\n9.0 on IMDb');
+  assert.equal(out[4].caption, '#3 B\n8.9 on IMDb');
+  // The other section is unaffected.
+  assert.equal(out[6].entry.rank, 1);
+});
+
+test('renumberYearEntries adopts an entry dragged under another section', () => {
+  const deck = yearDeck();
+  const [moved] = deck.splice(2, 1);          // take rated #1
+  deck.splice(4, 0, moved);                   // drop it into the box office run
+  const out = renumberYearEntries(deck);
+  const inBox = out.filter((s) => s.entry?.list === 'boxoffice');
+  assert.deepEqual(inBox.map((s) => [s.entry.rank, s.entry.title]), [[1, 'A'], [2, 'C']]);
+  assert.equal(out.filter((s) => s.entry?.list === 'rated').length, 1);
+});
+
+test('renumberYearEntries leaves hand-edited captions with no #N prefix alone', () => {
+  const deck = [
+    { kind: 'section', section: 'rated' },
+    { entry: { list: 'rated', rank: 5, title: 'A' }, caption: 'A totally rewritten caption' },
+  ];
+  const out = renumberYearEntries(deck);
+  assert.equal(out[1].entry.rank, 1);
+  assert.equal(out[1].caption, 'A totally rewritten caption');
+});
+
+test('renumberYearEntries is a no-op on already-correct decks and on other formats', () => {
+  const deck = yearDeck();
+  const out = renumberYearEntries(deck);
+  // Unchanged slides keep their identity, so React-less re-renders stay cheap.
+  assert.equal(out[2], deck[2]);
+  assert.deepEqual(renumberYearEntries([]), []);
+  assert.deepEqual(renumberYearEntries(null), []);
+  const trivia = [{ caption: 'a fact' }, { caption: 'another' }];
+  assert.deepEqual(renumberYearEntries(trivia), trivia);
+});
+
+test('sectionCaption spells the count and tracks YEAR_LIST_SIZE', () => {
+  assert.equal(YEAR_LIST_SIZE, 10);
+  assert.equal(sectionCaption('rated', 1994), 'These are the top ten rated movies of 1994.');
+  assert.equal(sectionCaption('boxoffice', 1994), 'These are the top ten box office numbers of 1994.');
+  assert.equal(sectionCaption('rated', 1994, 8), 'These are the top eight rated movies of 1994.');
+  assert.equal(numberWord(10), 'ten');
+  assert.equal(numberWord(99), '99');
+  // The section cards must say the same number as the captions.
+  for (const l of YEAR_LISTS) assert.match(l.heading, new RegExp(`\\b${YEAR_LIST_SIZE}\\b`));
 });

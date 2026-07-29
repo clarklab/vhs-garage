@@ -14,6 +14,12 @@ import { BUILD_ID } from '../utils/build-id.js';
 // on IMDb's side must degrade to "copy something useful", not "copy nothing".
 const IMDB_LIST_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var rows=[].slice.call(document.querySelectorAll('li.ipc-metadata-list-summary-item, .lister-item, [data-testid="find-result-item"]'));if(!rows.length){alert('No results found - open an IMDb advanced search results page first.');return}var txt=function(e,s){var n=e.querySelector(s);return n?n.textContent.trim():''};var out=[];rows.forEach(function(r,i){var t=txt(r,'.ipc-title__text')||txt(r,'.lister-item-header a')||txt(r,'h3');t=t.replace(/^\\s*\\d+\\.\\s*/,'').trim();if(!t)return;var meta=[].slice.call(r.querySelectorAll('.dli-title-metadata-item, .lister-item-year, .title_metadata .certificate')).map(function(n){return n.textContent.trim()});var yr='';for(var j=0;j<meta.length;j++){var m=meta[j].match(/(19|20)\\d{2}/);if(m){yr=m[0];break}}var rt=txt(r,'.ipc-rating-star--rating')||txt(r,'.ratings-imdb-rating strong')||'';var vt=txt(r,'.ipc-rating-star--voteCount')||txt(r,'span[name=nv]')||'';if(!rt){var m2=r.innerText.match(/\\b(10(?:\\.0)?|[0-9]\\.[0-9])\\b/);if(m2)rt=m2[1]}vt=vt.replace(/[()\\s]/g,'');var line=(i+1)+'. '+t+(yr?' ('+yr+')':'');if(rt)line+=' | '+rt;if(vt)line+=' | '+vt+' votes';out.push(line)});if(!out.length){alert('Found rows but could not read titles - copy the page text by hand and paste it in, the parser handles that too.');return}navigator.clipboard.writeText(out.join('\\n')).then(function(){var b=document.createElement('div');b.textContent='Copied '+out.length+' titles - paste into VHS Studio';b.style.cssText='position:fixed;z-index:2147483647;left:50%;bottom:16px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:999px;box-shadow:0 6px 24px rgba(0,0,0,.5);font:600 14px system-ui';document.body.appendChild(b);setTimeout(function(){b.remove()},2500)})})()`);
 
+// Bookmarklet #3: on a Box Office Mojo yearly chart, copies the ranked releases
+// as "1. Title | $968.5M worldwide" lines. Mojo's table is plain <table> markup,
+// so this reads rows and picks the first money column (worldwide on the /world/
+// chart, domestic on the plain year chart) — the label follows the URL.
+const MOJO_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var rows=[].slice.call(document.querySelectorAll('table tr'));if(rows.length<2){alert('No chart found - open a Box Office Mojo yearly chart first.');return}var label=/\\/world\\//.test(location.pathname)?'worldwide':'domestic';var money=function(s){var m=String(s).replace(/,/g,'').match(/\\\$\\s*(\\d+(?:\\.\\d+)?)\\s*([KMB])?/i);if(!m)return null;var n=parseFloat(m[1]);if(!isFinite(n))return null;var u=m[2]?m[2].toLowerCase():'';return Math.round(n*(u==='b'?1e9:u==='m'?1e6:u==='k'?1e3:1))};var fmt=function(n){if(n>=1e9)return'$'+(n/1e9).toFixed(2).replace(/0$/,'')+'B';if(n>=1e8)return'$'+Math.round(n/1e6)+'M';if(n>=1e6)return'$'+(n/1e6).toFixed(1).replace(/\\.0$/,'')+'M';return'$'+n};var out=[];rows.forEach(function(r){var cells=[].slice.call(r.querySelectorAll('td'));if(cells.length<2)return;var link=r.querySelector('a');var t=(link?link.textContent:cells[1].textContent).trim();if(!t)return;var g=null;for(var i=0;i<cells.length;i++){var v=money(cells[i].textContent);if(v&&v>1000){g=v;break}}if(!g)return;out.push((out.length+1)+'. '+t+' | '+fmt(g)+' '+label)});if(!out.length){alert('Found a table but no releases with a gross - copy the page text by hand and paste it in, the parser handles that too.');return}navigator.clipboard.writeText(out.join('\\n')).then(function(){var b=document.createElement('div');b.textContent='Copied '+out.length+' releases - paste into VHS Studio';b.style.cssText='position:fixed;z-index:2147483647;left:50%;bottom:16px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:999px;box-shadow:0 6px 24px rgba(0,0,0,.5);font:600 14px system-ui';document.body.appendChild(b);setTimeout(function(){b.remove()},2500)})})()`);
+
 const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{if(document.getElementById('tik-picker'))return;var S='[data-testid="item-text"], .ipc-html-content-inner-div';var items=[...document.querySelectorAll(S)].filter(e=>e.innerText.trim());if(!items.length){alert('No trivia found - open a movie\\'s Trivia page on IMDb first.');return}var picked=new Set(),seen=new Set();var mark=function(e,on){e.style.outline=on?'3px solid #22c55e':'';e.style.background=on?'rgba(34,197,94,.15)':'';e.style.cursor='pointer'};var bar=document.createElement('div');bar.id='tik-picker';bar.style.cssText='position:fixed;z-index:2147483647;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:8px;align-items:center;background:#111;color:#fff;padding:10px 14px;border-radius:999px;box-shadow:0 6px 24px rgba(0,0,0,.5);font:600 14px system-ui';var cnt=document.createElement('span');cnt.textContent='Tap the trivia you want';var mk=function(t,bg,fg){var b=document.createElement('button');b.textContent=t;b.style.cssText='border:0;border-radius:999px;padding:6px 12px;font:600 13px system-ui;cursor:pointer;background:'+bg+';color:'+fg;return b};var all=mk('All','#333','#fff'),non=mk('None','#333','#fff'),cp=mk('Copy','#22c55e','#000');var upd=function(){cnt.textContent=picked.size?picked.size+' selected':'Tap the trivia you want'};var tog=function(e){if(picked.has(e)){picked.delete(e);mark(e,false)}else{picked.add(e);mark(e,true)}upd()};items.forEach(function(e){if(seen.has(e))return;seen.add(e);mark(e,false);e.addEventListener('click',function(ev){if(ev.target.closest('a,button,[role=button]'))return;ev.preventDefault();ev.stopPropagation();tog(e)},true)});all.onclick=function(){items.forEach(function(e){picked.add(e);mark(e,true)});upd()};non.onclick=function(){items.forEach(function(e){picked.delete(e);mark(e,false)});upd()};cp.onclick=function(){if(!picked.size){alert('Tap the trivia items you want first.');return}var txt=items.filter(function(e){return picked.has(e)}).map(function(e){return e.innerText.trim()}).join('\\n\\n');navigator.clipboard.writeText(txt).then(function(){cp.textContent='Copied '+picked.size+'!';setTimeout(function(){cp.textContent='Copy'},1500)})};bar.append(cnt,all,non,cp);document.body.appendChild(bar)})()`);
 ---
 <Base title="VHS Studio" description="VHS Garage's TikTok slideshow studio">
@@ -284,6 +290,34 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{if(document.g
                         placeholder="1. The Shawshank Redemption (1994) | 9.3 | 3.1M votes&#10;2. Pulp Fiction (1994) | 8.9 | 2.3M votes"></textarea>
               <p id="imdb-paste-note" class="mt-1 text-[11px] leading-snug text-neutral-500">
                 Leave this empty and the agent picks the rated list from memory, applying the vote floor itself.
+              </p>
+            </details>
+
+            <!-- Same trick for the grosses: Box Office Mojo's yearly chart is
+                 the canonical ranking, and it also blocks server-side fetches. -->
+            <details id="mojo-details" class="rounded-xl border border-neutral-800 bg-neutral-900 p-3">
+              <summary class="cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                Box office source — Mojo chart &amp; paste
+              </summary>
+              <p class="mt-3 text-[11px] leading-snug text-neutral-500">
+                <a id="mojo-link" href="https://www.boxofficemojo.com/" target="_blank" rel="noopener noreferrer"
+                   class="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1.5 py-0.5 font-semibold text-violet-300">
+                  <span class="material-symbols-outlined text-[13px] leading-none">open_in_new</span>Open this year on Box Office Mojo
+                </a>
+                opens the worldwide chart for that year. Drag
+                <a href={MOJO_BOOKMARKLET}
+                   class="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300"
+                   title="Drag me to your bookmarks bar, then click it on a Box Office Mojo yearly chart"
+                   onclick="return false;">
+                  <span class="material-symbols-outlined text-[13px] leading-none">bookmark</span>Copy Mojo chart
+                </a>
+                to your bookmarks bar, click it on that page, then paste below.
+              </p>
+              <textarea id="mojo-paste" rows="4"
+                        class="mt-2 w-full rounded-md border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 placeholder:text-neutral-600"
+                        placeholder="1. The Lion King | $968.5M worldwide&#10;2. Forrest Gump | $678.2M worldwide"></textarea>
+              <p id="mojo-paste-note" class="mt-1 text-[11px] leading-snug text-neutral-500">
+                Leave this empty and the agent recalls the box office list itself.
               </p>
             </details>
 

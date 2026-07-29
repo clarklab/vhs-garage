@@ -112,11 +112,11 @@ export async function fetchRoles(opts = {}) {
   return data.roles;
 }
 
-// opts: { year, count?, minVotes?, ratedGiven?, model?, onProgress? }
+// opts: { year, count?, minVotes?, ratedGiven?, boxofficeGiven?, model?, onProgress? }
 // Returns { intro, rated, boxoffice } — each list [{ rank, title, value, note }],
-// either of which may be empty. Pass `ratedGiven` (the user's own IMDb results)
-// to fix the rated list: the agent then only writes its notes.
-// Throws only when the year came back with nothing usable at all.
+// either of which may be empty. Pass `ratedGiven` / `boxofficeGiven` (the user's
+// own IMDb / Box Office Mojo rows) to fix that list: the agent then only writes
+// its notes. Throws only when the year came back with nothing usable at all.
 export async function fetchYearSnapshot(opts = {}) {
   const data = await runJob({
     kind: 'year',
@@ -124,6 +124,7 @@ export async function fetchYearSnapshot(opts = {}) {
     count: opts.count,
     minVotes: opts.minVotes,
     ratedGiven: opts.ratedGiven || [],
+    boxofficeGiven: opts.boxofficeGiven || [],
     model: opts.model,
   }, opts.onProgress);
   const rated = data.rated || [];

@@ -11,13 +11,17 @@ import { fetchScenes, fetchRoles, fetchBlurbs, fetchYearSnapshot } from './autop
 import { parseMovieName } from './filename.js';
 import { composeToCanvas, composeSlide } from './compose.js';
 import {
-  FORMATS, YEAR_LISTS, formatOf, makeProject, defaultPostFields, captionForRole,
-  sectionCaption, captionForYearEntry, photoQueryFor, relativeTime, projectDisplayName,
+  FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
+  sectionCaption, captionForYearEntry, photoQueryFor, renumberYearEntries,
+  relativeTime, projectDisplayName,
 } from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
-import { parseImdbList, toRatedEntries, imdbSearchUrl, formatVotes } from './imdblist.js';
+import {
+  parseImdbList, toRatedEntries, imdbSearchUrl, formatVotes,
+  parseGrossList, toGrossEntries, boxOfficeMojoUrl, formatGross,
+} from './charts.js';
 import { fetchFollowerStats, renderFollowerChart, fmtCount } from './stats.js';
 
 const $ = (id) => document.getElementById(id);
@@ -54,6 +58,7 @@ const els = {
   yearSummaryLists: $('year-summary-lists'), yearRebuild: $('year-rebuild-btn'),
   minVotes: $('min-votes-input'), imdbSearchLink: $('imdb-search-link'),
   imdbPaste: $('imdb-paste'), imdbPasteNote: $('imdb-paste-note'),
+  mojoLink: $('mojo-link'), mojoPaste: $('mojo-paste'), mojoPasteNote: $('mojo-paste-note'),
   // post details
   postTitleInput: $('post-title-input'), postDescInput: $('post-desc-input'), postReset: $('post-reset'),
   // slides pane
@@ -80,7 +85,6 @@ const PREVIEW_SCALE = 0.25;    // quarter-res preview thumbnails; uploads stay f
 const MAX_PICK = 12;           // Some Guys: max roles per slideshow
 const GUYS_ACCENT = '#22d3ee';
 const YEAR_ACCENT = '#a78bfa';
-const YEAR_LIST_SIZE = 8;      // "top eight", per list
 const DEFAULT_MIN_VOTES = 100_000; // IMDb vote floor, mirroring the server default
 
 const uuid = () => crypto.randomUUID?.() ??
@@ -319,11 +323,13 @@ function enterEditor() {
   els.yearInput.value = project.year || '';
   els.minVotes.value = project.minVotes ?? DEFAULT_MIN_VOTES;
   els.imdbPaste.value = project.imdbPaste || '';
+  els.mojoPaste.value = project.mojoPaste || '';
   els.autopilotPrompt.value = '';
   renderRolesPicker();
   renderYearSummary();
-  refreshImdbLink();
+  refreshSourceLinks();
   refreshImdbPasteNote();
+  refreshMojoPasteNote();
   setSaveState(storageAvailable() ? (dirty ? 'saving' : 'saved') : 'off');
   render();
 }
@@ -931,27 +937,35 @@ function minVotesFromInput() {
   return Number.isFinite(n) && n >= 0 ? Math.min(n, 10_000_000) : DEFAULT_MIN_VOTES;
 }
 
-// Keep the "Open this year on IMDb" link pointed at the current year + floor,
-// so the list the user sees is the list the slides will be built from.
-function refreshImdbLink() {
+// Keep the source links pointed at the current year + floor, so the list the
+// user sees is the list the slides will be built from.
+function refreshSourceLinks() {
   const y = yearFromInput();
   els.imdbSearchLink.href = imdbSearchUrl(y || 1994, minVotesFromInput());
   els.imdbSearchLink.title = y
     ? `IMDb ${y} features, rated highest first, ${minVotesFromInput().toLocaleString()}+ votes`
     : 'Enter a year first';
+  els.mojoLink.href = y ? boxOfficeMojoUrl(y) : 'https://www.boxofficemojo.com/year/world/';
+  els.mojoLink.title = y ? `Box Office Mojo ${y} worldwide chart` : 'Enter a year first';
 }
 
-// What the paste box currently yields. Told separately from "what the agent
-// will do with it" so the note can say which of the two paths is live.
+// What each paste box currently yields. Told separately from "what the agent
+// will do with it" so the notes can say which path is live.
 function pastedRated() {
   return parseImdbList(els.imdbPaste.value, YEAR_LIST_SIZE);
 }
+function pastedGross() {
+  return parseGrossList(els.mojoPaste.value, YEAR_LIST_SIZE);
+}
+
+const NOTE_IDLE = 'mt-1 text-[11px] leading-snug text-neutral-500';
+const NOTE_LIVE = 'mt-1 text-[11px] leading-snug text-violet-300';
 
 function refreshImdbPasteNote() {
   const parsed = pastedRated();
   if (!parsed.length) {
     els.imdbPasteNote.textContent = 'Leave this empty and the agent picks the rated list from memory, applying the vote floor itself.';
-    els.imdbPasteNote.className = 'mt-1 text-[11px] leading-snug text-neutral-500';
+    els.imdbPasteNote.className = NOTE_IDLE;
     return;
   }
   const rated = parsed.filter((p) => p.rating !== null).length;
@@ -961,7 +975,22 @@ function refreshImdbPasteNote() {
     (rated < parsed.length ? ` (${rated} with a rating)` : '') +
     (lowest !== null ? `, lowest ${formatVotes(lowest)}` : '') +
     '. These become the rated list exactly as pasted; the agent only writes the notes.';
-  els.imdbPasteNote.className = 'mt-1 text-[11px] leading-snug text-violet-300';
+  els.imdbPasteNote.className = NOTE_LIVE;
+}
+
+function refreshMojoPasteNote() {
+  const parsed = pastedGross();
+  if (!parsed.length) {
+    els.mojoPasteNote.textContent = 'Leave this empty and the agent recalls the box office list itself.';
+    els.mojoPasteNote.className = NOTE_IDLE;
+    return;
+  }
+  const top = parsed.find((p) => Number.isFinite(p.gross));
+  els.mojoPasteNote.textContent =
+    `Read ${parsed.length} release${parsed.length === 1 ? '' : 's'}` +
+    (top ? `, top ${formatGross(top.gross)}` : '') +
+    '. These become the box office list exactly as pasted; the agent only writes the notes.';
+  els.mojoPasteNote.className = NOTE_LIVE;
 }
 
 // What came back, per list — including a list that came back empty, since
@@ -984,8 +1013,8 @@ function renderYearSummary() {
     label.className = 'flex-1 text-neutral-300';
     // Say where the rated list came from: pasted IMDb results are verified
     // data, recall is not, and the difference should never be invisible.
-    label.textContent = list.key === 'rated' && snap.ratedFromPaste
-      ? `${list.label} (from your IMDb paste)`
+    label.textContent = snap[`${list.key}FromPaste`]
+      ? `${list.label} (from your paste)`
       : list.label;
     const count = document.createElement('span');
     count.className = `text-xs font-semibold tabular-nums ${n ? 'text-violet-300' : 'text-neutral-600'}`;
@@ -995,8 +1024,26 @@ function renderYearSummary() {
   }
 }
 
+// Overwrite one of the snapshot's lists with the rows the user pasted, keeping
+// only the agent's notes. Titles, order, and figures stay exactly as pasted —
+// the whole point of pasting is that those are not the model's to revise.
+function applyGivenList(snapshot, key, given) {
+  if (!given.length) return;
+  const replied = snapshot[key] || [];
+  const byTitle = new Map();
+  for (const r of replied) {
+    const k = String(r.title || '').toLowerCase();
+    if (!byTitle.has(k)) byTitle.set(k, r);
+  }
+  snapshot[key] = given.map((g, i) => ({
+    ...g,
+    note: (byTitle.get(g.title.toLowerCase()) || replied[i])?.note || '',
+  }));
+  snapshot[`${key}FromPaste`] = true;
+}
+
 // Build the whole slideshow from a snapshot: opener, then a lead-in slide plus
-// eight entries per list that came back, then the branded outro. Lists that
+// the entries of each list that came back, then the branded outro. Lists that
 // came back empty are skipped entirely, lead-in and all.
 async function buildYearSlides(snapshot) {
   const y = project.year;
@@ -1055,6 +1102,92 @@ async function buildYearSlides(snapshot) {
   return { sections, entries };
 }
 
+// Renumber the year lists and redraw. Every edit that moves an entry slide
+// (insert, delete, drag) goes through here, so a "#4" on screen always means
+// fourth in its section.
+function reRankAndRender() {
+  if (project?.format === 'year') slides = renumberYearEntries(slides);
+  render();
+  markDirty();
+}
+
+// Slip a missed film into a list. `title` is required; `value` is the number
+// line ("8.7 on IMDb", "$210M worldwide") and may be blank. The new slide is
+// the same generated card as its neighbours, so it takes a poster the same way
+// and carries the same image-search link.
+async function insertYearEntry(index, { title, value }) {
+  const list = slides[index]?.entry?.list || slides[index]?.section || 'rated';
+  const bitmap = await makeCardBitmap({
+    heading: title, sub: value || String(project.year || ''), accent: YEAR_ACCENT,
+  });
+  const slide = {
+    id: String(nextId++), bitmap, blob: null,
+    // The rank here is a placeholder; renumbering below assigns the real one.
+    caption: captionForYearEntry({ rank: 1, title, value, note: '' }),
+    grabHint: '', fontScale: 1,
+    entry: { list, rank: 1, title, value, note: '' },
+  };
+  slides = [...slides.slice(0, index + 1), slide, ...slides.slice(index + 1)];
+  reRankAndRender();
+}
+
+// The inline "add a film here" form, opened from a slide's toolbar. Kept inside
+// the slide's <li> so the insertion point is unambiguous.
+function openInsertForm(li, index) {
+  if (li.querySelector('[data-insert-form]')) return;
+  const form = document.createElement('div');
+  form.dataset.insertForm = '1';
+  form.className = 'mt-2 flex flex-wrap items-center gap-1 rounded-lg border border-violet-400/40 bg-neutral-950 p-2';
+
+  const titleIn = document.createElement('input');
+  titleIn.placeholder = 'Film we missed';
+  titleIn.maxLength = 120;
+  titleIn.className = 'min-w-0 flex-[2] basis-40 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-sm text-neutral-100 placeholder:text-neutral-600';
+
+  const valueIn = document.createElement('input');
+  valueIn.placeholder = 'e.g. 8.7 on IMDb';
+  valueIn.maxLength = 44;
+  valueIn.className = 'min-w-0 flex-1 basis-28 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-sm text-neutral-100 placeholder:text-neutral-600';
+
+  const add = document.createElement('button');
+  add.className = 'rounded-md bg-violet-500 px-3 py-1 text-xs font-bold text-neutral-950 hover:bg-violet-400 disabled:opacity-40';
+  add.textContent = 'Add';
+  const cancel = document.createElement('button');
+  cancel.className = 'rounded-md bg-neutral-800 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-700';
+  cancel.textContent = 'Cancel';
+
+  // A form inside a draggable <li> loses text selection to the drag handler.
+  [titleIn, valueIn].forEach((f) => {
+    f.addEventListener('pointerdown', () => { li.draggable = false; });
+    f.addEventListener('blur', () => { li.draggable = true; });
+  });
+
+  const submit = async () => {
+    const title = titleIn.value.trim();
+    if (!title) { titleIn.focus(); return; }
+    if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides — delete one first.`; return; }
+    add.disabled = true;
+    try {
+      await insertYearEntry(index, { title, value: valueIn.value.trim() });
+      els.status.textContent = `Added ${title}. The list renumbered itself, so check the ranks below it.`;
+    } catch (err) {
+      console.error('[tik] insert entry failed:', err);
+      els.status.textContent = 'Couldn’t add that slide.';
+      add.disabled = false;
+    }
+  };
+  add.addEventListener('click', submit);
+  cancel.addEventListener('click', () => { form.remove(); li.draggable = true; });
+  form.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); form.remove(); li.draggable = true; }
+  });
+
+  form.append(titleIn, valueIn, add, cancel);
+  li.append(form);
+  titleIn.focus();
+}
+
 // Look up a year, then build its slides. Re-running on a project that already
 // has slides replaces them (the snapshot is kept either way, so "Rebuild" can
 // re-run the slide build without spending another AI call).
@@ -1068,31 +1201,34 @@ els.yearLookup.addEventListener('click', async () => {
     project.year = y;
     project.minVotes = minVotesFromInput();
     project.imdbPaste = els.imdbPaste.value;
+    project.mojoPaste = els.mojoPaste.value;
     if (!project.name) { project.name = String(y); els.projectName.value = String(y); }
     syncPostDefaults();
     markDirty(); // persist the year/draft even if the lookup fails
     const ticket = project.id; // bail if the user opens another project mid-job
 
-    // A paste makes the rated list the user's data, not the model's: it goes
-    // out as a fixed list and comes back with notes attached.
-    const parsed = pastedRated();
-    const given = toRatedEntries(parsed, YEAR_LIST_SIZE);
-    els.status.textContent = given.length
-      ? `Looking up ${y} from your ${given.length} IMDb titles…`
+    // A paste makes that list the user's data, not the model's: it goes out as
+    // a fixed list and comes back with only notes attached.
+    const givenRated = toRatedEntries(pastedRated(), YEAR_LIST_SIZE);
+    const givenBox = toGrossEntries(pastedGross(), YEAR_LIST_SIZE);
+    const pastedCount = givenRated.length + givenBox.length;
+    els.status.textContent = pastedCount
+      ? `Looking up ${y} from your ${pastedCount} pasted titles…`
       : `Looking up ${y}…`;
 
     // A paste is data we already hold, so an AI failure must not throw it away:
-    // fall back to a rated-only snapshot built entirely from what was pasted.
+    // fall back to a snapshot built entirely from what was pasted.
     let snapshot;
     let aiFailed = '';
     try {
       snapshot = await fetchYearSnapshot({
-        year: y, minVotes: project.minVotes, ratedGiven: given,
+        year: y, count: YEAR_LIST_SIZE, minVotes: project.minVotes,
+        ratedGiven: givenRated, boxofficeGiven: givenBox,
         onProgress: (m) => { els.status.textContent = `Looking up ${y} — ${m}`; },
       });
     } catch (err) {
-      if (!given.length) throw err;
-      console.warn('[tik] year lookup failed; building from the IMDb paste alone', err);
+      if (!pastedCount) throw err;
+      console.warn('[tik] year lookup failed; building from your pasted lists alone', err);
       snapshot = { intro: '', rated: [], boxoffice: [] };
       aiFailed = err.message;
     }
@@ -1101,19 +1237,9 @@ els.yearLookup.addEventListener('click', async () => {
     // Belt and braces: the prompt says copy the pasted titles and values
     // verbatim, and this makes sure of it. The model's notes are matched by
     // title, then by position, so a reordered or renamed reply can't shuffle
-    // the ranking the user pulled off IMDb.
-    if (given.length) {
-      const byTitle = new Map();
-      for (const r of snapshot.rated || []) {
-        const k = String(r.title || '').toLowerCase();
-        if (!byTitle.has(k)) byTitle.set(k, r);
-      }
-      snapshot.rated = given.map((g, i) => ({
-        ...g,
-        note: (byTitle.get(g.title.toLowerCase()) || (snapshot.rated || [])[i])?.note || '',
-      }));
-      snapshot.ratedFromPaste = true;
-    }
+    // the ranking the user pulled off the source site.
+    applyGivenList(snapshot, 'rated', givenRated);
+    applyGivenList(snapshot, 'boxoffice', givenBox);
     project.snapshot = snapshot;
     renderYearSummary();
     const { sections, entries } = await buildYearSlides(snapshot);
@@ -1140,14 +1266,18 @@ els.yearInput.addEventListener('keydown', (e) => {
 
 // The year and the vote floor both feed the IMDb link, so it re-points as they
 // change rather than going stale behind a collapsed <details>.
-els.yearInput.addEventListener('input', refreshImdbLink);
+els.yearInput.addEventListener('input', refreshSourceLinks);
 els.minVotes.addEventListener('input', () => {
-  refreshImdbLink();
+  refreshSourceLinks();
   if (project) { project.minVotes = minVotesFromInput(); markDirty(); }
 });
 els.imdbPaste.addEventListener('input', () => {
   refreshImdbPasteNote();
   if (project) { project.imdbPaste = els.imdbPaste.value; markDirty(); }
+});
+els.mojoPaste.addEventListener('input', () => {
+  refreshMojoPasteNote();
+  if (project) { project.mojoPaste = els.mojoPaste.value; markDirty(); }
 });
 
 // Rebuild from the snapshot already on the project — no AI call, so it's the
@@ -1429,7 +1559,16 @@ function renderSlide(slide, index) {
     photoSearch.append(iconSpan('image_search', 'text-[16px]'), document.createTextNode(isYear ? 'Find images' : 'Find photos'));
   }
 
-  toolbar.append(pickBtn, ...(photoSearch ? [photoSearch] : []), fontDown, fontUp);
+  // Year Snapshot: slip a film in below this one. Offered on entry slides and
+  // on the lead-in slide (so a missed #1 can go straight to the top of a list),
+  // because ordering alone can't recover a film that was never in the list.
+  let insertBtn = null;
+  if (project?.format === 'year' && (slide.entry || slide.kind === 'section')) {
+    insertBtn = tbBtn('playlist_add', 'Add film below', 'Insert a film we missed, directly below this slide', 'text-violet-300');
+    insertBtn.addEventListener('click', () => openInsertForm(li, index));
+  }
+
+  toolbar.append(pickBtn, ...(photoSearch ? [photoSearch] : []), ...(insertBtn ? [insertBtn] : []), fontDown, fontUp);
 
   if (isTrivia) {
     // Two AI actions, no prompt: one rewrites this fact, the other creates a
@@ -1530,8 +1669,7 @@ function renderSlide(slide, index) {
   del.addEventListener('click', () => {
     slides = removeSlide(slides, slide.id);
     if (slide.id === editingId) resetEditState(); // don't leave edit mode dangling
-    render();
-    markDirty();
+    reRankAndRender(); // the films below just moved up a place
   });
 
   row.append(thumb, mid, del);
@@ -1552,8 +1690,7 @@ function renderSlide(slide, index) {
     const to = Number(li.dataset.index);
     if (dragFrom !== null && dragFrom !== to) {
       slides = reorderSlide(slides, dragFrom, to);
-      render();
-      markDirty();
+      reRankAndRender(); // dragging changes ranks, and can change sections
     }
     dragFrom = null;
   });

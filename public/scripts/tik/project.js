@@ -2,6 +2,10 @@
 // copy, slide-caption formatting, relative timestamps. No DOM/IDB here —
 // unit-tested under node:test like the other pure modules.
 
+// How many films per list. The client sends this to the agent, so the number
+// in the prompt, on the section cards, and in the captions can never disagree.
+export const YEAR_LIST_SIZE = 10;
+
 export const FORMATS = {
   trivia: {
     key: 'trivia',
@@ -24,7 +28,7 @@ export const FORMATS = {
   year: {
     key: 'year',
     label: 'Year Snapshot',
-    tagline: 'One year’s top eight rated, grossing, and rented',
+    tagline: `One year’s top ${YEAR_LIST_SIZE} rated and top ${YEAR_LIST_SIZE} grossing`,
     icon: 'calendar_month',
     accent: 'violet',
     chip: 'bg-violet-400/15 text-violet-300',
@@ -35,8 +39,8 @@ export const FORMATS = {
 // The ranked lists in a Year Snapshot, in slide order. `key` matches the key
 // the agent returns; `heading` is the big line on the section slide's card.
 export const YEAR_LISTS = [
-  { key: 'rated', label: 'Top rated', heading: 'Top 8 Rated', search: 'best movies' },
-  { key: 'boxoffice', label: 'Box office', heading: 'Top 8 Box Office', search: 'box office hits' },
+  { key: 'rated', label: 'Top rated', heading: `Top ${YEAR_LIST_SIZE} Rated`, search: 'best movies' },
+  { key: 'boxoffice', label: 'Box office', heading: `Top ${YEAR_LIST_SIZE} Box Office`, search: 'box office hits' },
 ];
 
 export function formatOf(project) {
@@ -64,6 +68,7 @@ export function makeProject({ id, format, now }) {
     year: null,                // the four-digit year being snapshotted
     minVotes: null,            // IMDb vote floor for the rated list
     imdbPaste: '',             // the user's own IMDb results, when they pasted them
+    mojoPaste: '',             // the user's own Box Office Mojo rows, likewise
     snapshot: null,            // { intro, rated[], boxoffice[] } from the agent
     // Post details (editable; regenerated from defaults until postEdited):
     postTitle: '',
@@ -128,15 +133,21 @@ export function captionForRole(role, blurb = '') {
   return `${role.movie}${year}${body ? `\n${body}` : ''}`;
 }
 
-// Year Snapshot: the lead-in slide that announces each top-eight list. Worded
-// exactly as it reads on screen, so the section is unmistakable mid-scroll.
+// Year Snapshot: the lead-in slide that announces each list. Worded exactly as
+// it reads on screen, so the section is unmistakable mid-scroll. The count is
+// spelled out ("top ten") and derived from YEAR_LIST_SIZE, so changing the list
+// length can't leave the slides saying the wrong number.
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+export function numberWord(n) {
+  return NUMBER_WORDS[n] || String(n);
+}
 const SECTION_CAPTIONS = {
-  rated: (y) => `These are the top eight rated movies of ${y}.`,
-  boxoffice: (y) => `These are the top eight box office numbers of ${y}.`,
+  rated: (y, w) => `These are the top ${w} rated movies of ${y}.`,
+  boxoffice: (y, w) => `These are the top ${w} box office numbers of ${y}.`,
 };
-export function sectionCaption(listKey, year) {
+export function sectionCaption(listKey, year, count = YEAR_LIST_SIZE) {
   const fn = SECTION_CAPTIONS[listKey];
-  return fn ? fn(year) : '';
+  return fn ? fn(year, numberWord(count)) : '';
 }
 
 // Year Snapshot slide caption: rank + title, the number line, then the note.
@@ -145,6 +156,33 @@ export function captionForYearEntry(entry) {
   if (!entry?.title) return '';
   const head = `#${entry.rank || 1} ${entry.title}`;
   return [head, (entry.value || '').trim(), (entry.note || '').trim()].filter(Boolean).join('\n');
+}
+
+// Re-rank a Year Snapshot's entry slides from their positions. Run after any
+// insert, delete, or drag so the "#4" printed on a slide always matches where
+// it actually sits — otherwise slipping a missed film into the middle leaves
+// every number below it lying.
+//
+// Position is the authority, not the stored rank: an entry dragged under a
+// different section slide is adopted by that section. Only the "#N" token at
+// the head of the caption is rewritten, so hand-edited wording survives.
+export function renumberYearEntries(slides) {
+  let list = null;
+  let n = 0;
+  return (slides || []).map((s) => {
+    if (s?.kind === 'section') { list = s.section || null; n = 0; return s; }
+    // The opener and the outro bracket the lists; neither sits inside one.
+    if (s?.kind === 'title' || s?.kind === 'outro') { list = null; n = 0; return s; }
+    if (!s?.entry) return s;
+    n += 1;
+    const rank = n;
+    const entryList = list || s.entry.list || null;
+    if (s.entry.rank === rank && s.entry.list === entryList) return s;
+    const caption = typeof s.caption === 'string' && /^#\d+(?=\s|$)/.test(s.caption)
+      ? s.caption.replace(/^#\d+/, `#${rank}`)
+      : s.caption;
+    return { ...s, caption, entry: { ...s.entry, rank, list: entryList } };
+  });
 }
 
 // The Google Images query for a slide, or '' when the slide has no subject

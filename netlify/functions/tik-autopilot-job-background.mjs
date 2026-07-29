@@ -10,7 +10,7 @@
 // - 'trivia' (default): movie trivia suggestions → { suggestions }
 // - 'roles': an actor's memorable cult roles      → { roles }
 // - 'blurbs': slide blurbs for picked roles       → { intro, blurbs }
-// - 'year': one year's two top-eight lists        → { intro, rated, boxoffice }
+// - 'year': one year's two ranked lists           → { intro, rated, boxoffice }
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, normalizeSuggestions, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
@@ -55,7 +55,7 @@ export default async (req) => {
     jobId, kind = 'trivia',
     title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide,
     actor, roles,
-    minVotes, ratedGiven,
+    minVotes, ratedGiven, boxofficeGiven,
     model: requested,
   } = body;
   if (!jobId || !/^[a-zA-Z0-9-]{8,64}$/.test(jobId)) {
@@ -91,7 +91,7 @@ export default async (req) => {
       prompt = buildBlurbsPrompt({ actor, roles, exclude });
     } else if (kind === 'year') {
       prompt = buildYearPrompt({
-        year, count: Number(count) || LIST_COUNT, minVotes, ratedGiven,
+        year, count: Number(count) || LIST_COUNT, minVotes, ratedGiven, boxofficeGiven,
         sourceMaterial: source?.text || '', sourceName: source?.pageTitle || '',
       });
     } else {

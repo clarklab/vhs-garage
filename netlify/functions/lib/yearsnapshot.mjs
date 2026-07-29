@@ -9,7 +9,7 @@
 // server-side fetches, so that paste is the only route to verified numbers.
 import { stripDashes } from './autopilot.mjs';
 
-export const LIST_COUNT = 8;      // "top eight" — the whole point of the format
+export const LIST_COUNT = 10;     // "top ten" — the client sends its own count too
 export const YEAR_MIN = 1930;     // before this there is no meaningful chart data
 export const YEAR_MAX = 2035;
 export const DEFAULT_MIN_VOTES = 100_000; // IMDb vote floor, matching the search UI
@@ -49,25 +49,40 @@ function commas(n) {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-// `ratedGiven` is the user's own IMDb search results, pasted in. When present
-// the rated list stops being a recall task: the titles, order, and ratings are
-// FIXED, and the model only writes the note for each.
-export function buildYearPrompt({ year, count = LIST_COUNT, minVotes = DEFAULT_MIN_VOTES, ratedGiven = [], sourceMaterial = '', sourceName = '' }) {
+// A list the user pasted in from the source site is authoritative: the titles,
+// order, and figures are FIXED and the model only writes the notes.
+function fixedListBlock(n, key, given, provenance) {
+  return `${n}. "${key}": FIXED. ${provenance} It is authoritative. Return these EXACT titles, in this EXACT order, copying each "value" verbatim. Do not add titles, drop titles, reorder them, correct them, or adjust a figure, even if you believe one is wrong. Your only job on this list is writing each "note".
+<given_${key}>
+${given.map((r, i) => `${i + 1}. ${r.title} | value: ${r.value || ''}`).join('\n')}
+</given_${key}>`;
+}
+
+// `ratedGiven` / `boxofficeGiven` are the user's own chart results, pasted from
+// IMDb and Box Office Mojo. Either list present switches that list from recall
+// to FIXED; the other still comes from the model.
+export function buildYearPrompt({
+  year, count = LIST_COUNT, minVotes = DEFAULT_MIN_VOTES,
+  ratedGiven = [], boxofficeGiven = [],
+  sourceMaterial = '', sourceName = '',
+}) {
   const y = normalizeYearInput(year) ?? YEAR_MIN;
   const floor = commas(normalizeMinVotes(minVotes));
-  const given = (Array.isArray(ratedGiven) ? ratedGiven : []).filter((r) => r?.title).slice(0, count);
+  const clean = (rows) => (Array.isArray(rows) ? rows : []).filter((r) => r?.title).slice(0, count);
+  const rated = clean(ratedGiven);
+  const box = clean(boxofficeGiven);
 
   const sourceBlock = String(sourceMaterial || '').trim()
     ? `\n\nREFERENCE MATERIAL${sourceName ? ` (Wikipedia: "${sourceName}")` : ''} about this year in film is below. Prefer facts grounded in it over memory, but do not treat gaps in it as evidence that something did not happen.\n<source_material>${String(sourceMaterial).trim().slice(0, 12000)}</source_material>`
     : '';
 
-  // Two modes for list 1, depending on whether the user brought real data.
-  const ratedBlock = given.length
-    ? `1. "rated": FIXED. The user pulled this list straight off IMDb, sorted by user rating with a floor of ${floor} votes, and it is authoritative. Return these EXACT titles, in this EXACT order, copying each "value" verbatim. Do not add titles, drop titles, reorder them, correct them, or adjust a rating, even if you believe one is wrong. Your only job on this list is writing each "note".
-<imdb_results>
-${given.map((r, i) => `${i + 1}. ${r.title} | value: ${r.value || ''}`).join('\n')}
-</imdb_results>`
+  const ratedBlock = rated.length
+    ? fixedListBlock(1, 'rated', rated, `The user pulled this list straight off IMDb, sorted by user rating with a floor of ${floor} votes.`)
     : `1. "rated": the ${count} highest IMDb-rated feature films RELEASED in ${y}. Rank by IMDb user rating, counting ONLY films with at least ${floor} votes, the way IMDb's own advanced search does when you set a vote floor. That floor matters: without it, obscure titles with a handful of ratings crowd out the real entries. Each entry's "value" is the rating written as "9.3 on IMDb". Ratings drift over time, so give the rating you are most confident is close to current.`;
+
+  const boxBlock = box.length
+    ? fixedListBlock(2, 'boxoffice', box, 'The user pulled this list straight off Box Office Mojo\'s yearly worldwide chart.')
+    : `2. "boxoffice": the ${count} highest-grossing films of ${y} by WORLDWIDE box office for that release year. Each entry's "value" is the gross written short, like "$1.05B worldwide" or "$306M worldwide". If you are only confident about the domestic number, write it as "$306M domestic" instead.`;
 
   return `You are researching a "Year Snapshot" TikTok photo slideshow for VHS Garage: a look back at how ONE year did at the movies, for film fans who grew up renting tapes.
 
@@ -77,7 +92,7 @@ Produce TWO ranked lists about ${y}, each with exactly ${count} entries in rank 
 
 ${ratedBlock}
 
-2. "boxoffice": the ${count} highest-grossing films of ${y} by WORLDWIDE box office for that release year. Each entry's "value" is the gross written short, like "$1.05B worldwide" or "$306M worldwide". If you are only confident about the domestic number, write it as "$306M domestic" instead.
+${boxBlock}
 
 These are among the best documented films ever made, so both lists are normally answerable. Fill them.
 

@@ -75,10 +75,35 @@ test('buildYearPrompt fixes the rated list when the user pasted IMDb results', (
   assert.match(p, /"rated": FIXED/);
   assert.match(p, /1\. The Shawshank Redemption \| value: 9\.3 on IMDb/);
   assert.match(p, /2\. Pulp Fiction \| value: 8\.9 on IMDb/);
-  assert.match(p, /Do not add titles, drop titles, reorder them, correct them, or adjust a rating/);
+  assert.match(p, /Do not add titles, drop titles, reorder them, correct them, or adjust a figure/);
   assert.match(p, /only job on this list is writing each "note"/);
   // The recall instructions must be gone, or the model gets two contradictory briefs.
   assert.doesNotMatch(p, /highest IMDb-rated feature films RELEASED/);
+  // Pinning one list must leave the other on recall.
+  assert.match(p, /"boxoffice": the \d+ highest-grossing films/);
+});
+
+test('buildYearPrompt fixes the box office list independently of the rated one', () => {
+  const p = buildYearPrompt({ year: 1994, boxofficeGiven: [{ title: 'The Lion King', value: '$968M worldwide' }] });
+  assert.match(p, /"boxoffice": FIXED/);
+  assert.match(p, /Box Office Mojo/);
+  assert.match(p, /1\. The Lion King \| value: \$968M worldwide/);
+  assert.doesNotMatch(p, /highest-grossing films of 1994 by WORLDWIDE/);
+  // The rated list stays on recall.
+  assert.match(p, /highest IMDb-rated feature films RELEASED/);
+  assert.doesNotMatch(p, /"rated": FIXED/);
+});
+
+test('buildYearPrompt can fix both lists at once', () => {
+  const p = buildYearPrompt({
+    year: 1994,
+    ratedGiven: [{ title: 'A', value: '9.3 on IMDb' }],
+    boxofficeGiven: [{ title: 'B', value: '$1B worldwide' }],
+  });
+  assert.match(p, /"rated": FIXED/);
+  assert.match(p, /"boxoffice": FIXED/);
+  assert.doesNotMatch(p, /highest IMDb-rated feature films RELEASED/);
+  assert.doesNotMatch(p, /highest-grossing films of 1994 by WORLDWIDE/);
 });
 
 test('buildYearPrompt drops titleless given entries and caps them at the count', () => {
