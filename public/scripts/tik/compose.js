@@ -20,9 +20,7 @@ const PILL_PAD_X = 26;             // pill padding around each line
 const PILL_PAD_Y = 12;
 const PILL_RADIUS = 18;
 const PILL_GAP = 8;                // vertical gap between line pills
-// Fill mode (bring-your-own-image formats) keeps only a thin margin, and none
-// at all when there's no caption — a pre-composed image should reach the edges.
-const FILL_VPAD = 40;
+const FIT_VPAD = 40;               // margin above/below the group in ratio mode
 
 // Rounded-rect path (fallback-safe: not all canvas impls have ctx.roundRect).
 function pillPath(ctx, x, y, w, h, r) {
@@ -41,12 +39,16 @@ function pillPath(ctx, x, y, w, h, r) {
 // bitmap: ImageBitmap; caption: string; titleLine?: prefix; scale?: raster scale;
 // fontScale?: per-slide caption sizing (1 = auto; the overflow guard still caps
 // scale-up, and scale-down goes below the usual minimum).
-// fillFrame: give the image every pixel the caption doesn't need, instead of
-// the fixed 60%-of-canvas cap. For a format where the user pastes one composed
-// image per slide, that cap shrank a poster to a third of the canvas with black
-// bars down both sides; with no caption at all the image now goes full bleed.
-export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, fillFrame = false } = {}) {
+// maxFrameHeightRatio: bound the image by HEIGHT only, as a fraction of the
+// canvas, and let the width run to the full canvas when the aspect allows. A
+// square or widescreen image goes full width; a tall one is held back so it
+// can't push the caption down the slide. The whole image is always visible —
+// this is a contain fit, never a crop.
+export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null } = {}) {
   const fs = Math.min(Math.max(Number(fontScale) || 1, 0.5), 1.6);
+  const heightRatio = Number.isFinite(maxFrameHeightRatio)
+    ? Math.min(Math.max(maxFrameHeightRatio, 0.05), 1)
+    : null;
   const maxFont = Math.round(MAX_FONT * fs);
   const minFont = Math.max(12, Math.round(MIN_FONT * fs));
   cvs.width = Math.round(CANVAS_W * scale);
@@ -74,21 +76,26 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   let lines = [];
   let F;
 
-  if (fillFrame) {
-    // Caption first, at its natural size, then the image claims what's left.
-    // The order is the whole point: sizing the frame first is what forced a
-    // 60% cap, and the cap is what shrank pasted artwork.
+  if (heightRatio !== null) {
+    // Caption first at its natural size, so a long one still claws back room
+    // from the image rather than running off the bottom.
     if (fullText) {
       lines = wrapAt(fontSize);
-      // A caption still can't take more than half the slide.
       while (fontSize > minFont && blockH(lines.length, fontSize) > CANVAS_H / 2) {
         fontSize -= 2;
         lines = wrapAt(fontSize);
       }
     }
     const capH = lines.length ? blockH(lines.length, fontSize) : 0;
-    const pad = capH ? FILL_VPAD : 0; // no caption → edge to edge
-    const availH = Math.max(1, CANVAS_H - pad * 2 - (capH ? GAP + capH : 0));
+    // Two ceilings: the caller's height cap (the usual binding one) and
+    // whatever the caption leaves over (binding only for very long captions).
+    const availH = Math.max(
+      1,
+      Math.min(
+        Math.round(CANVAS_H * heightRatio),
+        CANVAS_H - FIT_VPAD * 2 - (capH ? GAP + capH : 0),
+      ),
+    );
     F = containFrame(bitmap.width, bitmap.height, CANVAS_W, availH);
   } else {
     // Frame size: full width, aspect preserved, capped so text always has room.

@@ -30,47 +30,48 @@ test('very tall source is capped so the band survives, frame centered horizontal
 });
 
 // ---- containFrame: bring-your-own-image formats ----
-// The whole image must be visible, so this is a "contain" fit: it never crops
-// and never stretches. The caller decides how much room to offer.
+// The whole image must be visible, so this is a "contain" fit: never cropped,
+// never stretched. Callers bound it by HEIGHT and leave the width free, so a
+// square or widescreen image runs full width while a tall one is held back
+// from pushing the caption down the slide.
 
-test('containFrame fills the width when the image is wide enough to allow it', () => {
-  // 16:9 into a full-canvas budget.
-  assert.deepEqual(containFrame(1920, 1080, 1080, 1920), { w: 1080, h: 608 });
-  // Square.
-  assert.deepEqual(containFrame(1000, 1000, 1080, 1920), { w: 1080, h: 1080 });
+const CAP_H = Math.round(CANVAS_H * 0.6); // the Year Snapshot bound: 1152
+
+test('containFrame lets square and widescreen images run the full width', () => {
+  assert.deepEqual(containFrame(1080, 1080, CANVAS_W, CAP_H), { w: 1080, h: 1080 });
+  assert.deepEqual(containFrame(1920, 1080, CANVAS_W, CAP_H), { w: 1080, h: 608 });
+  assert.deepEqual(containFrame(2400, 900, CANVAS_W, CAP_H), { w: 1080, h: 405 });
 });
 
-test('containFrame shows a whole poster far larger than the 60% cap did', () => {
-  // A 2:3 poster with the full canvas to work with.
-  const full = containFrame(1000, 1500, 1080, 1920);
-  assert.deepEqual(full, { w: 1080, h: 1620 });
-  // What the old fixed cap produced, for contrast: 768x1152.
-  const capped = computeSlideLayout(1000, 1500).frame;
-  assert.ok(full.w > capped.w && full.h > capped.h, 'contain must beat the fixed cap');
-  // Aspect ratio is preserved either way — the image is scaled, never cropped.
-  assert.ok(Math.abs(full.h / full.w - 1500 / 1000) < 0.01);
+test('containFrame holds tall images to the height bound', () => {
+  // 2:3 poster and a 9:16 composed image both stop at the cap, not the width.
+  const poster = containFrame(1000, 1500, CANVAS_W, CAP_H);
+  assert.equal(poster.h, CAP_H);
+  assert.equal(poster.w, 768);
+  const tall = containFrame(1080, 1920, CANVAS_W, CAP_H);
+  assert.equal(tall.h, CAP_H);
+  assert.equal(tall.w, 648);
+  // Both are narrower than the canvas, which is the point of bounding height.
+  assert.ok(poster.w < CANVAS_W && tall.w < CANVAS_W);
 });
 
-test('containFrame takes a pre-composed 9:16 image edge to edge', () => {
-  assert.deepEqual(containFrame(1080, 1920, 1080, 1920), { w: 1080, h: 1920 });
-  // Same image with room reserved for a caption: still whole, just smaller.
-  const withCaption = containFrame(1080, 1920, 1080, 1500);
-  assert.equal(withCaption.h, 1500);
-  assert.ok(withCaption.w < 1080);
-  assert.ok(Math.abs(withCaption.h / withCaption.w - 1920 / 1080) < 0.01);
+test('containFrame preserves the source aspect ratio in every direction', () => {
+  for (const [w, h] of [[1000, 1500], [1080, 1920], [1080, 1080], [1920, 1080], [2400, 900], [500, 2000]]) {
+    const box = containFrame(w, h, CANVAS_W, CAP_H);
+    assert.ok(Math.abs(box.h / box.w - h / w) < 0.01, `aspect drifted for ${w}x${h}`);
+    assert.ok(box.w <= CANVAS_W && box.h <= CAP_H, `${w}x${h} overflowed its box`);
+  }
 });
 
-test('containFrame is height-bound for tall images and width-bound for wide ones', () => {
-  const tall = containFrame(500, 2000, 1080, 1920);   // ar 4.0
-  assert.equal(tall.h, 1920);
-  assert.equal(tall.w, 480);
-  const wide = containFrame(4000, 500, 1080, 1920);   // ar 0.125
-  assert.equal(wide.w, 1080);
-  assert.equal(wide.h, 135);
+test('containFrame shrinks further when the caller offers less room', () => {
+  // A long caption leaves less than the height cap; the image gives way to it.
+  const squeezed = containFrame(1000, 1500, CANVAS_W, 850);
+  assert.equal(squeezed.h, 850);
+  assert.ok(squeezed.w < 768);
 });
 
 test('containFrame survives junk dimensions instead of returning NaN', () => {
-  for (const box of [containFrame(0, 0, 1080, 1920), containFrame(NaN, undefined, 1080, 1920)]) {
+  for (const box of [containFrame(0, 0, CANVAS_W, CAP_H), containFrame(NaN, undefined, CANVAS_W, CAP_H)]) {
     assert.ok(Number.isFinite(box.w) && Number.isFinite(box.h));
     assert.ok(box.w > 0 && box.h > 0);
   }
