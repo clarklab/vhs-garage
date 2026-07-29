@@ -32,7 +32,7 @@ export const FORMATS = {
     icon: 'calendar_month',
     accent: 'violet',
     chip: 'bg-violet-400/15 text-violet-300',
-    editorHint: 'Click a slide, then paste, drop, or pick the poster. Every slide has a one-click image search. Drag to reorder.',
+    editorHint: 'Click a slide, then paste, drop, or pick one image for it — it’s shown whole, so composed artwork lands as you made it. Drag to reorder.',
   },
 };
 
