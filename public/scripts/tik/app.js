@@ -937,17 +937,47 @@ function minVotesFromInput() {
   return Number.isFinite(n) && n >= 0 ? Math.min(n, 10_000_000) : DEFAULT_MIN_VOTES;
 }
 
-// Keep the source links pointed at the current year + floor, so the list the
-// user sees is the list the slides will be built from.
-function refreshSourceLinks() {
-  const y = yearFromInput();
-  els.imdbSearchLink.href = imdbSearchUrl(y || 1994, minVotesFromInput());
-  els.imdbSearchLink.title = y
-    ? `IMDb ${y} features, rated highest first, ${minVotesFromInput().toLocaleString()}+ votes`
-    : 'Enter a year first';
-  els.mojoLink.href = y ? boxOfficeMojoUrl(y) : 'https://www.boxofficemojo.com/year/world/';
-  els.mojoLink.title = y ? `Box Office Mojo ${y} worldwide chart` : 'Enter a year first';
+// The year in play: what's typed, or failing that what this project was last
+// looked up for. The box can be empty in a reopened project while the snapshot
+// is not, and a chart link is useless if it forgets which year it is for.
+function currentYear() {
+  return yearFromInput() ?? (Number.isInteger(project?.year) ? project.year : null);
 }
+
+// Keep the source links pointed at the current year + floor. This is only for
+// what the user sees on hover: the href that actually gets followed is rebuilt
+// on click (see wireSourceLink), so no missed event can send them to the wrong
+// year's chart.
+function refreshSourceLinks() {
+  const y = currentYear();
+  const floor = minVotesFromInput();
+  els.imdbSearchLink.href = y ? imdbSearchUrl(y, floor) : '#';
+  els.imdbSearchLink.title = y
+    ? `IMDb ${y} features, rated highest first, ${floor.toLocaleString()}+ votes`
+    : 'Enter a year first';
+  els.mojoLink.href = y ? boxOfficeMojoUrl(y) : '#';
+  els.mojoLink.title = y ? `Box Office Mojo ${y} worldwide chart` : 'Enter a year first';
+  for (const el of [els.imdbSearchLink, els.mojoLink]) el.classList.toggle('opacity-50', !y);
+}
+
+// Rebuild a chart link's href in the click handler, immediately before the
+// browser follows it. Deriving it from an 'input' event alone meant any path
+// that set the year without one (reopening a project, autofill, a programmatic
+// fill) left a stale link pointing at the wrong year, or at no year at all.
+function wireSourceLink(el, build) {
+  el.addEventListener('click', (e) => {
+    const y = currentYear();
+    if (!y) {
+      e.preventDefault();
+      els.status.textContent = 'Enter a year first, then open the chart.';
+      els.yearInput.focus();
+      return;
+    }
+    el.href = build(y);
+  });
+}
+wireSourceLink(els.imdbSearchLink, (y) => imdbSearchUrl(y, minVotesFromInput()));
+wireSourceLink(els.mojoLink, (y) => boxOfficeMojoUrl(y));
 
 // What each paste box currently yields. Told separately from "what the agent
 // will do with it" so the notes can say which path is live.
