@@ -23,6 +23,8 @@ import {
   parseGrossList, toGrossEntries, boxOfficeMojoUrl, formatGross,
 } from './charts.js';
 import { fetchFollowerStats, renderFollowerChart, fmtCount } from './stats.js';
+// Batch mode (beta) owns its own screen end to end; this file only shows it.
+import { initBatch, refreshBatch } from './batch.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -30,9 +32,10 @@ const els = {
   authBtn: $('auth-btn'), authStatus: $('auth-status'),
   saveState: $('save-state'), saveDot: $('save-dot'), saveLabel: $('save-label'),
   // screens
-  home: $('screen-home'), editor: $('screen-editor'),
+  home: $('screen-home'), editor: $('screen-editor'), batch: $('screen-batch'),
   // home
   newTrivia: $('new-trivia'), newGuys: $('new-guys'), newYear: $('new-year'),
+  newBatch: $('new-batch'),
   grid: $('project-grid'), libraryEmpty: $('library-empty'),
   statsCard: $('stats-card'), statsCount: $('stats-count'), statsDelta: $('stats-delta'),
   statsNote: $('stats-note'), statsPlot: $('stats-plot'), statsChart: $('stats-chart'), statsTip: $('stats-tip'),
@@ -259,6 +262,7 @@ function saveNow() {
 function showScreen(name) {
   els.home.classList.toggle('hidden', name !== 'home');
   els.editor.classList.toggle('hidden', name !== 'editor');
+  els.batch.classList.toggle('hidden', name !== 'batch');
 }
 
 async function teardownProject() {
@@ -527,6 +531,12 @@ async function renderLibrary() {
 els.newTrivia.addEventListener('click', () => { newProject('trivia').catch((e) => console.error('[tik] new project failed:', e)); });
 els.newGuys.addEventListener('click', () => { newProject('guys').catch((e) => console.error('[tik] new project failed:', e)); });
 els.newYear.addEventListener('click', () => { newProject('year').catch((e) => console.error('[tik] new project failed:', e)); });
+
+// ---- Batch mode (beta) ----
+// Its own screen, wired once. Leaving it returns to home the same way the
+// editor does, so the library picks up whatever drafts it wrote.
+initBatch({ onExit: () => { goHome().catch((e) => console.error('[tik] leaving batch failed:', e)); } });
+els.newBatch.addEventListener('click', () => { showScreen('batch'); refreshBatch(); });
 
 // ---- Followers card (home) ----
 // Current count from TikTok when signed in (snapshotted at most hourly);
