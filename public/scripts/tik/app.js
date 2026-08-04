@@ -25,6 +25,9 @@ import {
 import { fetchFollowerStats, renderFollowerChart, fmtCount } from './stats.js';
 // Batch mode (beta) owns its own screen end to end; this file only shows it.
 import { initBatch, refreshBatch } from './batch.js';
+// Remembered movie-file handles (batch mode's folder grant). Read-only here:
+// the editor offers a one-click reload when a reopened project's file is known.
+import { fsSupported, resolveMovie, armHandle } from './filestore.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -44,6 +47,7 @@ const els = {
   download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
   // trivia pane
   paneTrivia: $('pane-trivia'), file: $('file-input'), videoNote: $('video-note'),
+  videoReload: $('video-reload'), videoReloadLabel: $('video-reload-label'),
   video: $('video'), range: $('scrub-range'), timecode: $('timecode'),
   grab: $('grab-btn'), grabIcon: $('grab-icon'), grabLabel: $('grab-label'),
   cancelEdit: $('cancel-edit'),
@@ -288,6 +292,7 @@ async function teardownProject() {
   // project banner/autopilot state must not leak into the next project.
   els.file.value = '';
   els.videoNote.classList.add('hidden');
+  els.videoReload.classList.add('hidden');
   els.autopilot.disabled = true;
   els.autopilot.title = 'Load a video first';
   els.range.value = '0';
@@ -399,6 +404,7 @@ async function openProject(id) {
     els.status.textContent = withStorageWarning(slides.length
       ? 'Reopened from your library — captions, fonts, and posting all work; re-pick the movie file to grab new frames.'
       : 'Reopened — pick the movie file to start.');
+    offerRememberedReload(); // batch mode may know where this movie's file lives
   } else {
     els.status.textContent = withStorageWarning('Reopened from your library.');
   }
@@ -537,6 +543,50 @@ els.newYear.addEventListener('click', () => { newProject('year').catch((e) => co
 // editor does, so the library picks up whatever drafts it wrote.
 initBatch({ onExit: () => { goHome().catch((e) => console.error('[tik] leaving batch failed:', e)); } });
 els.newBatch.addEventListener('click', () => { showScreen('batch'); refreshBatch(); });
+
+// ---- Remembered movie file (batch mode's folder grant) ----
+// When a reopened trivia project's file is remembered (the movies folder, or a
+// past pick in batch mode), offer a one-click reload. The File is injected
+// into the normal file input via DataTransfer so the EXISTING change handler
+// does all the work — no second load path to keep in sync.
+async function offerRememberedReload() {
+  els.videoReload.classList.add('hidden');
+  try {
+    if (!fsSupported() || !project || project.format !== 'trivia' || videoReady) return;
+    const title = project.movie?.title;
+    if (!title) return;
+    const openedFor = project.id;
+    const res = await resolveMovie(title, project.movie?.year);
+    if (!res || project?.id !== openedFor) return;
+    els.videoReloadLabel.textContent = res.state === 'granted'
+      ? `Load ${res.label} again`
+      : `Unlock and load ${res.label}`;
+    els.videoReload.classList.remove('hidden');
+    els.videoReload.classList.add('flex');
+    els.videoReload.onclick = async () => {
+      try {
+        if (res.state !== 'granted' && !(await armHandle(res.armTarget))) return;
+        // Re-resolve after arming: a locked folder can only be searched now.
+        const armed = res.state === 'granted' ? res : await resolveMovie(title, project.movie?.year);
+        if (!armed || armed.state !== 'granted' || project?.id !== openedFor) return;
+        const file = await armed.load();
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        els.file.files = dt.files;
+        els.file.dispatchEvent(new Event('change', { bubbles: true }));
+        els.videoReload.classList.add('hidden');
+      } catch (e) {
+        console.error('[tik] remembered reload failed:', e);
+        els.status.textContent = 'Could not reload the remembered file — pick it by hand.';
+      }
+    };
+  } catch (e) {
+    // The offer is a convenience; a failure must never break reopening.
+    console.warn('[tik] remembered-file check failed:', e);
+  }
+}
+// A manual pick supersedes the offer.
+els.file.addEventListener('change', () => els.videoReload.classList.add('hidden'));
 
 // ---- Followers card (home) ----
 // Current count from TikTok when signed in (snapshotted at most hourly);
