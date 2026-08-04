@@ -8,6 +8,11 @@
 // Pure — no network, no DOM. Unit-tested.
 
 export const QUEUE_COUNT = 10;
+// Picking ten films with a reason for each takes a strong model longer than
+// Netlify's 10s sync-function ceiling, so the real work runs as a Background
+// Function and leaves its answer here for the browser to poll. Batch mode gets
+// its own store rather than sharing the autopilot's.
+export const QUEUE_JOBS_STORE = 'tik-queue-jobs';
 const WHY_MAX = 140;
 const MAX_HISTORY_ROWS = 60; // enough signal for the model without a huge prompt
 

@@ -29,6 +29,10 @@ import { getRefreshToken } from './auth.js';
 const $ = (id) => document.getElementById(id);
 const ACCENT = '#10b981';
 const MAX_QUEUE = 25;
+const QUEUE_POLL_MS = 2500;
+const QUEUE_POLL_MAX_MS = 4 * 60 * 1000; // the worker's own budget is 3 min
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let els = null;
 let queue = [];          // [{ key, title, year, why, imdbId, runtimeSeconds, pool, state, error, draftId }]
@@ -133,16 +137,13 @@ async function suggestMovies() {
         : 'Using this device\'s library. Connect post history for real view counts.';
     }
 
-    const res = await fetch('/.netlify/functions/tik-queue', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ history, posted, count: 10 }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `Queue failed (${res.status})`);
+    const picks = await runQueueJob({ history, posted, count: 10 });
 
     let added = 0;
-    for (const pick of data.picks || []) if (addToQueue(pick)) added++;
-    say(added ? `Queued ${added} movies.` : 'Nothing new to add — all of those are already queued.', added ? 'good' : 'idle');
+    for (const pick of picks) if (addToQueue(pick)) added++;
+    say(added
+      ? `Queued ${added} movie${added === 1 ? '' : 's'}.`
+      : 'Nothing new to add — all of those are already queued.', added ? 'good' : 'idle');
     render();
     prefetchPools(); // fills in the per-movie counts without the user clicking each one
   } catch (e) {
@@ -151,6 +152,65 @@ async function suggestMovies() {
   } finally {
     setBusy(false);
   }
+}
+
+// Kick the background worker and poll for its answer, the same shape autopilot
+// uses. The sync endpoint is only a fallback: choosing ten films runs past
+// Netlify's 10s ceiling, which is exactly how this 502'd the first time.
+async function runQueueJob(params) {
+  const jobId = crypto.randomUUID?.() ??
+    Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+
+  const kick = await fetch('/.netlify/functions/tik-queue-background', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...params, jobId }),
+  }).catch(() => null);
+
+  if (!kick || !kick.ok) {
+    console.warn('[tik-batch] background queue unavailable, using sync endpoint', { status: kick?.status });
+    return runQueueSync(params);
+  }
+
+  const t0 = Date.now();
+  let fails = 0;
+  let sawStart = false;
+  while (Date.now() - t0 < QUEUE_POLL_MAX_MS) {
+    await sleep(QUEUE_POLL_MS);
+    say(`Picking movies… ${Math.round((Date.now() - t0) / 1000)}s`);
+    const res = await fetch(`/.netlify/functions/tik-queue?job=${encodeURIComponent(jobId)}`).catch(() => null);
+    if (!res || !res.ok) {
+      if (++fails >= 5) {
+        console.warn('[tik-batch] queue polling kept failing; falling back to sync');
+        return runQueueSync(params);
+      }
+      continue;
+    }
+    fails = 0;
+    const data = await res.json().catch(() => ({}));
+    if (data.started) sawStart = true;
+    if (!data.done) {
+      // Healthy polls but no start marker → the worker died before it began.
+      // Don't burn the full poll window on a job that will never answer.
+      if (!sawStart && Date.now() - t0 > 30_000) {
+        console.warn('[tik-batch] queue job never started; falling back to sync', { jobId });
+        return runQueueSync(params);
+      }
+      continue;
+    }
+    if (!data.ok) throw new Error(data.error || 'Could not pick movies.');
+    return data.picks || [];
+  }
+  throw new Error('Picking movies timed out — try again.');
+}
+
+async function runQueueSync(params) {
+  const res = await fetch('/.netlify/functions/tik-queue', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Queue failed (${res.status})`);
+  return data.picks || [];
 }
 
 function onSearchInput() {
