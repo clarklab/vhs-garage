@@ -8,13 +8,20 @@ const AUTHORIZE_BASE = 'https://www.tiktok.com/v2/auth/authorize/';
 // user.info.stats powers the follower chart — it must also be enabled on the
 // app in the TikTok developer portal, or the authorize page rejects the scope.
 const SCOPE = 'user.info.basic,user.info.stats,video.upload';
+// Batch mode reads the account's own post history to work out which films are
+// already covered. video.list is a Display API scope that needs its own
+// approval in the developer portal, and TikTok rejects the WHOLE authorize
+// request when an app asks for a scope it doesn't hold — which would take
+// sign-in and publishing down with it. So it is never part of the normal
+// sign-in: batch mode asks for it separately, and only if the user opts in.
+export const HISTORY_SCOPE = `${SCOPE},video.list`;
 const LS_REFRESH = 'tik_refresh_token';
 const SS_STATE = 'tik_oauth_state';
 
-export function buildAuthorizeUrl({ clientKey, redirectUri, state }) {
+export function buildAuthorizeUrl({ clientKey, redirectUri, state, scope = SCOPE }) {
   const p = new URLSearchParams({
     client_key: clientKey,
-    scope: SCOPE,
+    scope,
     response_type: 'code',
     redirect_uri: redirectUri,
     state,

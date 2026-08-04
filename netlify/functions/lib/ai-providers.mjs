@@ -90,6 +90,45 @@ async function callAnthropic(prompt, model, signal, maxTokens) {
   return block?.text || '';
 }
 
+// Look at an image and answer in JSON. Used by the screenshot verifier, which
+// grabs a frame and asks whether it actually shows what the caption describes.
+// Claude only: the frame check is the one call where judgement quality decides
+// whether a slide ships with the wrong shot, and the studio standardizes on
+// Claude for that. Callers pass a non-Claude model at their peril, so say so
+// loudly rather than silently routing to a text-only provider.
+export async function callModelWithImage(prompt, image, model, signal, maxTokens = 512) {
+  if (providerFor(model) !== 'anthropic') {
+    throw new Error(`Vision requires a Claude model, got "${model}"`);
+  }
+  if (!ANTHROPIC_API_KEY) throw new Error('Anthropic not configured');
+  const mediaType = image?.mediaType || 'image/jpeg';
+  const data = String(image?.base64 || '');
+  if (!data) throw new Error('No image data');
+
+  const res = await fetch(`${ANTHROPIC_BASE_URL}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model, max_tokens: maxTokens,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: mediaType, data } },
+          { type: 'text', text: prompt },
+        ],
+      }],
+    }),
+    signal,
+  });
+  if (!res.ok) throw new Error(`Anthropic vision ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+  const body = await res.json();
+  const block = (body.content || []).find((b) => b.type === 'text');
+  return block?.text || '';
+}
+
 // Lenient JSON parse — strips ```json fences and recovers the first {...} block.
 export function parseModelJson(raw) {
   if (!raw) return null;
