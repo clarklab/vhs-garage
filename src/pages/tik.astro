@@ -243,70 +243,75 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
         </section>
       </div>
 
-      <!-- ---- STEP 2: SHOOT ---- -->
-      <div id="batch-shoot" class="hidden">
+      <!-- ---- STEP 2: SHOOT ----
+           Rebuilt so you can always tell WHICH movie it is on, WHAT it is
+           doing, and that it is still alive. Three bands: the folder, the
+           live run, then one row per draft. No dropdown — a dropdown hid
+           three of four movies and made a batch look like a single job. -->
+      <div id="batch-shoot" class="hidden flex-col gap-3">
+
+        <!-- Band 1: the movies folder -->
         <div class="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
-          <h2 class="text-sm font-bold tracking-tight">Fill in the frames</h2>
-          <p class="mt-1 max-w-3xl text-xs leading-snug text-neutral-400">
-            Every slide gets its frame grabbed at the timecode the agent chose, with Claude re-seeking up to three times when it lands on black, the credits, or the wrong scene. Set your movies folder once and the tool finds each draft's file itself, this session and every future one. Nothing leaves your machine except the small check images.
-          </p>
-
-          <!-- The folder grant is the memory: one pick covers every current
-               and future file inside it. Chrome/Edge only — the row stays
-               hidden elsewhere and the plain input below keeps working. -->
-          <div id="batch-folder-row" class="mt-3 hidden flex-wrap items-center gap-2">
-            <button id="batch-folder-btn" class="flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs font-semibold text-neutral-200 hover:bg-neutral-800">
-              <span class="material-symbols-outlined text-[16px] leading-none">folder</span>
-              Set movies folder
-            </button>
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="text-sm font-bold tracking-tight">Movies folder</h2>
             <span id="batch-folder-status" class="text-xs text-neutral-500"></span>
-            <button id="batch-unlock" class="hidden items-center gap-1.5 rounded-lg bg-amber-500/90 px-3 py-2 text-xs font-bold text-black hover:bg-amber-400">
-              <span class="material-symbols-outlined text-[16px] leading-none">lock_open</span>
-              <span id="batch-unlock-label">Unlock files</span>
-            </button>
-          </div>
-
-          <div class="mt-3 flex flex-wrap items-end gap-3">
-            <label class="block">
-              <span class="text-xs uppercase tracking-wide text-neutral-500">Draft</span>
-              <select id="batch-draft" class="mt-1 block w-64 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-neutral-100"></select>
-            </label>
-            <label class="block">
-              <span class="text-xs uppercase tracking-wide text-neutral-500">Movie file</span>
-              <input id="batch-file" type="file" accept="video/*"
-                     class="mt-1 block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-3 file:py-2 file:font-semibold file:text-white hover:file:bg-emerald-500" />
-              <button id="batch-pick-file" class="mt-1 hidden items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm font-semibold text-neutral-200 hover:bg-neutral-800">
-                <span class="material-symbols-outlined text-[18px] leading-none">movie</span>
-                Pick movie file
+            <div class="ml-auto flex flex-wrap items-center gap-1.5">
+              <button id="batch-folder-btn" class="flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800">
+                <span class="material-symbols-outlined text-[16px] leading-none">folder</span>Set folder
               </button>
-            </label>
-            <button id="batch-shoot-run" class="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40" disabled>
-              <span class="material-symbols-outlined text-[20px] leading-none">photo_camera</span>
-              Grab every frame
-            </button>
-            <button id="batch-shoot-all" class="hidden items-center gap-2 rounded-lg border border-emerald-500/50 bg-neutral-950 px-4 py-2.5 text-sm font-bold text-emerald-300 hover:bg-neutral-800 disabled:opacity-40">
-              <span class="material-symbols-outlined text-[20px] leading-none">camera_roll</span>
-              Shoot all drafts
-            </button>
+              <button id="batch-scan" class="flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
+                <span class="material-symbols-outlined text-[16px] leading-none">search</span>Scan folder
+              </button>
+              <button id="batch-unlock" class="hidden items-center gap-1.5 rounded-lg bg-amber-500/90 px-3 py-1.5 text-xs font-bold text-black hover:bg-amber-400">
+                <span class="material-symbols-outlined text-[16px] leading-none">lock_open</span><span id="batch-unlock-label">Unlock</span>
+              </button>
+            </div>
           </div>
-          <p id="batch-file-status" class="mt-1.5 min-h-4 text-[11px] text-neutral-500"></p>
-          <video id="batch-video" class="mt-3 hidden w-full max-w-md rounded-xl bg-black" playsinline muted></video>
+          <p class="mt-1 text-[11px] leading-snug text-neutral-500">
+            Scanned once and remembered, so future sessions start instantly. Rescan after adding movies.
+          </p>
         </div>
 
-        <!-- Preflight: which draft matched which file, BEFORE anything runs.
-             "Shoot all" used to silently do 2 of 10; now every miss is visible
-             and fixable in place. -->
-        <div id="batch-match-card" class="mt-3 hidden rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+        <!-- Band 2: the live run. Hidden until something is running. -->
+        <div id="batch-run" class="hidden rounded-xl border border-emerald-500/30 bg-neutral-900 p-4">
           <div class="flex flex-wrap items-baseline gap-2">
-            <h3 class="text-sm font-bold tracking-tight">Files found</h3>
-            <span id="batch-match-summary" class="text-xs tabular-nums text-neutral-500"></span>
-            <button id="batch-match-rescan" class="ml-auto rounded-md bg-neutral-800 px-2.5 py-1.5 text-xs font-semibold hover:bg-neutral-700" title="Re-read the folder from disk">Rescan folder</button>
-            <button id="batch-match-go" class="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-40">Shoot matched</button>
+            <span id="batch-run-phase" class="text-sm font-bold tracking-tight text-emerald-300"></span>
+            <span id="batch-run-detail" class="min-w-0 flex-1 truncate text-xs text-neutral-400"></span>
+            <button id="batch-cancel" class="rounded-md bg-neutral-800 px-2.5 py-1 text-xs font-semibold hover:bg-neutral-700">Stop</button>
           </div>
-          <ul id="batch-match-list" class="mt-2 flex flex-col gap-1.5"></ul>
+          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-neutral-800">
+            <div id="batch-run-bar" class="h-full w-0 rounded-full bg-emerald-500 transition-[width] duration-200"></div>
+          </div>
+          <!-- The heartbeat: proof of life you can watch from across the room.
+               It ticks every second whether or not the work reports in, and
+               turns amber when nothing has reported for a while. -->
+          <p id="batch-heartbeat" class="mt-1.5 flex items-center gap-1.5 text-[11px] text-neutral-500">
+            <span id="batch-pulse" class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+            <span id="batch-heartbeat-text"></span>
+          </p>
         </div>
 
-        <ol id="batch-shots" class="mt-3 flex flex-col gap-2"></ol>
+        <!-- Band 3: every draft, always visible -->
+        <div class="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="text-sm font-bold tracking-tight">Drafts waiting for frames</h2>
+            <span id="batch-draft-summary" class="text-xs tabular-nums text-neutral-500"></span>
+            <div class="ml-auto flex flex-wrap items-center gap-1.5">
+              <button id="batch-find" class="rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">Find files</button>
+              <button id="batch-shoot-all" class="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
+                <span class="material-symbols-outlined text-[16px] leading-none">camera_roll</span>Shoot all
+              </button>
+            </div>
+          </div>
+          <ul id="batch-drafts" class="mt-2 flex flex-col gap-1.5"></ul>
+          <p id="batch-drafts-empty" class="mt-2 rounded-lg border border-dashed border-neutral-800 p-6 text-center text-xs text-neutral-500">
+            No drafts waiting. Write some in step 1.
+          </p>
+          <video id="batch-video" class="mt-3 hidden w-full max-w-xs rounded-lg bg-black" playsinline muted></video>
+          <input id="batch-file" type="file" accept="video/*" class="hidden" />
+        </div>
+
+        <ol id="batch-shots" class="flex flex-col gap-2"></ol>
       </div>
 
       <p id="batch-status" class="mt-3 min-h-5 text-xs text-neutral-400" role="status" aria-live="polite"></p>
