@@ -14,7 +14,7 @@ export const MAX_PICK = 25;
 
 // items: the ranked list from the server (most helpful first).
 export function createTriviaPool(items, size = DEFAULT_PICK) {
-  const order = (Array.isArray(items) ? items : [])
+  let order = (Array.isArray(items) ? items : [])
     .filter((it) => it && typeof it.text === 'string' && it.text.trim())
     .map((it, i) => ({ ...it, id: String(it.id || `i${i}`), rank: i + 1 }));
   const dropped = new Set();
@@ -66,6 +66,37 @@ export function createTriviaPool(items, size = DEFAULT_PICK) {
       pick = clampSize(n);
       return this.visible();
     },
+
+    // Re-rank by an agent's ordering of ids, attaching its reason to each item.
+    // Ids it didn't mention keep their existing relative order behind the ones
+    // it did, so the bench stays sensible and nothing is ever lost.
+    //
+    // Only the ORDER changes — `dropped` is untouched, so items already thrown
+    // out stay out, and visible() is still just "the first N survivors". That
+    // is what keeps delete-and-refill working across a re-rank.
+    applyOrder(ids, why = {}) {
+      const wanted = (Array.isArray(ids) ? ids : []).map(String);
+      const rank = new Map(wanted.map((id, i) => [id, i]));
+      const known = new Set(order.map((it) => it.id));
+      if (!wanted.some((id) => known.has(id))) return this.visible(); // nothing matched; leave as-is
+
+      order = order
+        .map((it, i) => ({ ...it, why: why[it.id] || it.why || '', curated: rank.has(it.id), _was: i }))
+        .sort((a, b) => {
+          const ra = rank.has(a.id) ? rank.get(a.id) : Infinity;
+          const rb = rank.has(b.id) ? rank.get(b.id) : Infinity;
+          return ra - rb || a._was - b._was; // ties and leftovers keep vote order
+        })
+        .map(({ _was, ...it }) => it);
+      return this.visible();
+    },
+
+    // The best N survivors, independent of what's on screen — the candidate
+    // list for curation, which needs more than the visible ten to choose from.
+    top: (n) => survivors().slice(0, Math.max(0, Math.round(Number(n) || 0))),
+
+    // True once an agent ranking has been applied.
+    isCurated: () => order.some((it) => it.curated),
   };
 }
 
