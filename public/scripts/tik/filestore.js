@@ -158,13 +158,43 @@ export function pickBestFile(names, title, year, threshold = MATCH_THRESHOLD) {
 // works for the session.
 const cache = new Map();
 
+// ONE connection, opened once, with a timeout.
+//
+// The old version opened a fresh connection per read and never closed any, and
+// indexedDB.open() can hang forever with no error and no console output when
+// it's blocked by another connection or a pending version change. That is a
+// silent, unrecoverable freeze — and it is the most likely cause of a Shoot
+// step that sat on one line for minutes saying nothing. A timeout turns it
+// into an error we can show; onblocked says WHY.
+const DB_OPEN_TIMEOUT_MS = 8_000;
+let dbPromise = null;
+
 function openDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn, v) => { if (!settled) { settled = true; clearTimeout(timer); fn(v); } };
+    const timer = setTimeout(() => {
+      dbPromise = null; // let a later call retry rather than caching the failure
+      done(reject, new Error('The file-memory database did not open (another tab may be holding it open — close other VHS Studio tabs and reload).'));
+    }, DB_OPEN_TIMEOUT_MS);
+
+    let req;
+    try { req = indexedDB.open(DB_NAME, 1); }
+    catch (e) { return done(reject, e); }
+
     req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onblocked = () => console.warn('[tik-files] IndexedDB open is blocked by another tab');
+    req.onsuccess = () => {
+      const db = req.result;
+      // A version change from another tab would otherwise wedge this handle.
+      db.onversionchange = () => { db.close(); dbPromise = null; };
+      db.onclose = () => { dbPromise = null; };
+      done(resolve, db);
+    };
+    req.onerror = () => { dbPromise = null; done(reject, req.error); };
   });
+  return dbPromise;
 }
 
 async function dbPut(key, value) {
@@ -179,7 +209,7 @@ async function dbPut(key, value) {
     });
   } catch (e) {
     // Session-only memory still works; say so rather than dying.
-    console.warn('[tik-files] could not persist a handle (session-only)', { key, message: e.message });
+    console.warn(`[tik-files] could not persist "${key}" (session-only): ${e.message}`, e);
   }
 }
 
@@ -195,7 +225,7 @@ async function dbGet(key) {
     if (value) cache.set(key, value);
     return value || null;
   } catch (e) {
-    console.warn('[tik-files] handle read failed', { key, message: e.message });
+    console.warn(`[tik-files] could not read "${key}": ${e.message}`, e);
     return null;
   }
 }
@@ -319,7 +349,7 @@ async function buildFolderIndex(folderHandle, { onProgress = () => {}, signal } 
   if (signal?.aborted) throw new DOMException('Folder scan cancelled', 'AbortError');
   if (truncated) console.warn('[tik-files] folder walk stopped at the file cap', { cap: WALK_MAX_FILES });
   onProgress({ files: seen, videos: files.size, dir: folderHandle.name, done: true });
-  folderIndex = { dirHandle: folderHandle, files, truncated, scannedFiles: seen };
+  folderIndex = { dirHandle: folderHandle, files, truncated, scannedFiles: seen, at: Date.now() };
   return folderIndex;
 }
 
@@ -327,12 +357,13 @@ async function buildFolderIndex(folderHandle, { onProgress = () => {}, signal } 
 // lookup is instant instead of paying for the walk mid-flow.
 export async function indexFolder(folderHandle, opts) {
   const index = await buildFolderIndex(folderHandle, opts);
+  await saveFolderIndex(folderHandle.name, index.files);
   return { videos: index.files.size, scanned: index.scannedFiles ?? index.files.size, truncated: index.truncated };
 }
 
 // What the cached index knows, for UI that wants to report it without a walk.
 export function folderIndexInfo() {
-  return folderIndex ? { videos: folderIndex.files.size, truncated: folderIndex.truncated } : null;
+  return folderIndex ? { videos: folderIndex.files.size, truncated: folderIndex.truncated, at: folderIndex.at } : null;
 }
 
 // Every video filename the index holds — lets the preflight explain a miss by
@@ -341,7 +372,46 @@ export function indexedFilenames() {
   return folderIndex ? [...folderIndex.files.keys()] : [];
 }
 
-// { name, handle } for the file that best matches, or null.
+const INDEX_KEY = 'folder-index';
+
+// Save the crawled listing so a NEW SESSION doesn't pay for the walk again.
+// FileSystemFileHandle is structured-cloneable, so the handles survive; only
+// the permission needs re-arming, which is one click.
+async function saveFolderIndex(folderName, files) {
+  try {
+    await dbPut(INDEX_KEY, {
+      folderName, at: Date.now(),
+      entries: [...files.entries()].map(([name, handle]) => ({ name, handle })),
+    });
+  } catch (e) {
+    console.warn(`[tik-files] could not persist the folder index: ${e.message}`, e);
+  }
+}
+
+// Rehydrate a previously crawled listing. Returns false when there is none.
+export async function loadFolderIndex() {
+  if (folderIndex) return { videos: folderIndex.files.size, at: folderIndex.at, restored: false };
+  const rec = await dbGet(INDEX_KEY);
+  if (!rec?.entries?.length) return null;
+  const folder = await getMoviesFolder();
+  if (!folder) return null;
+  const files = new Map(rec.entries.map((e) => [e.name, e.handle]));
+  folderIndex = { dirHandle: folder.handle, files, truncated: false, at: rec.at, scannedFiles: files.size };
+  return { videos: files.size, at: rec.at, restored: true };
+}
+
+// Match a title against the ALREADY-CRAWLED listing. Never crawls: crawling is
+// its own explicit, cancelable step with its own progress, because doing it
+// implicitly inside a per-draft loop is exactly how the Shoot step ended up
+// sitting on "Looking for files… 1 of 4" for minutes with nothing to show.
+export function matchInIndex(title, year) {
+  if (!folderIndex) return null;
+  const best = pickBestFile([...folderIndex.files.keys()], title, year);
+  return best ? { name: best, handle: folderIndex.files.get(best) } : null;
+}
+
+// { name, handle } for the file that best matches, or null. Crawls if needed —
+// used by the explicit crawl step, not by per-draft matching.
 export async function findFileInFolder(folderHandle, title, year, opts) {
   let index;
   try {
@@ -422,7 +492,9 @@ export async function resolveMovie(title, year, { onProgress } = {}) {
   const folder = await getMoviesFolder();
   if (folder) {
     if (folder.state === 'granted') {
-      const hit = await findFileInFolder(folder.handle, title, year, onProgress);
+      // Index only — no crawl. If nothing is loaded the caller is told to
+      // scan, rather than silently blocking here for minutes.
+      const hit = matchInIndex(title, year);
       if (hit) {
         candidates.push({
           label: hit.name,
@@ -430,6 +502,8 @@ export async function resolveMovie(title, year, { onProgress } = {}) {
           armTarget: folder.handle,
           load: () => hit.handle.getFile(),
         });
+      } else if (!folderIndex) {
+        candidates.push({ label: `your movies folder (${folder.name})`, state: 'unscanned', armTarget: folder.handle });
       }
     } else {
       // Can't search a locked folder — surface it as an armable source.
