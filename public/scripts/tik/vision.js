@@ -48,6 +48,10 @@ async function judge(payload) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    // A hung check must not stall a whole batch run. On timeout this throws,
+    // the caller's fail-open catch keeps the grabbed frame, and the run
+    // moves on — costing the second opinion, not the slide.
+    signal: AbortSignal.timeout(45_000),
   });
   if (!res.ok) throw new Error(`Frame check failed (${res.status})`);
   return res.json();

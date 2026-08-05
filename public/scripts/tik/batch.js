@@ -35,6 +35,21 @@ const QUEUE_POLL_MAX_MS = 4 * 60 * 1000; // the worker's own budget is 3 min
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Every batch fetch goes through this. A stalled connection used to pin the
+// whole screen with the buttons disabled — setBusy(true) with no way back —
+// which reads as a freeze. A timeout turns that into an error with a name.
+const FETCH_TIMEOUT_MS = 30_000;
+async function fetchWithTimeout(url, init = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (e) {
+    if (e?.name === 'TimeoutError' || e?.name === 'AbortError') {
+      throw new Error(`The server did not answer within ${Math.round(timeoutMs / 1000)}s — try again.`);
+    }
+    throw e;
+  }
+}
+
 let els = null;
 let queue = [];          // [{ key, title, year, why, imdbId, runtimeSeconds, pool, state, error, draftId }]
 let selectedKey = null;
@@ -148,7 +163,7 @@ async function suggestMovies() {
     let history = [];
     const token = getRefreshToken();
     if (token) {
-      const res = await fetch('/.netlify/functions/tik-history', {
+      const res = await fetchWithTimeout('/.netlify/functions/tik-history', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken: token }),
       }).catch(() => null);
@@ -183,7 +198,7 @@ async function runQueueJob(params) {
   const jobId = crypto.randomUUID?.() ??
     Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
 
-  const kick = await fetch('/.netlify/functions/tik-queue-background', {
+  const kick = await fetchWithTimeout('/.netlify/functions/tik-queue-background', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...params, jobId }),
   }).catch(() => null);
@@ -199,7 +214,7 @@ async function runQueueJob(params) {
   while (Date.now() - t0 < QUEUE_POLL_MAX_MS) {
     await sleep(QUEUE_POLL_MS);
     say(`Picking movies… ${Math.round((Date.now() - t0) / 1000)}s`);
-    const res = await fetch(`/.netlify/functions/tik-queue?job=${encodeURIComponent(jobId)}`).catch(() => null);
+    const res = await fetchWithTimeout(`/.netlify/functions/tik-queue?job=${encodeURIComponent(jobId)}`).catch(() => null);
     if (!res || !res.ok) {
       if (++fails >= 5) {
         console.warn('[tik-batch] queue polling kept failing; falling back to sync');
@@ -226,7 +241,7 @@ async function runQueueJob(params) {
 }
 
 async function runQueueSync(params) {
-  const res = await fetch('/.netlify/functions/tik-queue', {
+  const res = await fetchWithTimeout('/.netlify/functions/tik-queue', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
@@ -242,7 +257,7 @@ function onSearchInput() {
   clearTimeout(onSearchInput.timer);
   onSearchInput.timer = setTimeout(async () => {
     try {
-      const res = await fetch('/.netlify/functions/tik-imdb', {
+      const res = await fetchWithTimeout('/.netlify/functions/tik-imdb', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'search', query: q, first: 6 }),
       });
@@ -323,7 +338,7 @@ async function ensurePool(item) {
   renderQueue();
   if (selectedKey === item.key) renderPicker();
   try {
-    const res = await fetch('/.netlify/functions/tik-imdb', {
+    const res = await fetchWithTimeout('/.netlify/functions/tik-imdb', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         action: 'trivia', imdbId: item.imdbId, query: item.title, year: item.year,
@@ -339,7 +354,7 @@ async function ensurePool(item) {
     item.total = data.total || (data.trivia || []).length;
     item.state = 'ready';
   } catch (e) {
-    console.error('[tik-batch] trivia fetch failed', { movie: item.title, message: e.message });
+    console.error(`[tik-batch] trivia fetch failed: ${item.title} — ${e.message}`, e);
     item.state = 'error';
     item.error = e.message;
   }
@@ -602,7 +617,7 @@ async function buildAll() {
       it.state = 'written';
       made++;
     } catch (e) {
-      console.error('[tik-batch] draft failed', { movie: it.title, message: e.message });
+      console.error(`[tik-batch] draft failed: ${it.title} — ${e.message}`, e);
       it.state = 'error';
       it.error = e.message;
       failed.push(it.title);
@@ -847,7 +862,11 @@ async function tryAutoResolve() {
   const title = p?.movie?.title;
   if (!title || seq !== resolveSeq) return;
 
-  const res = await resolveMovie(title, p.movie?.year);
+  const res = await resolveMovie(title, p.movie?.year, {
+    // The first search of a big library takes a while (it's indexed once per
+    // session after that) — say so, or it reads as a freeze.
+    onProgress: (n) => { if (seq === resolveSeq) els.fileStatus.textContent = `Indexing your movies folder… ${n.toLocaleString()} files`; },
+  });
   if (seq !== resolveSeq) return;
   if (!res) {
     els.fileStatus.textContent = 'No remembered file for this movie — pick it once and it sticks.';
@@ -929,7 +948,7 @@ async function shootProject(project, duration) {
       if (out.verified) verified++;
       row.done(out, slide.frame);
     } catch (e) {
-      console.error('[tik-batch] frame grab failed', { slide: i + 1, message: e.message });
+      console.error(`[tik-batch] frame grab failed on slide ${i + 1}: ${e.message}`, e);
       row.fail(e.message);
     }
   }
@@ -971,7 +990,9 @@ async function shootAll() {
     let verifiedTotal = 0;
     const skipped = [];
     for (const p of drafts) {
-      const res = await resolveMovie(p.movie?.title, p.movie?.year);
+      const res = await resolveMovie(p.movie?.title, p.movie?.year, {
+        onProgress: (n) => say(`Indexing your movies folder… ${n.toLocaleString()} files`),
+      });
       if (!res || res.state !== 'granted') {
         skipped.push(p.name || p.movie?.title || 'Untitled');
         addShotDivider(p.name, 'no file found — select this draft and pick it once');
@@ -983,7 +1004,7 @@ async function shootAll() {
         addShotDivider(p.name, file.name);
         await loadShootFile(file);
       } catch (e) {
-        console.error('[tik-batch] shoot-all file load failed', { movie: p.movie?.title, message: e.message });
+        console.error(`[tik-batch] shoot-all file load failed: ${p.movie?.title} — ${e.message}`, e);
         skipped.push(p.name || 'Untitled');
         addShotDivider(p.name, `file would not load: ${e.message}`);
         continue;

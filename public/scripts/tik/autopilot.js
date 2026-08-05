@@ -17,10 +17,14 @@ async function runJob(params, onProgress = () => {}) {
   // to getRandomValues hex for plain-HTTP LAN use — the server regex takes both.)
   const jobId = crypto.randomUUID?.() ??
     Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+  // 20s timeout: a STALLED connection (not an error) used to hang this await
+  // forever with the UI's buttons disabled. A timeout rejects, the .catch
+  // turns it into null, and the existing sync fallback takes over.
   const kick = await fetch('/.netlify/functions/tik-autopilot-job-background', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...params, jobId }),
+    signal: AbortSignal.timeout(20_000),
   }).catch(() => null);
 
   if (!kick || !kick.ok) {
@@ -39,7 +43,8 @@ async function runJob(params, onProgress = () => {}) {
     await sleep(POLL_INTERVAL_MS);
     const elapsed = Math.round((Date.now() - t0) / 1000);
     onProgress(`AI is thinking… ${elapsed}s`);
-    const res = await fetch(`/.netlify/functions/tik-autopilot?job=${encodeURIComponent(jobId)}`).catch(() => null);
+    const res = await fetch(`/.netlify/functions/tik-autopilot?job=${encodeURIComponent(jobId)}`,
+      { signal: AbortSignal.timeout(15_000) }).catch(() => null); // hung poll → counts as a failed one
     if (!res || !res.ok) {
       if (++consecutiveFails >= 5) {
         console.warn('[tik] job polling kept failing; falling back to sync endpoint');
@@ -70,6 +75,7 @@ async function runJobSync(params) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
+    signal: AbortSignal.timeout(30_000), // the server's own ceiling is 10s
   });
   return await res.json().catch(() => ({}));
 }

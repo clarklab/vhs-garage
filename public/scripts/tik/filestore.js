@@ -26,7 +26,8 @@ const STORE = 'handles';
 const FOLDER_KEY = 'folder';
 const MATCH_THRESHOLD = 60;
 const VIDEO_EXT = /\.(mp4|m4v|mkv|mov|avi|webm|mpg|mpeg|wmv)$/i;
-const WALK_DEPTH = 2; // movies folder → per-movie subfolder → file
+const WALK_DEPTH = 3;        // movies → genre/collection → per-movie folder → file
+const WALK_MAX_FILES = 50_000; // a runaway walk (home dir picked by mistake) stops, loudly
 
 // Call-time detection (not import-time) so a missing API is discovered where
 // the fallback can be shown.
@@ -54,22 +55,33 @@ const numerals = (tokens) => tokens.filter((t) => /^\d+$/.test(t)).sort().join('
 
 // parseMovieName treats the FIRST year-like number as the release year and
 // cuts the title there — which mangles titles that contain one: "Blade Runner
-// 2049", "2001: A Space Odyssey", "1917". So every filename is read two ways:
-// as-is, and with that first number protected so it stays part of the title
-// (any later year then reads as the release year). The scorer takes the
-// better reading; for ordinary names the second reading just scores lower.
+// 2049", "2001: A Space Odyssey", "1917". And scene names use hyphens where
+// it expects dots ("Title-1080p.GROUP"), which walls off the quality junk it
+// would otherwise strip. So every filename is read several ways — as-is, with
+// hyphens as separators, and with the first number protected so it stays part
+// of the title — and the scorer takes the best reading. For ordinary names
+// the extra readings just score lower.
 function parseVariants(filename) {
-  const name = String(filename);
-  const variants = [parseMovieName(name)];
-  const m = name.match(/\b(19\d{2}|20\d{2})\b/);
-  if (m) {
-    const shield = `q${m[1]}q`; // survives parsing as an ordinary token
-    const marked = name.slice(0, m.index) + shield + name.slice(m.index + m[1].length);
-    const p = parseMovieName(marked);
-    variants.push({ title: p.title.replace(new RegExp(shield, 'ig'), m[1]), year: p.year });
+  const variants = [];
+  for (const name of new Set([String(filename), String(filename).replace(/-/g, '.')])) {
+    variants.push(parseMovieName(name));
+    const m = name.match(/\b(19\d{2}|20\d{2})\b/);
+    if (m) {
+      const shield = `q${m[1]}q`; // survives parsing as an ordinary token
+      const marked = name.slice(0, m.index) + shield + name.slice(m.index + m[1].length);
+      const p = parseMovieName(marked);
+      variants.push({ title: p.title.replace(new RegExp(shield, 'ig'), m[1]), year: p.year });
+    }
   }
   return variants;
 }
+
+// Tokens that mark a different film in the same franchise. An extra one of
+// these in a filename means "this is NOT the movie you asked for", so they
+// veto the loose-match bonus below. v and x are ambiguous (V for Vendetta,
+// Malcolm X) but only as EXTRA tokens — shared ones never reach the check —
+// and vetoing costs a miss, never a wrong match.
+const SEQUEL_MARKERS = new Set(['ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'part']);
 
 // How confidently `filename` is the movie `title` (`year`). 0–105; the
 // threshold for acting is MATCH_THRESHOLD.
@@ -96,10 +108,20 @@ export function scoreCandidate(filename, title, year) {
     if (a.join(' ') === b.join(' ')) {
       score = 90;
     } else {
+      const setA = new Set(a);
       const setB = new Set(b);
       const inter = a.filter((t) => setB.has(t)).length;
-      const subset = inter === a.length && a.length >= 1;
-      if (subset && numerals(a) === numerals(b)) score = 70;
+      const fileInDraft = inter === a.length && a.length >= 1;
+      // The messy-rip case: every draft-title word is in the filename, plus
+      // leftovers ("Names.Like.This-1080p.NiGHT" → extra tokens 1080p, night —
+      // quality junk the parser missed and the release group). Those extras
+      // are fine UNLESS one is a sequel marker: an extra "2" or "ii" means a
+      // different film, and vetoing costs a miss, never a wrong match.
+      const draftInFile = b.every((t) => setA.has(t));
+      const extras = a.filter((t) => !setB.has(t));
+      const extrasSafe = !extras.some((t) => /^\d+$/.test(t) || SEQUEL_MARKERS.has(t));
+      if (fileInDraft && numerals(a) === numerals(b)) score = 70;
+      else if (draftInFile && extrasSafe) score = 70;
       else score = (2 * inter / (a.length + b.length)) * 70;
     }
 
@@ -202,6 +224,7 @@ export async function armHandle(handle) {
 export async function setMoviesFolder() {
   try {
     const handle = await window.showDirectoryPicker({ id: 'tik-movies', mode: 'read' });
+    invalidateFolderIndex(); // a different (or refreshed) folder — re-list it
     await dbPut(FOLDER_KEY, { handle, name: handle.name, savedAt: Date.now() });
     return { handle, name: handle.name, state: 'granted' };
   } catch (e) {
@@ -217,28 +240,54 @@ export async function getMoviesFolder() {
   return { handle: rec.handle, name: rec.name || rec.handle.name, state: await permissionOf(rec.handle) };
 }
 
-// Walk the folder (bounded depth, dot-entries skipped) and return
-// { name, handle } for the file that best matches, or null.
-export async function findFileInFolder(folderHandle, title, year) {
-  const found = new Map(); // filename → file handle (first wins on duplicates)
+// The folder is walked ONCE per session and the listing cached — a big
+// library was being re-scanned on every draft select, which read as a freeze.
+// Invalidated when the folder is re-picked or re-armed (contents may differ).
+let folderIndex = null; // { dirHandle, files: Map(name → handle), truncated }
+
+export function invalidateFolderIndex() {
+  folderIndex = null;
+}
+
+async function buildFolderIndex(folderHandle, onProgress = () => {}) {
+  if (folderIndex && (folderIndex.dirHandle === folderHandle
+    || await folderHandle.isSameEntry?.(folderIndex.dirHandle).catch(() => false))) {
+    return folderIndex;
+  }
+  const files = new Map(); // filename → file handle (first wins on duplicates)
+  let truncated = false;
+  let seen = 0;
   async function walk(dir, depth) {
     for await (const entry of dir.values()) {
+      if (truncated) return;
       if (entry.name.startsWith('.')) continue;
       if (entry.kind === 'file') {
-        if (isVideoFilename(entry.name) && !found.has(entry.name)) found.set(entry.name, entry);
+        if (++seen % 500 === 0) onProgress(seen);
+        if (seen > WALK_MAX_FILES) { truncated = true; return; }
+        if (isVideoFilename(entry.name) && !files.has(entry.name)) files.set(entry.name, entry);
       } else if (entry.kind === 'directory' && depth < WALK_DEPTH) {
         await walk(entry, depth + 1);
       }
     }
   }
+  await walk(folderHandle, 0);
+  if (truncated) console.warn('[tik-files] folder walk stopped at the file cap', { cap: WALK_MAX_FILES });
+  folderIndex = { dirHandle: folderHandle, files, truncated };
+  return folderIndex;
+}
+
+// { name, handle } for the file that best matches, or null.
+export async function findFileInFolder(folderHandle, title, year, onProgress) {
+  let index;
   try {
-    await walk(folderHandle, 0);
+    index = await buildFolderIndex(folderHandle, onProgress);
   } catch (e) {
     console.warn('[tik-files] folder walk failed', { message: e.message });
+    invalidateFolderIndex(); // a half-built listing must not be trusted
     return null;
   }
-  const best = pickBestFile([...found.keys()], title, year);
-  return best ? { name: best, handle: found.get(best) } : null;
+  const best = pickBestFile([...index.files.keys()], title, year);
+  return best ? { name: best, handle: index.files.get(best) } : null;
 }
 
 // ---- single-file memory ----
@@ -268,7 +317,7 @@ export async function pickMovieFile(title, year) {
 // means call armHandle(armTarget) from a click first, then resolve again.
 // Granted sources always beat prompt ones, so a granted folder match is
 // preferred over a hand-picked handle that needs re-arming.
-export async function resolveMovie(title, year) {
+export async function resolveMovie(title, year, { onProgress } = {}) {
   if (!fsSupported() || !String(title || '').trim()) return null;
   const candidates = [];
 
@@ -286,7 +335,7 @@ export async function resolveMovie(title, year) {
   const folder = await getMoviesFolder();
   if (folder) {
     if (folder.state === 'granted') {
-      const hit = await findFileInFolder(folder.handle, title, year);
+      const hit = await findFileInFolder(folder.handle, title, year, onProgress);
       if (hit) {
         candidates.push({
           label: hit.name,
@@ -302,7 +351,7 @@ export async function resolveMovie(title, year) {
         state: 'prompt',
         armTarget: folder.handle,
         load: async () => {
-          const again = await findFileInFolder(folder.handle, title, year);
+          const again = await findFileInFolder(folder.handle, title, year, onProgress);
           if (!again) throw new Error('No matching file in the movies folder.');
           return again.handle.getFile();
         },

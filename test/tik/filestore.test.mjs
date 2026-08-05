@@ -125,3 +125,24 @@ test('the year-in-title reading cannot cross-match the two Blade Runners', () =>
   assert.ok(scoreCandidate('Blade.Runner.2049.2017.mkv', 'Blade Runner', 1982) < 60);
   assert.ok(scoreCandidate('Blade.Runner.1982.Final.Cut.mkv', 'Blade Runner 2049', 2017) < 60);
 });
+
+// Scene names with no year in them: hyphens wall off the quality junk and the
+// release group pollutes the tokens ("Names.Like.This-1080p.NiGHT.mkv").
+// These all MISSED before the hyphen reading + the extras-tolerant subset rule.
+test('no-year scene names with release-group tags still match', () => {
+  assert.ok(scoreCandidate('Names.Like.This-1080p.NiGHT.mkv', 'Names Like This', null) >= 60);
+  assert.ok(scoreCandidate('The.Goonies-1080p.CiNEFiLE.mkv', 'The Goonies', 1985) >= 60);
+  assert.ok(scoreCandidate('Gremlins.REMASTERED.x265.10bit-TIGOLE.mkv', 'Gremlins', 1984) >= 60);
+});
+
+test('the extras-tolerant rule still refuses sequels and numbered follow-ups', () => {
+  // Extra tokens are fine unless one marks a different film in the franchise.
+  assert.ok(scoreCandidate('Rocky.II-GROUP.mkv', 'Rocky', 1976) < 60, 'roman numeral vetoes');
+  assert.ok(scoreCandidate('Home.Alone.2-GROUP.mkv', 'Home Alone', 1990) < 60, 'digit vetoes');
+  assert.ok(scoreCandidate('Halloween.Part.2.mkv', 'Halloween', 1978) < 60, '"part" vetoes');
+});
+
+test('marker words shared by BOTH titles do not veto', () => {
+  // v/x/part only veto as EXTRA tokens — "Malcolm X" has x on both sides.
+  assert.ok(scoreCandidate('Malcolm.X-1080p.GROUP.mkv', 'Malcolm X', 1992) >= 60);
+});
