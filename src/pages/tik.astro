@@ -287,6 +287,20 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
           <p id="batch-file-status" class="mt-1.5 min-h-4 text-[11px] text-neutral-500"></p>
           <video id="batch-video" class="mt-3 hidden w-full max-w-md rounded-xl bg-black" playsinline muted></video>
         </div>
+
+        <!-- Preflight: which draft matched which file, BEFORE anything runs.
+             "Shoot all" used to silently do 2 of 10; now every miss is visible
+             and fixable in place. -->
+        <div id="batch-match-card" class="mt-3 hidden rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+          <div class="flex flex-wrap items-baseline gap-2">
+            <h3 class="text-sm font-bold tracking-tight">Files found</h3>
+            <span id="batch-match-summary" class="text-xs tabular-nums text-neutral-500"></span>
+            <button id="batch-match-rescan" class="ml-auto rounded-md bg-neutral-800 px-2.5 py-1.5 text-xs font-semibold hover:bg-neutral-700" title="Re-read the folder from disk">Rescan folder</button>
+            <button id="batch-match-go" class="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-40">Shoot matched</button>
+          </div>
+          <ul id="batch-match-list" class="mt-2 flex flex-col gap-1.5"></ul>
+        </div>
+
         <ol id="batch-shots" class="mt-3 flex flex-col gap-2"></ol>
       </div>
 
@@ -571,6 +585,22 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
     @keyframes save-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
     .save-pulse { animation: save-pulse 1.2s ease-in-out infinite; }
     #post-details > summary::-webkit-details-marker { display: none; }
+
+    /* Batch mode hands off from Write to Shoot on its own; this makes the
+       jump legible instead of the screen just changing under you. */
+    @keyframes step-in {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: none; }
+    }
+    .step-in { animation: step-in 0.32s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+    @keyframes tab-ping {
+      0%   { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+      100% { box-shadow: 0 0 0 12px rgba(16, 185, 129, 0); }
+    }
+    .tab-ping { animation: tab-ping 0.9s ease-out 2; }
+    @media (prefers-reduced-motion: reduce) {
+      .step-in, .tab-ping { animation: none; }
+    }
   </style>
 
   <script type="module" src={`/scripts/tik/app.js?v=${BUILD_ID}`}></script>

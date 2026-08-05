@@ -221,7 +221,15 @@ export async function armHandle(handle) {
 
 // ---- the movies folder ----
 
+// Chrome allows exactly ONE file/directory picker at a time and throws
+// "File picker already active" on a second — easy to trigger by double
+// clicking, or by clicking Pick while the folder dialog is still open.
+// One flag guards both pickers; callers get null, same as a cancel.
+let pickerOpen = false;
+
 export async function setMoviesFolder() {
+  if (pickerOpen) return null;
+  pickerOpen = true;
   try {
     const handle = await window.showDirectoryPicker({ id: 'tik-movies', mode: 'read' });
     invalidateFolderIndex(); // a different (or refreshed) folder — re-list it
@@ -229,8 +237,10 @@ export async function setMoviesFolder() {
     return { handle, name: handle.name, state: 'granted' };
   } catch (e) {
     if (e?.name === 'AbortError') return null; // user closed the picker
-    console.error('[tik-files] folder pick failed', { message: e.message });
+    console.error(`[tik-files] folder pick failed: ${e.message}`, e);
     return null;
+  } finally {
+    pickerOpen = false;
   }
 }
 
@@ -249,7 +259,37 @@ export function invalidateFolderIndex() {
   folderIndex = null;
 }
 
-async function buildFolderIndex(folderHandle, onProgress = () => {}) {
+// Hand control back to the browser so it can actually paint.
+//
+// This is THE fix for the "long freeze": `for await (const entry of dir.values())`
+// settles in MICROtasks, and microtasks never yield a render opportunity. The
+// whole walk ran as one uninterrupted job, so progress text written during it
+// was invisible until the walk finished — a frozen tab with a stale screen.
+// A real macrotask (setTimeout/scheduler.yield) lets a frame render.
+// Yield on a TIME slice, not an entry count.
+//
+// scheduler.yield() is preferred because setTimeout is clamped to 1000ms in a
+// backgrounded tab — a count-based setTimeout yield turned a 4s scan into
+// minutes when the tab lost focus, which is measurably worse than the freeze
+// it was fixing. Slicing on elapsed time bounds it from both ends: the thread
+// is never held for more than SLICE_MS, and a throttled fallback can only cost
+// one timeout per slice rather than one per N entries.
+const SLICE_MS = 50;
+let sliceStart = 0;
+const rawYield = () =>
+  (globalThis.scheduler?.yield?.() ?? new Promise((r) => setTimeout(r, 0)));
+
+async function maybeYield() {
+  const now = performance.now();
+  if (now - sliceStart < SLICE_MS) return false;
+  sliceStart = now;
+  await rawYield();
+  return true;
+}
+
+// onProgress({ files, videos, dir }) fires often enough to look alive.
+// signal aborts a walk in flight (switching drafts, leaving the screen).
+async function buildFolderIndex(folderHandle, { onProgress = () => {}, signal } = {}) {
   if (folderIndex && (folderIndex.dirHandle === folderHandle
     || await folderHandle.isSameEntry?.(folderIndex.dirHandle).catch(() => false))) {
     return folderIndex;
@@ -257,31 +297,57 @@ async function buildFolderIndex(folderHandle, onProgress = () => {}) {
   const files = new Map(); // filename → file handle (first wins on duplicates)
   let truncated = false;
   let seen = 0;
+  sliceStart = performance.now();
+
   async function walk(dir, depth) {
     for await (const entry of dir.values()) {
-      if (truncated) return;
+      if (truncated || signal?.aborted) return;
+      // Report only when we actually yield: a progress line the browser has no
+      // chance to paint is just wasted work.
+      if (await maybeYield()) onProgress({ files: seen, videos: files.size, dir: dir.name });
       if (entry.name.startsWith('.')) continue;
       if (entry.kind === 'file') {
-        if (++seen % 500 === 0) onProgress(seen);
-        if (seen > WALK_MAX_FILES) { truncated = true; return; }
+        if (++seen > WALK_MAX_FILES) { truncated = true; return; }
         if (isVideoFilename(entry.name) && !files.has(entry.name)) files.set(entry.name, entry);
       } else if (entry.kind === 'directory' && depth < WALK_DEPTH) {
         await walk(entry, depth + 1);
       }
     }
   }
+
   await walk(folderHandle, 0);
+  if (signal?.aborted) throw new DOMException('Folder scan cancelled', 'AbortError');
   if (truncated) console.warn('[tik-files] folder walk stopped at the file cap', { cap: WALK_MAX_FILES });
-  folderIndex = { dirHandle: folderHandle, files, truncated };
+  onProgress({ files: seen, videos: files.size, dir: folderHandle.name, done: true });
+  folderIndex = { dirHandle: folderHandle, files, truncated, scannedFiles: seen };
   return folderIndex;
 }
 
+// Scan the folder up front (right after it's granted) so the first draft
+// lookup is instant instead of paying for the walk mid-flow.
+export async function indexFolder(folderHandle, opts) {
+  const index = await buildFolderIndex(folderHandle, opts);
+  return { videos: index.files.size, scanned: index.scannedFiles ?? index.files.size, truncated: index.truncated };
+}
+
+// What the cached index knows, for UI that wants to report it without a walk.
+export function folderIndexInfo() {
+  return folderIndex ? { videos: folderIndex.files.size, truncated: folderIndex.truncated } : null;
+}
+
+// Every video filename the index holds — lets the preflight explain a miss by
+// showing what it DID have to choose from.
+export function indexedFilenames() {
+  return folderIndex ? [...folderIndex.files.keys()] : [];
+}
+
 // { name, handle } for the file that best matches, or null.
-export async function findFileInFolder(folderHandle, title, year, onProgress) {
+export async function findFileInFolder(folderHandle, title, year, opts) {
   let index;
   try {
-    index = await buildFolderIndex(folderHandle, onProgress);
+    index = await buildFolderIndex(folderHandle, opts);
   } catch (e) {
+    if (e?.name === 'AbortError') throw e;
     console.warn('[tik-files] folder walk failed', { message: e.message });
     invalidateFolderIndex(); // a half-built listing must not be trusted
     return null;
@@ -290,9 +356,28 @@ export async function findFileInFolder(folderHandle, title, year, onProgress) {
   return best ? { name: best, handle: index.files.get(best) } : null;
 }
 
+// The runners-up for a title, best first — so a miss can show WHY ("closest
+// was X, below the bar") instead of a bare "no match".
+// The bar is deliberately low (well under MATCH_THRESHOLD): these are shown to
+// explain a miss, never acted on. A rejected sequel scoring 20 is exactly what
+// the user needs to see — "it found the sequel and refused it" beats a blank
+// "no matching file".
+const NEAR_MISS_FLOOR = 15;
+
+export function nearMisses(title, year, limit = 3) {
+  if (!folderIndex) return [];
+  return [...folderIndex.files.keys()]
+    .map((name) => ({ name, score: Math.round(scoreCandidate(name, title, year)) }))
+    .filter((c) => c.score >= NEAR_MISS_FLOOR)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
 // ---- single-file memory ----
 
 export async function pickMovieFile(title, year) {
+  if (pickerOpen) return null;
+  pickerOpen = true;
   try {
     const [handle] = await window.showOpenFilePicker({
       id: 'tik-movie',
@@ -305,8 +390,10 @@ export async function pickMovieFile(title, year) {
     return { handle, file: await handle.getFile() };
   } catch (e) {
     if (e?.name === 'AbortError') return null;
-    console.error('[tik-files] file pick failed', { message: e.message });
+    console.error(`[tik-files] file pick failed: ${e.message}`, e);
     return null;
+  } finally {
+    pickerOpen = false;
   }
 }
 

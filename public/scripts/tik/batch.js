@@ -20,7 +20,10 @@
 import { createTriviaPool, helpfulLabel, DEFAULT_PICK } from './triviapool.js';
 import { grabVerifiedFrame } from './vision.js';
 import { loadVideoFile } from './capture.js';
-import { fsSupported, setMoviesFolder, getMoviesFolder, armHandle, pickMovieFile, resolveMovie } from './filestore.js';
+import {
+  fsSupported, setMoviesFolder, getMoviesFolder, armHandle, pickMovieFile, resolveMovie,
+  indexFolder, invalidateFolderIndex, folderIndexInfo, nearMisses,
+} from './filestore.js';
 import { fetchScenes } from './autopilot.js';
 import { makeProject, defaultPostFields } from './project.js';
 import { putProject, getProject, listProjects } from './store.js';
@@ -79,6 +82,8 @@ export function initBatch({ onExit = () => {} } = {}) {
     folderRow: $('batch-folder-row'), folderBtn: $('batch-folder-btn'), folderStatus: $('batch-folder-status'),
     unlock: $('batch-unlock'), unlockLabel: $('batch-unlock-label'),
     pickFile: $('batch-pick-file'), fileStatus: $('batch-file-status'), shootAll: $('batch-shoot-all'),
+    matchCard: $('batch-match-card'), matchList: $('batch-match-list'),
+    matchSummary: $('batch-match-summary'), matchGo: $('batch-match-go'), matchRescan: $('batch-match-rescan'),
   };
 
   els.back.addEventListener('click', () => exitTo());
@@ -98,7 +103,9 @@ export function initBatch({ onExit = () => {} } = {}) {
   els.folderBtn.addEventListener('click', onSetFolder);
   els.unlock.addEventListener('click', onUnlock);
   els.pickFile.addEventListener('click', onPickFile);
-  els.shootAll.addEventListener('click', shootAll);
+  els.shootAll.addEventListener('click', preflight);
+  els.matchGo.addEventListener('click', shootMatched);
+  els.matchRescan.addEventListener('click', rescanFolder);
 
   // The remembered-files UI only exists where the File System Access API
   // does (Chrome/Edge). Elsewhere the plain input is the whole story, same
@@ -124,7 +131,7 @@ export function refreshBatch() {
 
 // ================= chrome =================
 
-function showTab(name) {
+function showTab(name, { animate = false } = {}) {
   const on = 'bg-emerald-600 text-white';
   const off = 'text-neutral-400 hover:text-neutral-200';
   els.tabWrite.className = `rounded-md px-3 py-1.5 text-xs font-semibold ${name === 'write' ? on : off}`;
@@ -132,6 +139,20 @@ function showTab(name) {
   els.write.classList.toggle('hidden', name !== 'write');
   els.shoot.classList.toggle('hidden', name !== 'shoot');
   if (name === 'shoot') { loadDrafts(); refreshFolderStatus(); }
+
+  // Hand-off from Write to Shoot: slide the panel in and ping the tab, so the
+  // screen changing under you reads as a step forward rather than a glitch.
+  if (animate) {
+    const panel = name === 'shoot' ? els.shoot : els.write;
+    const tab = name === 'shoot' ? els.tabShoot : els.tabWrite;
+    for (const [el, cls] of [[panel, 'step-in'], [tab, 'tab-ping']]) {
+      el.classList.remove(cls);
+      void el.offsetWidth; // restart the animation even if the class was there
+      el.classList.add(cls);
+      el.addEventListener('animationend', () => el.classList.remove(cls), { once: true });
+    }
+    els.screen.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 }
 
 function say(msg, tone = 'idle') {
@@ -143,7 +164,8 @@ function say(msg, tone = 'idle') {
 function setBusy(on) {
   busy = on;
   for (const b of [els.suggest, els.build, els.run, els.replaceAll, els.reset,
-                   els.shootAll, els.pickFile, els.folderBtn, els.unlock]) b.disabled = on;
+                   els.shootAll, els.pickFile, els.folderBtn, els.unlock,
+                   els.matchGo, els.matchRescan]) b.disabled = on;
   if (!on) { refreshBuildButton(); refreshRunButton(); }
 }
 
@@ -627,15 +649,21 @@ async function buildAll() {
 
   setBusy(false);
   render();
-  loadDrafts();
+  await loadDrafts();
   // Say what did NOT work as plainly as what did — a silent partial run is
   // how you end up publishing eight drafts and wondering where two went.
   say(
     failed.length
       ? `Wrote ${made} draft${made === 1 ? '' : 's'}. Failed: ${failed.join(', ')}.`
-      : `Wrote ${made} draft${made === 1 ? '' : 's'}. Head to Shoot to fill in the frames.`,
+      : `Wrote ${made} draft${made === 1 ? '' : 's'} — now find their frames.`,
     failed.length ? 'bad' : 'good',
   );
+  // Step 1 done, so move to step 2 instead of leaving the user to find the
+  // tab. Only on a clean run: with failures the queue still needs attention.
+  if (made && !failed.length) {
+    showTab('shoot', { animate: true });
+    if (fsSupported()) preflight(); // and go straight to finding their files
+  }
 }
 
 async function saveDraft(item, suggestions) {
@@ -815,9 +843,27 @@ function showUnlock(on, label, handle) {
 
 async function onSetFolder() {
   const folder = await setMoviesFolder();
-  if (!folder) return; // user closed the picker
-  say(`Movies folder set to “${folder.name}”.`, 'good');
+  if (!folder) return; // user closed the picker (or one was already open)
   await refreshFolderStatus();
+  // Scan NOW, with the progress on screen, rather than paying for it silently
+  // on the first draft lookup — that wait was the "long freeze".
+  setBusy(true);
+  try {
+    const info = await indexFolder(folder.handle, {
+      onProgress: ({ files, videos, dir }) => {
+        say(`Reading “${dir || folder.name}”… ${files.toLocaleString()} files, ${videos.toLocaleString()} videos`);
+      },
+    });
+    els.fileStatus.textContent = `Folder holds ${info.videos.toLocaleString()} video files.`;
+    say(`Movies folder set to “${folder.name}” — ${info.videos.toLocaleString()} videos found` +
+      `${info.truncated ? ' (stopped at the file cap; pick a narrower folder)' : ''}.`,
+      info.truncated ? 'bad' : 'good');
+  } catch (e) {
+    console.error('[tik-batch] folder index failed', e);
+    say(`Folder set, but reading it failed: ${e.message}`, 'bad');
+  } finally {
+    setBusy(false);
+  }
   tryAutoResolve();
 }
 
@@ -863,9 +909,13 @@ async function tryAutoResolve() {
   if (!title || seq !== resolveSeq) return;
 
   const res = await resolveMovie(title, p.movie?.year, {
-    // The first search of a big library takes a while (it's indexed once per
-    // session after that) — say so, or it reads as a freeze.
-    onProgress: (n) => { if (seq === resolveSeq) els.fileStatus.textContent = `Indexing your movies folder… ${n.toLocaleString()} files`; },
+    // The first scan of a big library takes a while (indexed once per session
+    // after that). Naming the folder it's in makes it read as work, not a hang.
+    onProgress: ({ files, videos, dir }) => {
+      if (seq !== resolveSeq) return;
+      els.fileStatus.textContent =
+        `Scanning ${dir ? `“${dir}”` : 'your folder'}… ${files.toLocaleString()} files, ${videos.toLocaleString()} videos`;
+    },
   });
   if (seq !== resolveSeq) return;
   if (!res) {
@@ -961,67 +1011,192 @@ async function shootProject(project, duration) {
   return { shot: shootable.length, verified, moved, skipped: slides.length - shootable.length };
 }
 
-// Shoot All: every pending draft, each resolving its own file from memory.
-// One click arms the folder (a gesture is live right then); drafts whose file
-// can't be found are skipped BY NAME — a silent partial run is how you end up
-// reviewing eight drafts and wondering where two went.
-async function shootAll() {
+// ---- preflight: show the matches BEFORE shooting anything ----
+//
+// The old Shoot All resolved and shot in one pass, so a run over ten drafts
+// that only found two files looked like it "worked" and quietly did a fifth
+// of the job. Now the matching happens first and lands on screen: every draft
+// with the file it found, every miss with the closest names it rejected and a
+// button to pick that one by hand. Only then does anything get shot.
+
+let matches = []; // [{ project, file, label, score, state, error }]
+
+async function preflight() {
   if (!fsSupported()) return;
   setBusy(true);
   clearShots();
   try {
-    let drafts = [];
-    try {
-      drafts = (await listProjects()).filter((p) => p.batch?.pendingFrames && p.format === 'trivia');
-    } catch (e) {
-      console.error('[tik-batch] could not list drafts', e);
-    }
-    if (!drafts.length) { say('No drafts are waiting for frames.'); return; }
+    const drafts = (await listProjects().catch((e) => { console.error('[tik-batch] could not list drafts', e); return []; }))
+      .filter((p) => p.batch?.pendingFrames && p.format === 'trivia');
+    if (!drafts.length) { say('No drafts are waiting for frames.'); els.matchCard.classList.add('hidden'); return; }
 
-    // Use the click we have to arm the folder; per-file handles armed here too
-    // would each need their own gesture, so locked ones just fall to the folder.
+    // Arm the folder with the click we have — per-file handles each need their
+    // own gesture, so locked ones simply fall through to the folder match.
     const folder = await getMoviesFolder();
     if (folder && folder.state !== 'granted') {
       if (await armHandle(folder.handle)) await refreshFolderStatus();
-      else say(`Folder access declined — matching only against hand-picked files.`, 'bad');
+      else say('Folder access declined — matching only against hand-picked files.', 'bad');
     }
 
+    matches = [];
+    for (const [i, p] of drafts.entries()) {
+      say(`Looking for files… ${i + 1} of ${drafts.length}`);
+      matches.push(await matchFor(p));
+      renderMatches(); // fills in as it goes, so a long scan visibly progresses
+    }
+    const found = matches.filter((m) => m.state === 'ready').length;
+    say(found === matches.length
+      ? `Found a file for all ${found} drafts. Review below, then shoot.`
+      : `Found ${found} of ${matches.length}. Pick the missing ones below, or shoot what matched.`,
+      found === matches.length ? 'good' : 'idle');
+    renderMatches();
+  } catch (e) {
+    console.error('[tik-batch] preflight failed', e);
+    say(e.message, 'bad');
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function matchFor(project) {
+  const title = project.movie?.title;
+  const year = project.movie?.year;
+  try {
+    const res = await resolveMovie(title, year, {
+      onProgress: ({ files, videos, dir }) => {
+        els.fileStatus.textContent =
+          `Scanning ${dir ? `“${dir}”` : 'your folder'}… ${files.toLocaleString()} files, ${videos.toLocaleString()} videos`;
+      },
+    });
+    els.fileStatus.textContent = '';
+    if (!res) return { project, state: 'missing', near: nearMisses(title, year) };
+    if (res.state !== 'granted') return { project, state: 'locked', label: res.label, armTarget: res.armTarget };
+    return { project, state: 'ready', label: res.label, load: res.load };
+  } catch (e) {
+    console.error(`[tik-batch] match failed: ${title} — ${e.message}`, e);
+    return { project, state: 'error', error: e.message };
+  }
+}
+
+function renderMatches() {
+  els.matchCard.classList.remove('hidden');
+  els.matchList.innerHTML = '';
+  const ready = matches.filter((m) => m.state === 'ready').length;
+  els.matchSummary.textContent = `${ready} of ${matches.length} matched`;
+  els.matchGo.disabled = busy || !ready;
+  els.matchGo.textContent = ready ? `Shoot ${ready} matched` : 'Nothing to shoot';
+
+  for (const m of matches) {
+    const li = document.createElement('li');
+    li.className = 'flex flex-wrap items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2';
+
+    const dot = document.createElement('span');
+    dot.className = `h-2 w-2 shrink-0 rounded-full ${
+      m.state === 'ready' ? 'bg-emerald-500' : m.state === 'locked' ? 'bg-amber-400' : 'bg-red-500'}`;
+
+    const name = document.createElement('span');
+    name.className = 'text-sm font-semibold';
+    name.textContent = m.project.name || m.project.movie?.title || 'Untitled';
+
+    const detail = document.createElement('span');
+    detail.className = 'min-w-0 flex-1 truncate text-[11px] text-neutral-500';
+    if (m.state === 'ready') detail.textContent = m.label;
+    else if (m.state === 'locked') detail.textContent = `${m.label} — needs unlocking`;
+    else if (m.state === 'error') detail.textContent = m.error;
+    else {
+      // Say what it DID see, so a miss is diagnosable instead of mysterious.
+      detail.textContent = m.near?.length
+        ? `no match — closest: ${m.near.map((n) => `${n.name} (${n.score})`).join(', ')}`
+        : 'no matching file in your folder';
+      detail.title = detail.textContent;
+    }
+
+    const fix = document.createElement('button');
+    fix.type = 'button';
+    fix.className = 'shrink-0 rounded-md bg-neutral-800 px-2.5 py-1 text-xs font-semibold hover:bg-neutral-700';
+    fix.textContent = m.state === 'ready' ? 'Change' : 'Pick file';
+    fix.addEventListener('click', () => fixMatch(m));
+
+    li.append(dot, name, detail, fix);
+    els.matchList.appendChild(li);
+  }
+}
+
+// Pick this draft's file by hand. Remembered per movie, so it never asks again.
+async function fixMatch(m) {
+  const picked = await pickMovieFile(m.project.movie?.title, m.project.movie?.year);
+  if (!picked) return;
+  m.state = 'ready';
+  m.label = picked.file.name;
+  m.load = async () => picked.handle.getFile();
+  delete m.near;
+  renderMatches();
+  say(`${m.project.name}: using ${picked.file.name}. Remembered for next time.`, 'good');
+}
+
+async function rescanFolder() {
+  const folder = await getMoviesFolder();
+  if (!folder) { say('Set your movies folder first.', 'bad'); return; }
+  if (folder.state !== 'granted' && !(await armHandle(folder.handle))) return;
+  invalidateFolderIndex();
+  setBusy(true);
+  try {
+    const info = await indexFolder(folder.handle, {
+      onProgress: ({ files, videos, dir }) => {
+        els.fileStatus.textContent =
+          `Rescanning ${dir ? `“${dir}”` : ''}… ${files.toLocaleString()} files, ${videos.toLocaleString()} videos`;
+      },
+    });
+    els.fileStatus.textContent = `Folder holds ${info.videos.toLocaleString()} video files.`;
+    say('Folder rescanned.', 'good');
+  } catch (e) {
+    console.error('[tik-batch] rescan failed', e);
+    say(e.message, 'bad');
+  } finally {
+    setBusy(false);
+  }
+  if (matches.length) preflight();
+}
+
+// Shoot only what the preflight matched, reporting each draft as it goes.
+async function shootMatched() {
+  const ready = matches.filter((m) => m.state === 'ready');
+  if (!ready.length) return;
+  setBusy(true);
+  clearShots();
+  try {
     let done = 0;
     let verifiedTotal = 0;
-    const skipped = [];
-    for (const p of drafts) {
-      const res = await resolveMovie(p.movie?.title, p.movie?.year, {
-        onProgress: (n) => say(`Indexing your movies folder… ${n.toLocaleString()} files`),
-      });
-      if (!res || res.state !== 'granted') {
-        skipped.push(p.name || p.movie?.title || 'Untitled');
-        addShotDivider(p.name, 'no file found — select this draft and pick it once');
-        continue;
-      }
-      let file;
+    const failed = [];
+    for (const [i, m] of ready.entries()) {
+      const label = m.project.name || 'Untitled';
+      say(`Shooting ${label} — draft ${i + 1} of ${ready.length}…`);
       try {
-        file = await res.load();
-        addShotDivider(p.name, file.name);
+        const file = await m.load();
+        addShotDivider(label, file.name);
         await loadShootFile(file);
       } catch (e) {
-        console.error(`[tik-batch] shoot-all file load failed: ${p.movie?.title} — ${e.message}`, e);
-        skipped.push(p.name || 'Untitled');
-        addShotDivider(p.name, `file would not load: ${e.message}`);
+        console.error(`[tik-batch] file load failed: ${label} — ${e.message}`, e);
+        addShotDivider(label, `file would not load: ${e.message}`);
+        failed.push(label);
         continue;
       }
-      const r = await shootProject(p, shootVideo.duration);
+      const r = await shootProject(m.project, shootVideo.duration);
       verifiedTotal += r.verified;
       done++;
     }
-
+    const missing = matches.length - ready.length;
     say(
-      `Shot ${done} of ${drafts.length} draft${drafts.length === 1 ? '' : 's'} (${verifiedTotal} frames verified)` +
-      `${skipped.length ? ` — no file for: ${skipped.join(', ')}` : ''}.`,
-      skipped.length ? 'bad' : 'good',
+      `Shot ${done} of ${matches.length} draft${matches.length === 1 ? '' : 's'}, ${verifiedTotal} frames verified` +
+      `${failed.length ? ` — failed: ${failed.join(', ')}` : ''}` +
+      `${missing ? ` — still no file for ${missing}` : ''}.`,
+      failed.length || missing ? 'bad' : 'good',
     );
-    loadDrafts();
+    await loadDrafts();
+    matches = matches.filter((m) => m.state !== 'ready');
+    if (matches.length) renderMatches(); else els.matchCard.classList.add('hidden');
   } catch (e) {
-    console.error('[tik-batch] shoot-all failed', e);
+    console.error('[tik-batch] shoot failed', e);
     say(e.message, 'bad');
   } finally {
     setBusy(false);
