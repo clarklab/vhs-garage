@@ -146,3 +146,13 @@ test('marker words shared by BOTH titles do not veto', () => {
   // v/x/part only veto as EXTRA tokens — "Malcolm X" has x on both sides.
   assert.ok(scoreCandidate('Malcolm.X-1080p.GROUP.mkv', 'Malcolm X', 1992) >= 60);
 });
+
+// Near-misses exist to EXPLAIN a rejection, so their floor sits well under the
+// match threshold. A rejected sequel scoring ~20 is the single most useful
+// thing to show, and a `> 20` filter hid exactly that (found in testing).
+test('nearMisses floor is low enough to surface a rejected sequel', async () => {
+  const { scoreCandidate: sc } = await import('../../public/scripts/tik/filestore.js');
+  const s = sc('Gremlins.2.The.New.Batch-1080p.GRP.mkv', 'Gremlins', 1984);
+  assert.ok(s < 60, 'still correctly refused as a match');
+  assert.ok(s >= 15, `but above the explain-it floor (got ${s})`);
+});

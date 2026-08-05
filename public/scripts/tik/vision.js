@@ -13,6 +13,8 @@ import { seekAndSettle, grabFrame } from './capture.js';
 export const MAX_ATTEMPTS = 3;
 const CHECK_MAX_EDGE = 768;   // plenty for "is this the right scene", cheap to send
 const CHECK_QUALITY = 0.8;
+const BLANK_NUDGES = 4;         // local hops off a black/flat frame per attempt
+const BLANK_NUDGE_SECONDS = 3;  // far enough to clear a cut or a fade
 
 // How salvageable each rejection is, worst last. When every attempt fails we
 // keep the least-bad frame: a real shot of the wrong scene still beats a black
@@ -22,6 +24,36 @@ const severity = (issue) => {
   const i = ISSUE_RANK.indexOf(issue);
   return i === -1 ? ISSUE_RANK.length : i;
 };
+
+// Cheap local read of a frame: mean brightness and contrast, on a tiny
+// downscale. Catches the failures that don't need an opinion — a black frame
+// between scenes, a fade, a flat wall — before spending a vision call on them.
+// Returns { mean, spread, blank } on 0–255.
+export function frameStats(bitmap) {
+  const w = 32;
+  const h = Math.max(1, Math.round((bitmap.height / bitmap.width) * w)) || 18;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  let sum = 0;
+  let sumSq = 0;
+  const n = w * h;
+  for (let i = 0; i < data.length; i += 4) {
+    // Rec. 601 luma is plenty for "is anything happening in this frame".
+    const y = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    sum += y;
+    sumSq += y * y;
+  }
+  const mean = sum / n;
+  const spread = Math.sqrt(Math.max(0, sumSq / n - mean * mean));
+  // Thresholds are deliberately timid: a genuinely dark but real shot (night
+  // exteriors, a lit face on black) has spread well above 10. Only near-total
+  // black or a flat single-colour card trips this.
+  const blank = (mean < 10 && spread < 12) || spread < 6;
+  return { mean, spread, blank };
+}
 
 // Shrink a grabbed frame down to something worth sending over the wire and
 // return it as bare base64 (no data: prefix).
@@ -78,7 +110,21 @@ export async function grabVerifiedFrame(video, {
       : `Checking a different shot (try ${attempt} of ${maxAttempts})…`);
 
     await seekAndSettle(video, at);
-    const bitmap = await grabFrame(video);
+    let bitmap = await grabFrame(video);
+
+    // Nudge off a blank frame before asking anyone's opinion. Cuts between
+    // scenes and fades are common landing spots for a guessed timecode, and
+    // they're recognisable locally — so step forward a couple of seconds
+    // instead of burning one of three vision calls to be told it's black.
+    for (let nudge = 0; nudge < BLANK_NUDGES && frameStats(bitmap).blank; nudge++) {
+      const bumped = Math.min(dur, at + BLANK_NUDGE_SECONDS);
+      if (bumped === at) break; // already at the end; nothing to nudge into
+      onProgress('Skipping a blank frame…');
+      bitmap.close?.();
+      at = bumped;
+      await seekAndSettle(video, at);
+      bitmap = await grabFrame(video);
+    }
 
     let verdict;
     try {
