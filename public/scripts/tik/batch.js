@@ -568,6 +568,11 @@ async function buildAll() {
         year: it.year,
         durationSeconds: it.runtimeSeconds || 0,
         count: picked.length,
+        // Same opener the hand-driven flow gets: the server prepends a title
+        // slide ("Movie (Year)" + a lead-in) pointed at the film's title card,
+        // so it arrives as suggestions[0] and the count above stays the number
+        // of TRIVIA slides.
+        includeTitleSlide: true,
         guidance: picked.map((p) => p.text).join('\n\n'),
         onProgress: (m) => say(`${it.title} (${i + 1} of ${ready.length}) — ${m}`),
       });
@@ -614,6 +619,7 @@ async function saveDraft(item, suggestions) {
   const frame = await bitmapToBlob(card);
   const thumb = await bitmapToBlob(card, 240);
   card.close?.();
+  const outro = await fetchOutroFrame();
 
   const project = makeProject({ id, format: 'trivia', now });
   const post = defaultPostFields('trivia', label);
@@ -629,18 +635,52 @@ async function saveDraft(item, suggestions) {
       pendingFrames: true,
       sourceCount: suggestions.length,
     },
-    slides: suggestions.map((s, i) => ({
-      id: String(i + 1),
-      caption: s.caption,
-      timecode: s.timecode,
-      grabHint: s.grab || '',
-      fontScale: 1, role: null, kind: null, entry: null, section: null,
-      frame,
-    })),
+    slides: [
+      // suggestions[0] is the title slide (includeTitleSlide). It still needs
+      // a frame grabbed from the film — its timecode points at the title card —
+      // so it carries a placeholder like the rest, marked so Shoot can tell the
+      // verifier to look for a title card rather than a scene.
+      ...suggestions.map((s, i) => ({
+        id: String(i + 1),
+        caption: s.caption,
+        timecode: s.timecode,
+        grabHint: s.grab || '',
+        fontScale: 1, role: null, kind: null, entry: null, section: null,
+        frame,
+        batchShot: i === 0 ? 'title' : 'trivia',
+      })),
+      ...(outro ? [{
+        id: String(suggestions.length + 1),
+        caption: OUTRO_CAPTION,
+        timecode: null,
+        grabHint: '',
+        fontScale: 1, role: null, kind: 'outro', entry: null, section: null,
+        frame: outro,
+        batchShot: 'skip', // the logo IS the frame; never grab over it
+      }] : []),
+    ],
     thumb,
   });
   await putProject(project);
   return id;
+}
+
+// The branded sign-off, same logo and wording the hand-driven flow appends.
+// Duplicated rather than imported because app.js keeps it private and batch
+// mode stays self-contained; if the caption there changes, change it here too.
+const OUTRO_LOGO_URL = '/images/vhs-garage-logo-square.png';
+const OUTRO_CAPTION = 'Follow VHS Garage for more movie trivia';
+
+// Never fatal: a missing logo costs the outro slide, not the whole draft.
+async function fetchOutroFrame() {
+  try {
+    const res = await fetch(OUTRO_LOGO_URL);
+    if (!res.ok) throw new Error(`logo ${res.status}`);
+    return await res.blob();
+  } catch (e) {
+    console.error('[tik-batch] outro logo failed; draft written without it', { message: e.message });
+    return null;
+  }
 }
 
 async function bitmapToBlob(bitmap, maxEdge = 0) {
@@ -716,10 +756,14 @@ async function runShoot() {
     const slides = project.slides || [];
     const duration = shootVideo.duration || project.batch?.runtimeSeconds || 0;
 
+    // The outro is the VHS Garage logo, not a frame from the film — grabbing
+    // over it would replace the sign-off with a random shot.
+    const shootable = slides.filter((s) => s.batchShot !== 'skip' && s.kind !== 'outro');
+
     let verified = 0;
     let moved = 0;
-    for (const [i, slide] of slides.entries()) {
-      say(`Frame ${i + 1} of ${slides.length}…`);
+    for (const [i, slide] of shootable.entries()) {
+      say(`Frame ${i + 1} of ${shootable.length}…`);
       const row = shotRow(i + 1, slide.caption);
       els.shots.appendChild(row.li);
       try {
@@ -728,6 +772,9 @@ async function runShoot() {
           durationSeconds: duration,
           caption: slide.caption,
           grab: slide.grabHint,
+          // Slide one is the opener: the verifier should be hunting for the
+          // film's title card, not a scene that matches the caption.
+          kind: slide.batchShot === 'title' ? 'title' : 'trivia',
           onProgress: (m) => { row.note.textContent = m; },
         });
         slide.frame = await bitmapToBlob(out.bitmap);
@@ -748,9 +795,10 @@ async function runShoot() {
     project.updatedAt = Date.now();
     await putProject(project);
 
+    const skipped = slides.length - shootable.length;
     say(
-      `Done — ${verified} of ${slides.length} frames verified, ${moved} re-seeked. ` +
-      'Open it from your library to review and post.',
+      `Done — ${verified} of ${shootable.length} frames verified, ${moved} re-seeked` +
+      `${skipped ? `, outro left alone` : ''}. Open it from your library to review and post.`,
       'good',
     );
     loadDrafts();
