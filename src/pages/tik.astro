@@ -224,6 +224,10 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
               <label class="flex items-center gap-1 text-xs text-neutral-400" title="Spoiler trivia is flagged by IMDb">
                 <input id="batch-spoilers" type="checkbox" class="accent-emerald-500" /> Spoilers
               </label>
+              <label class="flex items-center gap-1 text-xs text-neutral-400"
+                     title="Send the top 25 by votes to the agent and let it choose the best slides, instead of taking the top 10 by votes">
+                <input id="batch-curate" type="checkbox" class="accent-emerald-500" checked /> AI picks
+              </label>
               <button id="batch-replace-all" class="rounded-md bg-neutral-800 px-2.5 py-1.5 text-xs font-semibold hover:bg-neutral-700" title="Throw this whole set out and show the next ones">Next set</button>
               <button id="batch-reset" class="rounded-md bg-neutral-800 px-2.5 py-1.5 text-xs font-semibold hover:bg-neutral-700" title="Undo every removal">Reset</button>
             </div>
@@ -231,6 +235,7 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
           <p id="batch-picker-hint" class="mt-1 text-[11px] leading-snug text-neutral-500">
             Straight from IMDb, ranked by helpful votes minus unhelpful ones. Throw one out and the next best takes its place.
           </p>
+          <p id="batch-curate-note" class="mt-1 hidden text-[11px] leading-snug text-emerald-300/80"></p>
           <ol id="batch-trivia" class="mt-3 flex flex-col gap-2"></ol>
           <p id="batch-trivia-empty" class="mt-3 rounded-lg border border-dashed border-neutral-800 p-8 text-center text-sm text-neutral-500">
             Pick a movie on the left to see its trivia.

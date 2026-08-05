@@ -73,7 +73,8 @@ export function initBatch({ onExit = () => {} } = {}) {
     queue: $('batch-queue'), queueEmpty: $('batch-queue-empty'), queueCount: $('batch-queue-count'),
     build: $('batch-build'), buildLabel: $('batch-build-label'),
     pickerTitle: $('batch-picker-title'), pickerMeta: $('batch-picker-meta'),
-    size: $('batch-size'), spoilers: $('batch-spoilers'),
+    size: $('batch-size'), spoilers: $('batch-spoilers'), curate: $('batch-curate'),
+    curateNote: $('batch-curate-note'),
     replaceAll: $('batch-replace-all'), reset: $('batch-reset'),
     trivia: $('batch-trivia'), triviaEmpty: $('batch-trivia-empty'),
     // shoot
@@ -95,6 +96,7 @@ export function initBatch({ onExit = () => {} } = {}) {
   els.build.addEventListener('click', buildAll);
   els.size.addEventListener('change', onSizeChange);
   els.spoilers.addEventListener('change', onSpoilersChange);
+  els.curate.addEventListener('change', onCurateToggle);
   els.replaceAll.addEventListener('click', () => withSelected((it) => { it.pool.replaceAll(); renderPicker(); }));
   els.reset.addEventListener('click', () => withSelected((it) => { it.pool.reset(); renderPicker(); }));
   els.file.addEventListener('change', onShootFile);
@@ -383,6 +385,12 @@ async function ensurePool(item) {
   renderQueue();
   if (selectedKey === item.key) renderPicker();
   refreshBuildButton();
+
+  // Curate in the background once the pool is on screen: the vote-ranked ten
+  // shows instantly, then re-ranks when the agent answers. Only the movie
+  // being looked at — the rest get curated during buildAll, so a ten-movie
+  // queue doesn't fire ten agent calls just from being queued.
+  if (item.state === 'ready' && selectedKey === item.key) curateSelected(item);
 }
 
 // Walk the queue loading pools one at a time. Sequential on purpose: ten
@@ -399,6 +407,108 @@ async function prefetchPools() {
   } finally {
     prefetching = false;
   }
+}
+
+// ---- AI curation: which of the top 25 make the best 10 slides ----
+//
+// IMDb's helpful votes answer "was this worth reading", not "will this stop a
+// thumb". So the vote-ranked top 25 goes to an agent, which re-ranks for
+// surprise, visual support, brevity and variety. The result reorders the pool,
+// and each pick carries the agent's reason — the human review stays the last
+// word, it just starts from a better ten.
+const CANDIDATES = 25;
+
+async function curatePool(item, { announce = () => {} } = {}) {
+  if (!els.curate.checked || !item?.pool || item.curated) return false;
+  const size = item.pool.size();
+  const all = item.pool.top(CANDIDATES);
+  if (all.length <= size) return false; // nothing to choose between
+
+  announce('Agent is picking the best of the top 25…');
+  try {
+    const res = await runCurateJob({
+      title: item.title,
+      year: item.year,
+      count: size,
+      candidates: all.map((c) => ({ id: c.id, text: c.text })),
+    });
+    if (!res?.order?.length) return false;
+    item.pool.applyOrder(res.order, res.why || {});
+    item.curated = res.curated || 0;
+    return true;
+  } catch (e) {
+    // Never fatal: a failed ranking just leaves the vote order in place.
+    console.warn(`[tik-batch] curation failed for ${item.title}: ${e.message}`, e);
+    item.curateError = e.message;
+    return false;
+  }
+}
+
+async function runCurateJob(params) {
+  const jobId = crypto.randomUUID?.() ??
+    Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+  const kick = await fetchWithTimeout('/.netlify/functions/tik-curate-background', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...params, jobId }),
+  }).catch(() => null);
+
+  if (!kick || !kick.ok) {
+    console.warn('[tik-batch] background curate unavailable, using sync endpoint', { status: kick?.status });
+    return runCurateSync(params);
+  }
+
+  const t0 = Date.now();
+  let fails = 0;
+  let sawStart = false;
+  while (Date.now() - t0 < QUEUE_POLL_MAX_MS) {
+    await sleep(QUEUE_POLL_MS);
+    const res = await fetchWithTimeout(`/.netlify/functions/tik-curate?job=${encodeURIComponent(jobId)}`).catch(() => null);
+    if (!res || !res.ok) {
+      if (++fails >= 5) return runCurateSync(params);
+      continue;
+    }
+    fails = 0;
+    const data = await res.json().catch(() => ({}));
+    if (data.started) sawStart = true;
+    if (!data.done) {
+      if (!sawStart && Date.now() - t0 > 30_000) return runCurateSync(params);
+      continue;
+    }
+    if (!data.ok) throw new Error(data.error || 'Could not rank the trivia.');
+    return data;
+  }
+  throw new Error('Ranking the trivia timed out.');
+}
+
+async function runCurateSync(params) {
+  const res = await fetchWithTimeout('/.netlify/functions/tik-curate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Ranking failed (${res.status})`);
+  return data;
+}
+
+// Turning it on re-ranks what's loaded; turning it off restores vote order by
+// reloading the pools (the original order is the server's, not ours to undo).
+function onCurateToggle() {
+  if (!els.curate.checked) {
+    for (const it of queue) { it.pool = null; it.state = 'idle'; it.curated = 0; }
+    render();
+    const it = find(selectedKey);
+    if (it) ensurePool(it);
+    return;
+  }
+  const it = find(selectedKey);
+  if (it?.pool) curateSelected(it);
+}
+
+async function curateSelected(item) {
+  const changed = await curatePool(item, { announce: (m) => { els.curateNote.textContent = m; els.curateNote.classList.remove('hidden'); } });
+  if (find(selectedKey) === item) renderPicker();
+  renderQueue();
+  return changed;
 }
 
 function sizeValue() {
@@ -521,6 +631,18 @@ function renderPicker() {
   // broken arithmetic.
   els.pickerMeta.textContent =
     `${visible.length} of ${it.pool.total()} · ${it.pool.benchCount()} in reserve${hiddenNote(it)}`;
+  const curated = it.pool.isCurated();
+  els.curateNote.textContent = it.curateError
+    ? `Agent ranking unavailable (${it.curateError}) — showing IMDb vote order.`
+    : curated
+      ? `Agent chose these ${it.curated} from the top ${Math.min(25, it.pool.total())} by votes.`
+      : '';
+  // Visibility and colour in ONE assignment: setting .className separately
+  // wipes whatever classList.toggle('hidden') just did, leaving an empty
+  // element holding layout space.
+  els.curateNote.className = `mt-1 text-[11px] leading-snug ${
+    els.curateNote.textContent ? '' : 'hidden '}${
+    it.curateError ? 'text-amber-300/80' : 'text-emerald-300/80'}`;
   els.triviaEmpty.classList.toggle('hidden', visible.length > 0);
   if (!visible.length) els.triviaEmpty.textContent = 'Every item was thrown out. Hit Reset to bring them back.';
 
@@ -557,6 +679,15 @@ function triviaRow(movie, item, index) {
   votes.textContent = helpfulLabel(item);
   votes.title = `${item.up} helpful, ${item.down} not helpful`;
   meta.appendChild(votes);
+  if (item.curated) {
+    // Why the agent chose it — this is what makes the human review a check on
+    // its judgement rather than a rubber stamp.
+    const pick = document.createElement('span');
+    pick.className = 'text-emerald-300/80';
+    pick.textContent = item.why ? `AI pick: ${item.why}` : 'AI pick';
+    pick.title = item.why || 'Chosen by the agent from the top 25';
+    meta.appendChild(pick);
+  }
   if (item.spoiler) {
     const sp = document.createElement('span');
     sp.className = 'rounded bg-red-400/15 px-1.5 py-0.5 font-semibold text-red-300';
@@ -611,6 +742,13 @@ async function buildAll() {
     if (!it.pool) {
       say(`Loading trivia for ${it.title} (${i + 1} of ${ready.length})…`);
       await ensurePool(it);
+    }
+    // Curate before writing so an unopened movie still gets the agent's ten
+    // rather than the raw vote order.
+    if (it.pool && !it.curated) {
+      say(`Choosing the best trivia for ${it.title} (${i + 1} of ${ready.length})…`);
+      await curatePool(it);
+      if (selectedKey === it.key) renderPicker();
     }
     const picked = it.pool?.visible() || [];
     if (!picked.length) {
