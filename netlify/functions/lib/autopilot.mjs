@@ -4,6 +4,15 @@ export const AUTOPILOT_COUNT = 5;
 const CAPTION_MAX = 180;
 const GRAB_MAX = 120; // editor-facing "what shot to grab" hint, never shown to viewers
 
+// Post meta (the TikTok caption, its hashtags, and song picks) is written by
+// THIS call rather than a separate one, because this is the only place where
+// "do not repeat a fact that is on a slide" is checkable: the model has the
+// captions it just wrote in front of it.
+export const META_HOOK_MAX = 200;
+const FILM_TAG_MAX = 4;   // the client trims to 3; leave the model a spare
+const SONG_MAX = 3;
+const SONG_FIELD_MAX = 100;
+
 // Shared between the background worker (writes) and the poller (reads) —
 // a single source of truth so the two can never drift apart.
 export const JOBS_STORE = 'tik-jobs';
@@ -12,7 +21,7 @@ export const ALLOWED_MODELS = new Set([
   'gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gpt-4.1-nano',
 ]);
 
-export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUTOPILOT_COUNT, exclude = [], focusTimecode, guidance = '', includeTitleSlide = false, sourceMaterial = '', sourceName = '' }) {
+export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUTOPILOT_COUNT, exclude = [], focusTimecode, guidance = '', includeTitleSlide = false, includeMeta = false, sourceMaterial = '', sourceName = '' }) {
   const dur = Math.max(1, Math.round(durationSeconds || 0));
   const film = year ? `${title} (${year})` : title;
 
@@ -47,6 +56,23 @@ export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUT
       : `\n\nSOURCE MATERIAL${sourceName ? ` (Wikipedia: "${sourceName}")` : ''} about this film's production is below. Prefer facts grounded in it over memory; rewrite them as clean statements in your OWN words (never copy sentences).\n<source_material>${String(sourceMaterial).trim().slice(0, 12000)}</source_material>`)
     : '';
 
+  // The post's own copy: written here so "do not spoil a slide" is enforceable.
+  // Opt-in, so the single-slide "write one more" path sends the same prompt it
+  // has always sent.
+  const metaBlock = includeMeta ? `
+
+ALSO return a "meta" object describing the POST ITSELF. This is not a slide and no viewer reads it over an image; it is the TikTok caption, its hashtags, and the song the human will pick in the app.
+- "hook": one or two sentences, at most ${META_HOOK_MAX} characters, introducing the film. Name the film and its year, plus at least two of: the director, the lead cast, the genre or era, the studio. This is what makes the post findable in search, so use the words a person would actually type. It MUST NOT state or hint at any fact you used in a slide caption above: the slides are the payoff and the caption must not spoil them. Same house rules as the captions: no hype, no questions, no em dashes.
+- "filmTags": 2 to ${FILM_TAG_MAX} hashtag words specific to THIS film. Lowercase, no "#", no spaces, no punctuation, no numbers-only tags. Use the film's title, its director or a lead actor, and one era/genre/subject tag. For a 1982 John Carpenter film that would be ["thething", "johncarpenter", "80shorror", "practicaleffects"].
+- "songs": up to ${SONG_MAX} songs from this film's soundtrack, most recognizable first. Licensed pop or rock songs and needle-drops ONLY, never the orchestral score and never a composer's cue. Each is { "title", "artist", "why" }, where "why" is at most ${SONG_FIELD_MAX} characters saying where it appears in the film. If the film has no notable licensed song, return an empty array. Never invent a song or guess an artist.` : '';
+
+  const metaShape = includeMeta ? `,
+  "meta": {
+    "hook": "string",
+    "filmTags": ["string"],
+    "songs": [{ "title": "string", "artist": "string", "why": "string" }]
+  }` : '';
+
   // Discovery rules only apply when the model is finding its own facts (no paste).
   const discoveryRules = guidanceIsSource ? '' : `
 - Favor lesser-known facts, not the film's most famous trivia.
@@ -76,13 +102,13 @@ HOW TO WRITE EACH TRIVIA CAPTION (the title slide has its own rule below):
 For each item, give:
 - "caption": the trivia text, following the rules above.
 - "timecode": a whole number of SECONDS between 0 and ${dur} pointing to where that scene appears (spread them across the runtime). A suggestion the user fine-tunes.
-- "grab": a terse visual pointer to help the human editor find the exact shot, e.g. "the scene where the building is on fire" (${GRAB_MAX} chars max, for the editor only, never shown to viewers).${titleSlideBlock}${focusBlock}${excludeBlock}${guidanceBlock}${sourceBlock}
+- "grab": a terse visual pointer to help the human editor find the exact shot, e.g. "the scene where the building is on fire" (${GRAB_MAX} chars max, for the editor only, never shown to viewers).${titleSlideBlock}${focusBlock}${excludeBlock}${guidanceBlock}${sourceBlock}${metaBlock}
 
 Return ONLY valid JSON in this exact shape, nothing else:
 {
   "suggestions": [
     { "caption": "string", "timecode": 0, "grab": "string" }
-  ]
+  ]${metaShape}
 }`;
 }
 
@@ -99,6 +125,46 @@ export function stripDashes(s) {
     .replace(/[ \t]{2,}/g, ' ')            // collapse runs of spaces
     .replace(/^[ \t,]+|[ \t,]+$/gm, '')    // trim spaces/commas at each line's edges
     .trim();
+}
+
+// The model's "meta" → { hook, filmTags, songs }, or null when there is nothing
+// usable in it. Only shape, type, and length are enforced here; hashtag
+// cleaning lives in hashtags.js so there is exactly one place that decides what
+// a tag may look like.
+//
+// Returning null is a normal outcome, not a failure: the caller falls back to
+// the template copy. A bad meta must never cost us the captions.
+export function normalizeMeta(raw) {
+  const m = raw?.meta;
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
+
+  const hook = typeof m.hook === 'string'
+    ? stripDashes(m.hook.trim()).slice(0, META_HOOK_MAX)
+    : '';
+
+  const filmTags = (Array.isArray(m.filmTags) ? m.filmTags : [])
+    .filter((t) => typeof t === 'string')
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, FILM_TAG_MAX);
+
+  const songs = [];
+  for (const s of Array.isArray(m.songs) ? m.songs : []) {
+    if (songs.length >= SONG_MAX) break;
+    const song = {
+      title: str(s?.title),
+      artist: str(s?.artist),
+      why: str(s?.why),
+    };
+    if (song.title) songs.push(song); // an artist with no title is not a pick
+  }
+
+  if (!hook && !filmTags.length && !songs.length) return null;
+  return { hook, filmTags, songs };
+}
+
+function str(v) {
+  return typeof v === 'string' ? v.trim().slice(0, SONG_FIELD_MAX) : '';
 }
 
 export function normalizeSuggestions(raw, durationSeconds, max = AUTOPILOT_COUNT) {

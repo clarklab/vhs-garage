@@ -5,9 +5,9 @@
 import { loadVideoFile, grabFrame, awaitSeekSettled, seekAndSettle } from './capture.js';
 import { initScrubber } from './scrubber.js';
 import { addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame } from './slides.js';
-import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken } from './auth.js';
+import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, getRefreshToken } from './auth.js';
 import { publishSlideshow } from './publish.js';
-import { fetchScenes, fetchRoles, fetchBlurbs, fetchYearSnapshot } from './autopilot.js';
+import { fetchScenes, fetchTriviaPost, fetchRoles, fetchBlurbs, fetchYearSnapshot } from './autopilot.js';
 import { parseMovieName } from './filename.js';
 import { composeToCanvas, composeSlide } from './compose.js';
 import {
@@ -23,6 +23,7 @@ import {
   parseGrossList, toGrossEntries, boxOfficeMojoUrl, formatGross,
 } from './charts.js';
 import { fetchFollowerStats, renderFollowerChart, fmtCount } from './stats.js';
+import { tagReport, tagReportHtml } from './tagreport.js';
 // Batch mode (beta) owns its own screen end to end; this file only shows it.
 import { initBatch, refreshBatch } from './batch.js';
 // Remembered movie-file handles (batch mode's folder grant). Read-only here:
@@ -68,6 +69,9 @@ const els = {
   mojoLink: $('mojo-link'), mojoPaste: $('mojo-paste'), mojoPasteNote: $('mojo-paste-note'),
   // post details
   postTitleInput: $('post-title-input'), postDescInput: $('post-desc-input'), postReset: $('post-reset'),
+  songPicks: $('song-picks'), songList: $('song-list'),
+  // hashtag performance, under the follower chart
+  tagReport: $('tag-report'), tagReportNote: $('tag-report-note'), tagReportBody: $('tag-report-body'),
   // slides pane
   count: $('slide-count'), list: $('slide-list'), addScene: $('add-scene'), slidesHint: $('slides-hint'),
   imgFile: $('img-file-input'),
@@ -326,6 +330,7 @@ function enterEditor() {
   els.projectName.value = project.name || '';
   els.postTitleInput.value = project.postTitle || '';
   els.postDescInput.value = project.postDesc || '';
+  renderSongPicks();
   els.titleToggle.checked = !!project.titleOn;
   els.movieTitle.value = project.titleLine || '';
   els.movieTitle.disabled = !project.titleOn;
@@ -353,9 +358,10 @@ async function newProject(format) {
   openSeq++; // abort any in-flight openProject load
   await teardownProject();
   project = makeProject({ id: uuid(), format, now: Date.now() });
-  const d = defaultPostFields(format, '');
+  const d = defaultPostFields(format, '', { projectId: project.id });
   project.postTitle = d.title;
   project.postDesc = d.description;
+  project.hashtagSet = d.hashtagSet || null;
   nextId = 1;
   enterEditor();
   const opener = {
@@ -435,9 +441,10 @@ function syncPostDefaults() {
     : project.format === 'year'
       ? (project.year ? String(project.year) : project.name)
       : (movie.query || project.name);
-  const d = defaultPostFields(project.format, name);
+  const d = defaultPostFields(project.format, name, { meta: project.postMeta, projectId: project.id });
   project.postTitle = d.title;
   project.postDesc = d.description;
+  if (d.hashtagSet) project.hashtagSet = d.hashtagSet;
   els.postTitleInput.value = d.title;
   els.postDescInput.value = d.description;
 }
@@ -593,6 +600,7 @@ els.file.addEventListener('change', () => els.videoReload.classList.add('hidden'
 // the accumulated series renders as a line chart once it has 2+ days.
 let lastStatsSeries = null;
 async function refreshStatsCard() {
+  refreshTagReport(); // non-blocking, separate scope, handles its own errors
   try {
     const data = await fetchFollowerStats();
     const series = data.series || [];
@@ -629,6 +637,59 @@ async function refreshStatsCard() {
       ? (e.hint || e.message)
       : (e.reauth ? 'Sign in again to track followers.' : 'Follower stats are unavailable right now.');
   }
+}
+
+// ================= Hashtag report =================
+// TikTok exposes no hashtag volume data to us (the Creative Center endpoint
+// answers "no permission" and /tag/<name> pages carry no counts), so the only
+// honest signal is our own posts. This reads the tags back off what shipped.
+//
+// Needs the video.list scope, which may not be granted — that is an expected
+// state, and the panel simply stays hidden rather than showing a broken widget.
+const TAG_REPORT_TTL_MS = 10 * 60 * 1000;
+let lastTagReportAt = 0;
+async function refreshTagReport() {
+  if (!isSignedIn()) { els.tagReport.classList.add('hidden'); return; }
+  // Reading the history is up to ten TikTok API pages. It changes when we post,
+  // not when we glance at the home screen, so don't re-pull it every visit.
+  if (Date.now() - lastTagReportAt < TAG_REPORT_TTL_MS) return;
+  try {
+    const res = await fetch('/.netlify/functions/tik-history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: getRefreshToken() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.scope === 'missing' || !Array.isArray(data.movies)) {
+      if (data.scope === 'missing') console.warn('[tik] tag report needs the video.list scope', { hint: data.hint });
+      els.tagReport.classList.add('hidden');
+      return;
+    }
+    lastTagReportAt = Date.now();
+    const { note, body } = tagReportHtml(tagReport(data.movies));
+    els.tagReport.classList.remove('hidden');
+    els.tagReportNote.textContent = note;
+    els.tagReportBody.innerHTML = body;
+  } catch (e) {
+    console.error('[tik] tag report failed:', e);
+    els.tagReport.classList.add('hidden');
+  }
+}
+
+// ================= Song picks =================
+// No TikTok API mode can attach a specific song (auto_add_music is DIRECT_POST
+// only and never names a track), so the agent's picks exist to be searched by
+// hand in the app while finishing the draft.
+function renderSongPicks() {
+  const songs = project?.postMeta?.songs || [];
+  const show = project?.format === 'trivia' && songs.length > 0;
+  els.songPicks.classList.toggle('hidden', !show);
+  if (!show) { els.songList.innerHTML = ''; return; }
+  els.songList.innerHTML = songs.map((s) => `
+    <li class="text-xs leading-snug text-neutral-300">
+      <span class="font-semibold text-neutral-100">${escapeHtml(s.title)}</span>${s.artist ? ` <span class="text-neutral-500">${escapeHtml(s.artist)}</span>` : ''}
+      ${s.why ? `<br><span class="text-[11px] text-neutral-600">${escapeHtml(s.why)}</span>` : ''}
+    </li>`).join('');
 }
 
 // Re-render the chart on resize (debounced) so it tracks the card's width.
@@ -748,11 +809,19 @@ els.autopilot.addEventListener('click', async () => {
     const guidance = els.autopilotPrompt.value.trim();
     const pasteItems = guidance.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
     const count = pasteItems.length >= 2 ? Math.min(pasteItems.length, 12) : 5;
-    const scenes = await fetchScenes({
+    // Same call writes the post's own copy (hook, film hashtags, songs). Doing
+    // it here rather than in a second call is what lets the prompt forbid the
+    // hook from spoiling a fact: the model has the captions it just wrote.
+    const { suggestions: scenes, meta } = await fetchTriviaPost({
       title: movie.title, year: movie.year, durationSeconds: els.video.duration,
-      count, includeTitleSlide: true, guidance,
+      count, includeTitleSlide: true, includeMeta: true, guidance,
       onProgress: (m) => { els.status.textContent = `Researching ${movie.query || 'the film'} — ${m}`; },
     });
+    if (project?.id === ticket && meta) {
+      project.postMeta = meta;
+      syncPostDefaults();  // no-op once the user has hand-edited the copy
+      renderSongPicks();
+    }
     let added = 0;
     for (let i = 0; i < scenes.length; i++) {
       if (project?.id !== ticket) return; // navigated away — don't pollute another project

@@ -21,8 +21,9 @@ import { createTriviaPool, helpfulLabel, DEFAULT_PICK } from './triviapool.js';
 // Step 2 lives in its own module: it owns the folder scan, the per-draft list
 // and the run, and nothing here reaches into it beyond showing and refreshing.
 import { initShoot, refreshShoot, isShooting } from './shoot.js';
-import { fetchScenes } from './autopilot.js';
+import { fetchTriviaPost } from './autopilot.js';
 import { makeProject, defaultPostFields } from './project.js';
+import { houseSetAt } from './hashtags.js';
 import { putProject, listProjects } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
 import { getRefreshToken } from './auth.js';
@@ -726,7 +727,7 @@ async function buildAll() {
     try {
       // A blank-line separated list is what the server reads as USER-CHOSEN
       // FACTS: it rewrites each one, in order, and adds nothing of its own.
-      const suggestions = await fetchScenes({
+      const { suggestions, meta } = await fetchTriviaPost({
         title: it.title,
         year: it.year,
         durationSeconds: it.runtimeSeconds || 0,
@@ -736,10 +737,14 @@ async function buildAll() {
         // so it arrives as suggestions[0] and the count above stays the number
         // of TRIVIA slides.
         includeTitleSlide: true,
+        // Same call writes the post's own copy: hook, film hashtags, and
+        // soundtrack picks. Doing it here is what lets the prompt forbid the
+        // hook from spoiling a fact, since the model has the captions in hand.
+        includeMeta: true,
         guidance: picked.map((p) => p.text).join('\n\n'),
         onProgress: (m) => say(`${it.title} (${i + 1} of ${ready.length}) — ${m}`),
       });
-      it.draftId = await saveDraft(it, suggestions);
+      it.draftId = await saveDraft(it, suggestions, meta, made);
       it.state = 'written';
       made++;
     } catch (e) {
@@ -770,7 +775,7 @@ async function buildAll() {
   }
 }
 
-async function saveDraft(item, suggestions) {
+async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
   const now = Date.now();
   const id = crypto.randomUUID?.() ??
     Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
@@ -791,12 +796,19 @@ async function saveDraft(item, suggestions) {
   const outro = await fetchOutroFrame();
 
   const project = makeProject({ id, format: 'trivia', now });
-  const post = defaultPostFields('trivia', label);
+  // Round-robin the house hashtag pair across the run rather than hashing ten
+  // random ids: a batch of ten then covers all five sets twice, which is what
+  // makes the tag report readable in weeks instead of months.
+  const post = defaultPostFields('trivia', label, {
+    meta, projectId: id, houseSetKey: houseSetAt(batchIndex).key,
+  });
   Object.assign(project, {
     name: label,
     movie: { title: item.title, year: item.year, query: item.title },
     postTitle: post.title,
     postDesc: post.description,
+    hashtagSet: post.hashtagSet,
+    postMeta: meta || null,
     // Batch's own bookkeeping — ignored by every other screen.
     batch: {
       imdbId: item.imdbId,

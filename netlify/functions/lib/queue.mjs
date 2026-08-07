@@ -78,7 +78,8 @@ export function isAlreadyPosted(name, posted = []) {
 export function summarizeHistory(rows) {
   const out = [];
   for (const row of Array.isArray(rows) ? rows : []) {
-    const movie = parsePostedMovie(row?.title, row?.video_description || row?.description);
+    const description = row?.video_description || row?.description || '';
+    const movie = parsePostedMovie(row?.title, description);
     if (!movie) continue;
     out.push({
       movie,
@@ -87,6 +88,11 @@ export function summarizeHistory(rows) {
       comments: numOrNull(row?.comment_count),
       shares: numOrNull(row?.share_count),
       postedAt: numOrNull(row?.create_time),
+      // The tags that actually shipped, read off the post itself rather than
+      // our local library — so the hashtag report stays right for hand-edited
+      // posts and for posts made on a device we no longer have. See
+      // public/scripts/tik/tagreport.js.
+      tags: parseHashtags(description),
     });
   }
   out.sort((a, b) => (b.postedAt || 0) - (a.postedAt || 0));
@@ -103,6 +109,26 @@ export function summarizeHistory(rows) {
 function numOrNull(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// The hashtags in a post's description, lowercased and deduped. The leading
+// boundary group keeps a mid-word hash ("no#tag") from reading as a hashtag.
+//
+// This deliberately duplicates parseTags() in public/scripts/tik/tagreport.js
+// rather than importing it: that is browser code, and a Netlify function should
+// not pull the client bundle in behind it. queue.test.mjs asserts the two agree
+// on a shared corpus, so they cannot drift apart unnoticed.
+export function parseHashtags(description) {
+  if (typeof description !== 'string' || !description) return [];
+  const out = [];
+  const seen = new Set();
+  for (const m of description.matchAll(/(^|[\s\n(])#([a-zA-Z0-9_]+)/g)) {
+    const tag = m[2].toLowerCase();
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
 }
 
 // Missing or unparseable means "use the default"; a real number gets clamped.

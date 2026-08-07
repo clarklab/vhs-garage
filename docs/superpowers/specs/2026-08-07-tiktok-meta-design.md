@@ -1,7 +1,7 @@
 # Tape Trivia: better TikTok meta
 
 Date: 2026-08-07
-Status: approved design, ready to plan
+Status: implemented
 
 ## The problem
 
@@ -107,8 +107,12 @@ Five is the total, matching the 3–5 range that TikTok guidance converges on. F
 lead because they are where we can realistically rank; the house pair keeps us
 categorized in the broad film-content buckets.
 
-**House sets** are named pairs, rotated deterministically from the project id so a
-given draft is stable across reopens while the account spreads across all five:
+**House sets** are named pairs. A hand-written draft rotates deterministically off its
+project id, so its tags are stable across reopens while the account still spreads. A
+batch run instead assigns them **round-robin across the run** (`houseSetAt(index)`):
+hashing ten random ids spreads evenly in the long run but not inside one batch, where
+it can easily land four in one set and none in another — and an unbalanced experiment
+takes far longer to say anything. A batch of ten covers all five sets exactly twice.
 
 ```js
 export const HOUSE_SETS = [
@@ -127,8 +131,17 @@ to ship a broken tag. `sanitizeTags()` lowercases, strips everything outside `a-
 drops empties and anything over 30 characters, dedupes case-insensitively, dedupes
 against the house pair, and caps the result at 3.
 
-Exports: `HOUSE_SETS`, `pickHouseSet(projectId)`, `sanitizeTags(list)`,
-`buildHashtags({ filmTags, houseSet })`, `buildDescription({ hook, movie, hashtags })`.
+When the agent returns fewer than three usable film tags, the remaining slots are
+topped up from a **filler pool that is disjoint from every house set**, starting at a
+different offset per set. Both properties are load-bearing for the measurement, and
+both are asserted in tests: a filler that reused a house tag would attach it to posts
+from every lane and corrupt the per-tag numbers, and a filler that always started at
+the head would staple one constant tag to every short post, spending a measured slot
+on something that carries no information.
+
+Exports: `HOUSE_SETS`, `FILLER_TAGS`, `pickHouseSet(projectId)`, `houseSetAt(index)`,
+`houseSetByKey(key)`, `sanitizeTags(list)`, `buildHashtags({ filmTags, houseSet })`,
+`formatHashtags(tags)`, `buildDescription({ hook, movie, hashtags })`.
 Pure — no DOM, no network. Unit-tested at `test/tik/hashtags.test.mjs`.
 
 ### 3. The description
@@ -163,11 +176,17 @@ that happens in the TikTok app.
 ### 5. Measuring which tags work
 
 New pure module `public/scripts/tik/tagreport.js`, rendered into the existing
-`#stats-card` on the home screen, below the follower chart.
+`#stats-card` on the home screen, below the follower chart. The panel's markup is
+built by `tagReportHtml(report)` inside that module rather than in `app.js`, so it is
+a pure function of the numbers and can be unit-tested and eyeballed without a
+signed-in TikTok session; `app.js` only fetches and assigns.
 
 `summarizeHistory()` in `netlify/functions/lib/queue.mjs` gains a `tags` field, parsed
-out of `video_description` — which `tik-history.mjs` already requests and currently
-discards. Reading the tags off what actually shipped, rather than off our local project
+out of `video_description` — which `tik-history.mjs` already requests and previously
+discarded. The parser is deliberately duplicated there rather than imported from
+`tagreport.js`: that is browser code, and a Netlify function should not pull the client
+bundle in behind it. `queue.test.mjs` asserts the two agree on a shared corpus, so they
+cannot drift apart unnoticed. Reading the tags off what actually shipped, rather than off our local project
 records, means the report stays honest for hand-edited posts and for posts made from a
 device whose library we no longer have.
 

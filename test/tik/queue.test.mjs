@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parsePostedMovie, movieKey, isAlreadyPosted, summarizeHistory,
-  buildQueuePrompt, normalizeQueue, QUEUE_COUNT,
+  buildQueuePrompt, normalizeQueue, QUEUE_COUNT, parseHashtags,
 } from '../../netlify/functions/lib/queue.mjs';
+import { parseTags } from '../../public/scripts/tik/tagreport.js';
 import { defaultPostFields } from '../../public/scripts/tik/project.js';
 
 // ---- reading our own post titles back ----
@@ -185,4 +186,42 @@ test('normalizeQueue honours the count and survives junk', () => {
   assert.deepEqual(normalizeQueue(null), []);
   assert.deepEqual(normalizeQueue({ picks: 'nope' }), []);
   assert.deepEqual(normalizeQueue({ picks: [{ title: '   ' }] }), []);
+});
+
+// ---- hashtags carried through history, for the tag report ----
+
+test('summarizeHistory carries the tags that actually shipped', () => {
+  const rows = summarizeHistory([{
+    title: 'The Thing — movie trivia & behind-the-scenes facts',
+    video_description: 'A hook.\nFollow VHS Garage.\n#thething #johncarpenter #vhs #videostore',
+    view_count: 4200,
+  }]);
+  assert.deepEqual(rows[0].tags, ['thething', 'johncarpenter', 'vhs', 'videostore']);
+});
+
+test('summarizeHistory gives a tagless post an empty array, not undefined', () => {
+  const rows = summarizeHistory([{
+    title: 'Jaws — movie trivia & behind-the-scenes facts',
+    video_description: 'No tags here at all.',
+    view_count: 100,
+  }]);
+  assert.deepEqual(rows[0].tags, []);
+  assert.equal(rows[0].views, 100);
+});
+
+test('the server and client hashtag parsers agree', () => {
+  // parseHashtags (server) is a deliberate copy of parseTags (browser). If one
+  // is ever changed alone, this fails instead of the tag report quietly
+  // disagreeing with what shipped.
+  const corpus = [
+    '#thething #johncarpenter #80shorror #vhs #videostore',
+    'A hook.\nDrop it in the comments.\n#Jaws #JAWS #spielberg',
+    'no#tag mid-word, (#parenthesized), trailing #end',
+    'nothing to see here',
+    '#a #ab #with_underscore #digits123',
+    '',
+  ];
+  for (const text of corpus) {
+    assert.deepEqual(parseHashtags(text), parseTags(text), `disagreed on: ${text}`);
+  }
 });

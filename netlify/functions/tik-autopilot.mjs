@@ -7,7 +7,7 @@
 // - POST → legacy SYNCHRONOUS call, kept as a fallback for stale clients; it
 //   lives under Netlify's 10s function ceiling so it uses a fast model + 9s abort.
 import { getStore } from '@netlify/blobs';
-import { buildAutopilotPrompt, normalizeSuggestions, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
+import { buildAutopilotPrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
@@ -48,7 +48,7 @@ export default async (req) => {
   let body;
   try { body = await req.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
 
-  const { kind = 'trivia', title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, actor, roles, minVotes, ratedGiven, boxofficeGiven, model: requested } = body;
+  const { kind = 'trivia', title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta, actor, roles, minVotes, ratedGiven, boxofficeGiven, model: requested } = body;
   if (kind === 'trivia' && !title) return json({ error: 'Missing movie title' }, 400);
   if ((kind === 'roles' || kind === 'blurbs') && !actor) return json({ error: 'Missing actor name' }, 400);
   if (kind === 'blurbs' && !(Array.isArray(roles) && roles.length)) return json({ error: 'No roles picked' }, 400);
@@ -60,7 +60,7 @@ export default async (req) => {
       ? buildBlurbsPrompt({ actor, roles, exclude })
       : kind === 'year'
         ? buildYearPrompt({ year, count: Number(count) || LIST_COUNT, minVotes, ratedGiven, boxofficeGiven })
-        : buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide });
+        : buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta });
 
   // Abort before Netlify's 10s function ceiling so we return a graceful
   // fallback instead of a platform 502.
@@ -95,12 +95,14 @@ export default async (req) => {
     }
     const base = Number(count) || AUTOPILOT_COUNT;
     const max = includeTitleSlide ? base + 1 : base;
-    const suggestions = normalizeSuggestions(parseModelJson(raw), durationSeconds, max);
+    const parsed = parseModelJson(raw);
+    const suggestions = normalizeSuggestions(parsed, durationSeconds, max);
+    const meta = includeMeta ? normalizeMeta(parsed) : null;
     if (!suggestions.length) {
       console.warn('[tik-autopilot] model returned no usable suggestions', { model, rawPreview: String(raw).slice(0, 300) });
       return json({ suggestions: [], model, aiFallback: true, error: 'The AI returned no usable trivia — try again.' });
     }
-    return json({ suggestions, model, aiFallback: false });
+    return json({ suggestions, meta, model, aiFallback: false });
   } catch (e) {
     console.error('[tik-autopilot] AI call failed', { kind, model, name: e.name, message: e.message });
     const reason = e.name === 'AbortError'
