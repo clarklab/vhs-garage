@@ -1,0 +1,248 @@
+---
+import Base from '../layouts/Base.astro';
+import SignupForm from '../components/SignupForm.astro';
+import { BUILD_ID } from '../utils/build-id.js';
+
+// /follow — the "one page with all our links" page. Deliberately shaped
+// like a link-in-bio card: one narrow centered column that fits on a
+// single screen, no scrolling required on a phone.
+//
+// Everything is subordinate to that constraint. The socials are bare
+// rows (icon + name + channel number) with no descriptions — the icon
+// and the name already say what they are. The only block with any real
+// height is the mailing list, because that one needs inputs.
+//
+// The retro read comes from the treatment rather than from chrome:
+// full-viewport VHS static behind the column, scanlines over
+// everything, a tracking bar that sweeps the screen, and the VCR
+// channel-number conceit on each row.
+//
+// Icons are inlined from @hackernoon/pixel-icon-library
+// (pixeliconlibrary.com) — brands/youtube.svg, brands/instagram.svg,
+// brands/tiktok.svg. Inlined rather than <img>-linked so they inherit
+// currentColor for the per-row hover tint.
+
+const CHANNELS = [
+  {
+    ch: '03',
+    name: 'YouTube',
+    href: 'https://www.youtube.com/@vhsgaragevideo',
+    accent: '#ff0000',
+    // brands/youtube.svg
+    icon: '<path d="m22,7v-2h-2v-1H4v1h-2v2h-1v10h1v2h2v1h16v-1h2v-2h1V7h-1Zm-10,8h-2v-6h2v1h2v1h2v2h-2v1h-2v1Z"/>',
+  },
+  {
+    ch: '08',
+    name: 'Instagram',
+    href: 'https://www.instagram.com/vhsgaragevideo',
+    accent: '#e1306c',
+    // brands/instagram.svg
+    icon: '<path d="m17,9v-1h-1v-1h-1v-1h-6v1h-1v1h-1v1h-1v6h1v1h1v1h1v1h6v-1h1v-1h1v-1h1v-6h-1Zm-1,5h-1v1h-1v1h-4v-1h-1v-1h-1v-4h1v-1h1v-1h4v1h1v1h1v4Z"/><path d="m22,5v-2h-1v-1h-2v-1H5v1h-2v1h-1v2h-1v14h1v2h1v1h2v1h14v-1h2v-1h1v-2h1V5h-1Zm-1,14h-1v1h-1v1H5v-1h-1v-1h-1V5h1v-1h1v-1h14v1h1v1h1v14Z"/><rect x="17" y="5" width="2" height="2"/>',
+  },
+  {
+    ch: '12',
+    name: 'TikTok',
+    href: 'https://www.tiktok.com/@vhsgaragevideo',
+    accent: '#25f4ee',
+    // brands/tiktok.svg
+    icon: '<polygon points="22 7 22 11 20 11 20 10 18 10 18 9 17 9 17 19 16 19 16 20 15 20 15 21 14 21 14 22 13 22 13 23 7 23 7 22 6 22 6 21 5 21 5 20 4 20 4 19 3 19 3 18 2 18 2 14 3 14 3 12 4 12 4 11 5 11 5 10 6 10 6 9 10 9 10 13 8 13 8 14 7 14 7 17 8 17 8 18 11 18 11 17 12 17 12 1 16 1 16 2 17 2 17 4 18 4 18 5 19 5 19 6 20 6 20 7 22 7"/>',
+  },
+];
+
+// Secondary destinations — one text row, not cards. These are "while
+// you're here" links, so they get the least weight on the page.
+const ELSEWHERE = [
+  { href: '/watch', label: 'Watch' },
+  { href: '/capture', label: 'Capture' },
+  { href: '/blog', label: 'Blog' },
+  { href: '/places', label: 'Places' },
+];
+---
+
+<Base
+  title="Follow"
+  description="Every way to keep up with VHS Garage — YouTube, Instagram, and TikTok at @vhsgaragevideo, plus the mailing list."
+>
+  <style>
+    .scanlines {
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 2px,
+        rgba(255, 255, 255, 0.04) 2px,
+        rgba(255, 255, 255, 0.04) 3px
+      );
+    }
+
+    /* Tracking bar — a bright band that sweeps the screen every few
+       seconds, like a tape that never quite locks in. */
+    .tracking-bar {
+      background: linear-gradient(
+        to bottom,
+        transparent,
+        rgba(255, 255, 255, 0.07) 40%,
+        rgba(255, 255, 255, 0.12) 50%,
+        rgba(255, 255, 255, 0.07) 60%,
+        transparent
+      );
+      animation: tracking-sweep 8s linear infinite;
+    }
+    @keyframes tracking-sweep {
+      0%   { transform: translateY(-20vh); }
+      75%  { transform: translateY(100vh); }
+      100% { transform: translateY(100vh); }
+    }
+
+    .rec-dot { animation: rec-blink 1.6s steps(1) infinite; }
+    @keyframes rec-blink {
+      0%, 55% { opacity: 1; }
+      56%, 100% { opacity: 0.15; }
+    }
+
+    /* Social rows. The accent is handed in per-row as --accent, so one
+       rule set drives the hover tint on the border, icon, channel
+       number, and arrow. */
+    .channel {
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(0, 0, 0, 0.55);
+      transition: border-color 0.18s, transform 0.18s, background 0.18s;
+    }
+    .channel:hover,
+    .channel:focus-visible {
+      border-color: var(--accent);
+      background: rgba(0, 0, 0, 0.75);
+      transform: translateX(3px);
+    }
+    .channel-icon,
+    .channel-num,
+    .channel-arrow { transition: color 0.18s, transform 0.18s; }
+    .channel-icon { color: rgba(255, 255, 255, 0.9); }
+    .channel:hover .channel-icon,
+    .channel:focus-visible .channel-icon { color: var(--accent); transform: scale(1.1); }
+    .channel:hover .channel-num,
+    .channel:focus-visible .channel-num { color: var(--accent); }
+    .channel:hover .channel-arrow,
+    .channel:focus-visible .channel-arrow { color: #fff; }
+
+    /* Static wash inside the row, revealed on hover — the "signal
+       coming in" moment when you tune to a channel. */
+    .channel-noise {
+      opacity: 0;
+      transition: opacity 0.2s;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          transparent 0,
+          transparent 2px,
+          color-mix(in oklab, var(--accent) 18%, transparent) 2px,
+          color-mix(in oklab, var(--accent) 18%, transparent) 3px
+        );
+    }
+    .channel:hover .channel-noise,
+    .channel:focus-visible .channel-noise { opacity: 0.45; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .tracking-bar { animation: none; opacity: 0.4; }
+      .rec-dot { animation: none; }
+      .channel:hover, .channel:focus-visible { transform: none; }
+      .channel:hover .channel-icon, .channel:focus-visible .channel-icon { transform: none; }
+    }
+  </style>
+
+  <!-- Full-viewport backdrop. Fixed rather than sized to the section so
+       the static fills the whole screen behind the column on desktop,
+       where the card itself only occupies a narrow strip. -->
+  <div aria-hidden="true" class="fixed inset-0 z-0 pointer-events-none overflow-hidden">
+    <canvas data-vhs-static
+            class="absolute inset-0 w-full h-full"
+            style="image-rendering: pixelated; opacity: 0.35;"></canvas>
+    <!-- Scrim: raw static behind small text is unreadable. -->
+    <div class="absolute inset-0 bg-black/65"></div>
+    <div class="absolute inset-0 scanlines"></div>
+    <div class="absolute inset-x-0 top-0 h-24 tracking-bar"></div>
+  </div>
+
+  <!-- No z-index on <main>: a z-index would create a stacking context
+       and trap the wordmark's mix-blend-screen inside it, so the black
+       would blend against <main> instead of the static behind it. Both
+       layers sit at stacking level 0 and DOM order puts this on top. -->
+  <main class="relative min-h-svh flex flex-col items-center justify-center px-5 py-6">
+    <div class="w-full max-w-md">
+
+      <!-- Header. The wordmark carries the branding, so the copy under
+           it is one line — the links are the point of the page.
+           /unfurl.png is the 1200x630 OG image, which is mostly black
+           padding around the wordmark: object-cover crops to the
+           lettering so it doesn't eat a third of the screen, and
+           mix-blend-screen drops the remaining black so the static
+           runs behind it instead of a floating black box. -->
+      <div class="text-center mb-4">
+        <img src="/unfurl.png" alt="VHS Garage"
+             class="w-56 h-16 object-cover mx-auto mix-blend-screen" />
+        <div class="flex items-center justify-center gap-2.5 mt-2 mb-2">
+          <span class="rec-dot inline-block w-2 h-2 bg-[#dc2626]" style="box-shadow: 0 0 6px rgba(220,38,38,0.8);"></span>
+          <p class="text-white/70 text-xs tracking-[0.2em]">@vhsgaragevideo</p>
+        </div>
+        <p class="text-gray-400 text-sm leading-snug text-balance">A lo-fi love letter to the golden age of video.</p>
+      </div>
+
+      <!-- Socials. No descriptions — the icon and the name are the
+           whole message, and cutting them is what buys the single
+           screen. -->
+      <nav aria-label="Social channels" class="flex flex-col gap-2 mb-4">
+        {CHANNELS.map((c) => (
+          <a
+            href={c.href}
+            target="_blank"
+            rel="noopener"
+            class="channel group relative flex items-center gap-4 h-14 px-4 overflow-hidden focus:outline-none focus-visible:outline-none"
+            style={`--accent: ${c.accent};`}
+          >
+            <span aria-hidden="true" class="channel-noise absolute inset-0 pointer-events-none"></span>
+            <svg class="channel-icon relative w-6 h-6 fill-current shrink-0" viewBox="0 0 24 24" aria-hidden="true" set:html={c.icon} />
+            <span class="relative flex-1 text-white text-base leading-none">{c.name}</span>
+            <span class="channel-num relative text-white/30 text-[10px] uppercase tracking-[0.2em] tabular-nums">CH {c.ch}</span>
+            <span aria-hidden="true" class="channel-arrow relative text-white/30 text-sm leading-none">↗</span>
+          </a>
+        ))}
+      </nav>
+
+      <!-- Mailing list. Same shared component the homepage and /join
+           use, so it posts to the same Netlify form — no duplicated
+           form logic. showCount is off here: the member-count line is
+           the one piece that costs height without earning it on a page
+           whose whole job is fitting on one screen. -->
+      <div class="bg-black/70 mb-4">
+        <SignupForm
+          id="follow-signup"
+          compact={true}
+          title="Or get it in your inbox"
+          description="Swap meets, tape drops, and new videos."
+        />
+      </div>
+
+      <!-- Everything else on the site, as one text row rather than a
+           section — these are the lightest-weight links on the page. -->
+      <nav aria-label="Elsewhere on the site" class="flex flex-wrap justify-center gap-x-3 gap-y-2 text-[11px] uppercase tracking-wider mb-4">
+        {ELSEWHERE.map((l, i) => (
+          <>
+            {i > 0 && <span class="text-white/15" aria-hidden="true">·</span>}
+            <a href={l.href} class="text-white/45 hover:text-white transition-colors">{l.label}</a>
+          </>
+        ))}
+      </nav>
+
+      <p class="text-center text-white/25 text-[10px]">
+        <a href="/" class="hover:text-white/60 transition-colors">vhsgarage.com</a>
+        <span class="mx-2" aria-hidden="true">·</span>
+        Built by
+        <a href="https://x.com/clarklab" target="_blank" rel="me noopener" class="hover:text-white/60 transition-colors">@clarklab</a>
+        and
+        <a href="https://x.com/oracrest" target="_blank" rel="me noopener" class="hover:text-white/60 transition-colors">@oracrest</a>
+      </p>
+    </div>
+  </main>
+
+  <!-- VHS static effect — auto-inits the <canvas data-vhs-static> above. -->
+  <script is:inline src={`/scripts/vhs-static.js?v=${BUILD_ID}`} defer></script>
+</Base>
