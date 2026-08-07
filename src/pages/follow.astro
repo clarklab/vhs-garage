@@ -1,0 +1,350 @@
+---
+import Base from '../layouts/Base.astro';
+import Footer from '../components/Footer.astro';
+import SignupForm from '../components/SignupForm.astro';
+import { BUILD_ID } from '../utils/build-id.js';
+
+// /follow — one page that collects every way to keep up with the Garage:
+// the three social channels plus the mailing list.
+//
+// Framing device is a VCR channel guide: each social account is a
+// "channel" you can tune to, numbered like the old cable dial. Keeps the
+// page from reading as a generic link-in-bio while staying on-brand with
+// the rest of the site (VCR mono, hard borders, red accent, block chars).
+//
+// Icons are inlined from @hackernoon/pixel-icon-library (pixeliconlibrary.com)
+// — brands/youtube.svg, brands/instagram.svg, brands/tiktok.svg,
+// brands/x.svg and regular/envelope.svg. They're inlined rather than
+// <img>-linked so they inherit currentColor for the per-channel hover tint.
+
+const CHANNELS = [
+  {
+    ch: '03',
+    name: 'YouTube',
+    handle: '@vhsgaragevideo',
+    href: 'https://www.youtube.com/@vhsgaragevideo',
+    cta: 'Subscribe',
+    blurb: 'Full tape rips, garage tours, and the found footage nobody was supposed to keep.',
+    accent: '#ff0000',
+    // brands/youtube.svg
+    icon: '<path d="m22,7v-2h-2v-1H4v1h-2v2h-1v10h1v2h2v1h16v-1h2v-2h1V7h-1Zm-10,8h-2v-6h2v1h2v1h2v2h-2v1h-2v1Z"/>',
+  },
+  {
+    ch: '08',
+    name: 'Instagram',
+    handle: '@vhsgaragevideo',
+    href: 'https://www.instagram.com/vhsgaragevideo',
+    cta: 'Follow',
+    blurb: 'Swap meet photos, shelf finds, and event announcements. Mostly tapes on carpet.',
+    accent: '#e1306c',
+    // brands/instagram.svg
+    icon: '<path d="m17,9v-1h-1v-1h-1v-1h-6v1h-1v1h-1v1h-1v6h1v1h1v1h1v1h6v-1h1v-1h1v-1h1v-6h-1Zm-1,5h-1v1h-1v1h-4v-1h-1v-1h-1v-4h1v-1h1v-1h4v1h1v1h1v4Z"/><path d="m22,5v-2h-1v-1h-2v-1H5v1h-2v1h-1v2h-1v14h1v2h1v1h2v1h14v-1h2v-1h1v-2h1V5h-1Zm-1,14h-1v1h-1v1H5v-1h-1v-1h-1V5h1v-1h1v-1h14v1h1v1h1v14Z"/><rect x="17" y="5" width="2" height="2"/>',
+  },
+  {
+    ch: '12',
+    name: 'TikTok',
+    handle: '@vhsgaragevideo',
+    href: 'https://www.tiktok.com/@vhsgaragevideo',
+    cta: 'Follow',
+    blurb: 'Short cuts from the pile. Weird commercials, warped tracking, and rewind ASMR.',
+    accent: '#25f4ee',
+    // brands/tiktok.svg
+    icon: '<polygon points="22 7 22 11 20 11 20 10 18 10 18 9 17 9 17 19 16 19 16 20 15 20 15 21 14 21 14 22 13 22 13 23 7 23 7 22 6 22 6 21 5 21 5 20 4 20 4 19 3 19 3 18 2 18 2 14 3 14 3 12 4 12 4 11 5 11 5 10 6 10 6 9 10 9 10 13 8 13 8 14 7 14 7 17 8 17 8 18 11 18 11 17 12 17 12 1 16 1 16 2 17 2 17 4 18 4 18 5 19 5 19 6 20 6 20 7 22 7"/>',
+  },
+];
+
+// regular/envelope.svg
+const ENVELOPE_ICON = '<path d="m21,5v-1H3v1H1v14h1v1h20v-1h1V5h-2Zm-11,7v-1h-1v-1h-1v-1h-1v-1h-1v-1h-1v-1h14v1h-1v1h-1v1h-1v1h-1v1h-1v1h-1v1h-2v-1h-1Zm-6-5v1h1v1h1v1h1v1h1v1h1v1h1v1h1v1h2v-1h1v-1h1v-1h1v-1h1v-1h1v-1h1v-1h1v-1h1v11H3V7h1Z"/>';
+
+// brands/x.svg
+const X_ICON = '<path d="m15.5,10v-1h1v-1h1v-1h1v-1h1v-1h1v-1h1v-1h1v-1h-3v1h-1v1h-1v1h-1v1h-1v1h-1v1h-2v-1h-1v-1h-1v-2h-1v-1h-1v-1H1.5v1h1v1h1v1h1v2h1v1h1v2h1v1h1v2h1v1h-1v1h-1v1h-1v1h-1v1h-1v1h-1v1h-1v1h-1v1h3v-1h1v-1h1v-1h1v-1h1v-1h1v-1h2v1h1v1h1v2h1v1h1v1h7v-1h-1v-1h-1v-1h-1v-2h-1v-1h-1v-2h-1v-1h-1v-2h-1v-1h1Zm0,4v1h1v2h1v1h1v2h-3v-2h-1v-1h-1v-1h-1v-2h-1v-1h-1v-1h-1v-2h-1v-1h-1v-2h-1v-1h-1v-2h3v1h1v2h1v1h1v2h1v1h1v1h1v2h1Z"/>';
+
+const HOSTS = [
+  { name: 'Matt Manchester', handle: '@oracrest', href: 'https://x.com/oracrest', avatar: '/images/avatar-matt.webp' },
+  { name: 'Clark Wimberly', handle: '@clarklab', href: 'https://x.com/clarklab', avatar: '/images/avatar-clark.webp' },
+];
+---
+
+<Base
+  title="Follow"
+  description="Follow VHS Garage on YouTube, Instagram, and TikTok — or join the mailing list for swap meets, tape drops, and found footage."
+>
+  <style>
+    /* Hero headline — the same RGB-fringe + wobble treatment as the
+       /join confirmation screen, so the two "loud" moments on the site
+       share a language. */
+    .follow-title {
+      text-shadow:
+        2px 0 rgba(255, 0, 80, 0.7),
+        -2px 0 rgba(0, 200, 255, 0.7),
+        0 0 30px rgba(255, 255, 255, 0.2);
+      animation: follow-wobble 5s ease-in-out infinite;
+    }
+    @keyframes follow-wobble {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-1px); }
+      75% { transform: translateX(1px); }
+    }
+
+    .scanlines {
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 2px,
+        rgba(255, 255, 255, 0.04) 2px,
+        rgba(255, 255, 255, 0.04) 3px
+      );
+    }
+
+    /* Tracking bar — a bright band that sweeps down the hero every few
+       seconds, like a tape that never quite locks in. */
+    .tracking-bar {
+      background: linear-gradient(
+        to bottom,
+        transparent,
+        rgba(255, 255, 255, 0.08) 40%,
+        rgba(255, 255, 255, 0.14) 50%,
+        rgba(255, 255, 255, 0.08) 60%,
+        transparent
+      );
+      animation: tracking-sweep 7s linear infinite;
+    }
+    @keyframes tracking-sweep {
+      0%   { transform: translateY(-20vh); }
+      70%  { transform: translateY(120%); }
+      100% { transform: translateY(120%); }
+    }
+
+    /* Blinking REC dot on each channel card. */
+    .rec-dot { animation: rec-blink 1.6s steps(1) infinite; }
+    @keyframes rec-blink {
+      0%, 55% { opacity: 1; }
+      56%, 100% { opacity: 0.15; }
+    }
+
+    /* Channel card. The accent colour is handed in per-card as the
+       --accent custom property, so one rule set covers all three and the
+       hover tint (border, icon, channel number, CTA) stays consistent. */
+    .channel {
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+    }
+    .channel:hover,
+    .channel:focus-visible {
+      border-color: var(--accent);
+      transform: translateY(-3px);
+      box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent),
+                  0 12px 30px -12px var(--accent);
+    }
+    .channel:hover .channel-icon,
+    .channel:focus-visible .channel-icon {
+      color: var(--accent);
+      transform: scale(1.06);
+    }
+    .channel-icon {
+      color: rgba(255, 255, 255, 0.85);
+      transition: color 0.2s, transform 0.2s;
+    }
+    .channel:hover .channel-num,
+    .channel:focus-visible .channel-num { color: var(--accent); }
+    .channel-num { transition: color 0.2s; }
+    .channel:hover .channel-cta,
+    .channel:focus-visible .channel-cta {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .channel-cta { transition: color 0.2s, border-color 0.2s; }
+
+    /* Static wash inside each card, revealed on hover — the "signal
+       coming in" moment when you tune to a channel. */
+    .channel-noise {
+      opacity: 0;
+      transition: opacity 0.25s;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          transparent 0,
+          transparent 2px,
+          color-mix(in oklab, var(--accent) 18%, transparent) 2px,
+          color-mix(in oklab, var(--accent) 18%, transparent) 3px
+        );
+    }
+    .channel:hover .channel-noise,
+    .channel:focus-visible .channel-noise { opacity: 0.4; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .follow-title { animation: none; }
+      .tracking-bar { animation: none; opacity: 0.5; }
+      .rec-dot { animation: none; }
+      .channel:hover, .channel:focus-visible { transform: none; }
+      .channel:hover .channel-icon, .channel:focus-visible .channel-icon { transform: none; }
+    }
+  </style>
+
+  <!-- ── Hero ───────────────────────────────────────────────────────
+       Full-bleed VHS static behind a big glitched headline. The static
+       canvas auto-inits from /scripts/vhs-static.js (loaded at the
+       bottom of the page). -->
+  <section class="relative overflow-hidden border-b border-white/15">
+    <canvas data-vhs-static
+            class="absolute inset-0 w-full h-full pointer-events-none"
+            style="image-rendering: pixelated; opacity: 0.3;"
+            aria-hidden="true"></canvas>
+    <!-- Scrim over the static. Raw static at full strength eats the
+         body copy and the back link, so darken it before the text
+         layer — the noise still reads, the words stay legible. -->
+    <div aria-hidden="true" class="absolute inset-0 pointer-events-none bg-gradient-to-b from-black/85 via-black/55 to-black/90"></div>
+    <div aria-hidden="true" class="absolute inset-0 pointer-events-none scanlines"></div>
+    <div aria-hidden="true" class="absolute inset-x-0 top-0 h-24 pointer-events-none tracking-bar"></div>
+
+    <div class="relative z-10 max-w-5xl mx-auto px-6 pt-8 pb-20 sm:pb-24">
+      <a href="/" class="text-white/40 text-xs hover:text-white/70 transition-colors">← vhsgarage.com</a>
+
+      <!-- OSD-style status line, the way a VCR stamps the top of the
+           screen when you hit a button. -->
+      <div class="flex items-center gap-3 mt-14 mb-5">
+        <span class="rec-dot inline-block w-2.5 h-2.5 bg-[#dc2626]" style="box-shadow: 0 0 8px rgba(220,38,38,0.8);"></span>
+        <p class="text-white/50 text-[10px] uppercase tracking-[0.35em]">Rec · Ch 03 · Sp</p>
+      </div>
+
+      <h1 class="follow-title text-6xl sm:text-8xl leading-[0.9] tracking-tight text-white mb-6">
+        FOLLOW<br />THE GARAGE
+      </h1>
+
+      <p class="text-gray-300 text-lg max-w-xl leading-relaxed">
+        Three channels and a mailing list. Tape rips, swap meets, shelf finds, and the occasional
+        thing we probably shouldn't have found on a garage sale VHS.
+      </p>
+
+      <p aria-hidden="true" class="text-white/20 text-lg tracking-[0.4em] mt-8">░▒▓ ▓▒░ ░▒▓ ▓▒░ ░▒▓</p>
+    </div>
+  </section>
+
+  <!-- ── Channels ───────────────────────────────────────────────── -->
+  <section class="max-w-5xl mx-auto px-6 py-16">
+    <div class="flex items-end justify-between gap-4 mb-6">
+      <h2 class="text-2xl">#Tune In</h2>
+      <p class="text-white/30 text-[10px] uppercase tracking-widest hidden sm:block">Select a channel</p>
+    </div>
+
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {CHANNELS.map((c) => (
+        <a
+          href={c.href}
+          target="_blank"
+          rel="noopener"
+          class="channel group relative flex flex-col p-5 overflow-hidden focus:outline-none focus-visible:outline-none"
+          style={`--accent: ${c.accent};`}
+          aria-label={`${c.name} — ${c.handle}`}
+        >
+          <div aria-hidden="true" class="channel-noise absolute inset-0 pointer-events-none"></div>
+
+          <div class="relative flex items-center justify-between mb-6">
+            <p class="channel-num text-white/35 text-[10px] uppercase tracking-[0.25em] tabular-nums">CH {c.ch}</p>
+            <p class="text-white/20 text-[10px] uppercase tracking-[0.2em]">Live</p>
+          </div>
+
+          <svg
+            class="channel-icon relative w-12 h-12 fill-current mb-5"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            set:html={c.icon}
+          />
+
+          <p class="relative text-white text-xl leading-none mb-2">{c.name}</p>
+          <p class="relative text-white/45 text-xs tracking-wide mb-4">{c.handle}</p>
+          <p class="relative text-gray-400 text-sm leading-6 flex-1 mb-6">{c.blurb}</p>
+
+          <span class="channel-cta relative self-start inline-block px-4 py-2 border border-white/30 text-white text-xs uppercase tracking-wider">
+            {c.cta} ↗
+          </span>
+        </a>
+      ))}
+    </div>
+  </section>
+
+  <!-- ── Mailing list ───────────────────────────────────────────────
+       Same signup that runs on /join and the homepage — the shared
+       <SignupForm> component posts to the Netlify form and shows the
+       running member count. Sat on a full-bleed static band so it reads
+       as the page's payoff moment rather than a footer afterthought. -->
+  <section id="signup" class="relative overflow-hidden border-y border-white/10"
+           style="width: 100vw; margin-left: calc(-50vw + 50%);">
+    <canvas data-vhs-static
+            class="absolute inset-0 w-full h-full pointer-events-none"
+            style="image-rendering: pixelated; opacity: 0.4;"
+            aria-hidden="true"></canvas>
+
+    <div class="relative z-10 px-6 py-20 md:py-24">
+      <div class="max-w-xl mx-auto">
+        <!-- Label sits on a black chip — over live static, unbacked
+             small text disappears entirely. -->
+        <div class="inline-flex items-center gap-3 bg-black px-3 py-2 mb-4">
+          <svg class="w-5 h-5 fill-current text-[#dc2626]" viewBox="0 0 24 24" aria-hidden="true" set:html={ENVELOPE_ICON} />
+          <p class="text-white/60 text-[10px] uppercase tracking-[0.3em]">No algorithm required</p>
+        </div>
+
+        <div class="bg-black shadow-[6px_6px_0_0_rgba(220,38,38,0.5)]">
+          <SignupForm
+            id="follow-signup"
+            compact={true}
+            showCount={true}
+            title="Get it in your inbox"
+            description="Swap meet dates, tape drops, and new videos — sent when there's actually something to say. Sign up and we'll hand you a free mystery VHS at the next event."
+          />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── The humans ─────────────────────────────────────────────── -->
+  <section class="max-w-5xl mx-auto px-6 py-16">
+    <h2 class="text-2xl mb-2">#The Humans</h2>
+    <p class="text-gray-400 text-sm mb-6">Two dudes behind the counter. Yell at us directly.</p>
+
+    <div class="grid sm:grid-cols-2 gap-4">
+      {HOSTS.map((h) => (
+        <a
+          href={h.href}
+          target="_blank"
+          rel="me noopener"
+          class="flex items-center gap-4 border border-white/15 hover:border-white/40 transition-colors p-4 group"
+        >
+          <img src={h.avatar} alt="" loading="lazy"
+               class="w-16 h-16 object-cover bg-[#141214] shrink-0" />
+          <div class="min-w-0 flex-1">
+            <p class="text-white text-base leading-none mb-1.5">{h.name}</p>
+            <p class="text-white/40 text-xs">{h.handle}</p>
+          </div>
+          <svg class="w-4 h-4 fill-current text-white/30 group-hover:text-white transition-colors shrink-0"
+               viewBox="0 0 24 24" aria-hidden="true" set:html={X_ICON} />
+        </a>
+      ))}
+    </div>
+  </section>
+
+  <!-- ── Elsewhere on the site ──────────────────────────────────── -->
+  <section class="max-w-5xl mx-auto px-6 pb-4">
+    <h2 class="text-2xl mb-6">#While You're Here</h2>
+    <div class="grid sm:grid-cols-3 gap-4 text-sm">
+      <a href="/watch" class="border border-white/15 hover:border-white/40 transition-colors p-5">
+        <p class="text-white text-xs uppercase tracking-[0.18em] mb-2">Watch</p>
+        <p class="text-gray-400 leading-6">Found footage playing on a CRT in somebody's garage.</p>
+      </a>
+      <a href="/capture" class="border border-white/15 hover:border-white/40 transition-colors p-5">
+        <p class="text-white text-xs uppercase tracking-[0.18em] mb-2">Capture</p>
+        <p class="text-gray-400 leading-6">Digitize your own tapes and post them straight to YouTube.</p>
+      </a>
+      <a href="/blog" class="border border-white/15 hover:border-white/40 transition-colors p-5">
+        <p class="text-white text-xs uppercase tracking-[0.18em] mb-2">Dispatches</p>
+        <p class="text-gray-400 leading-6">Gear notes, capture guides, and event write-ups.</p>
+      </a>
+    </div>
+  </section>
+
+  <Footer />
+
+  <!-- VHS static effect — auto-inits every <canvas data-vhs-static> on
+       the page (hero + signup band). -->
+  <script is:inline src={`/scripts/vhs-static.js?v=${BUILD_ID}`} defer></script>
+</Base>
