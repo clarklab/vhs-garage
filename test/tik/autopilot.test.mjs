@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AUTOPILOT_COUNT, buildAutopilotPrompt, normalizeSuggestions, normalizeMeta, META_HOOK_MAX,
+  clampText, CAPTION_TARGET, CAPTION_MAX, META_HOOK_TARGET,
 } from '../../netlify/functions/lib/autopilot.mjs';
 
 test('buildAutopilotPrompt embeds title, year, duration, count, and asks for JSON', () => {
@@ -188,21 +189,41 @@ test('stripDashes cleans up the artifacts a dash→comma swap can create', () =>
   assert.equal(out[3].caption, 'he said. done');         // no ", ." run
 });
 
-test('normalizeSuggestions passes the grab hint through, trimmed and capped at 120', () => {
+test('normalizeSuggestions passes the grab hint through, trimmed and bounded', () => {
   const out = normalizeSuggestions({ suggestions: [
     { caption: 'A', timecode: 1, grab: '  the burning building shot  ' },
     { caption: 'B', timecode: 2, grab: 'y'.repeat(300) },
     { caption: 'C', timecode: 3, grab: 42 }, // non-string → empty
   ] }, 100);
   assert.equal(out[0].grab, 'the burning building shot');
-  assert.equal(out[1].grab.length, 120);
+  assert.ok(out[1].grab.length <= 200 && out[1].grab.length > 0);
   assert.equal(out[2].grab, '');
 });
 
-test('normalizeSuggestions coerces a non-numeric timecode to 0 and truncates long captions', () => {
-  const out = normalizeSuggestions({ suggestions: [{ caption: 'x'.repeat(300), timecode: 'nope' }] }, 100);
+test('normalizeSuggestions coerces a non-numeric timecode to 0', () => {
+  const out = normalizeSuggestions({ suggestions: [{ caption: 'A caption.', timecode: 'nope' }] }, 100);
   assert.equal(out[0].timecode, 0);
-  assert.equal(out[0].caption.length, 180);
+});
+
+test('a caption over target is kept whole, not chopped at the target', () => {
+  // The reported bug: the editor's own textarea takes CAPTION_MAX characters and
+  // renders them fine, so slicing the model at CAPTION_TARGET severed a word for
+  // no reason. Anything up to CAPTION_MAX now passes through untouched.
+  const words = 'The mechanical shark sank on its first day of shooting in the Atlantic. ';
+  const long = words.repeat(4).trim(); // comfortably over CAPTION_TARGET
+  assert.ok(long.length > CAPTION_TARGET && long.length <= CAPTION_MAX, `fixture is ${long.length}`);
+  const out = normalizeSuggestions({ suggestions: [{ caption: long, timecode: 1 }] }, 100);
+  assert.equal(out[0].caption, long);
+});
+
+test('a runaway caption is cut at the ceiling, on a word boundary', () => {
+  const runaway = 'word '.repeat(200).trim();
+  const out = normalizeSuggestions({ suggestions: [{ caption: runaway, timecode: 1 }] }, 100);
+  assert.ok(out[0].caption.length <= CAPTION_MAX);
+  assert.ok(runaway.startsWith(out[0].caption));
+  assert.doesNotMatch(out[0].caption, /\s$/);
+  // The tell-tale of the old behaviour: a severed word at the end.
+  assert.ok(out[0].caption.endsWith('word'), `ended mid-word: ...${out[0].caption.slice(-12)}`);
 });
 
 test('normalizeSuggestions on junk input returns an empty array', () => {
@@ -226,7 +247,9 @@ test('includeMeta asks for the hook, film tags, and soundtrack songs', () => {
   assert.match(p, /"hook"/);
   assert.match(p, /"filmTags"/);
   assert.match(p, /"songs"/);
-  assert.match(p, new RegExp(String(META_HOOK_MAX)));
+  // The prompt states the TARGET, never the accept ceiling.
+  assert.match(p, new RegExp(String(META_HOOK_TARGET)));
+  assert.ok(META_HOOK_MAX > META_HOOK_TARGET, 'ceiling must leave slack above target');
 });
 
 test('includeMeta forbids spoiling a slide and forbids the score', () => {
@@ -302,4 +325,54 @@ test('normalizeMeta survives a partial answer', () => {
   const hookOnly = normalizeMeta({ meta: { hook: 'Just a hook.' } });
   assert.equal(hookOnly.hook, 'Just a hook.');
   assert.deepEqual(hookOnly.filmTags, []);
+});
+
+// ---- clampText: bound the model without chopping mid-word ----
+
+test('clampText leaves anything within the cap completely alone', () => {
+  assert.equal(clampText('A short caption.', 180), 'A short caption.');
+  assert.equal(clampText('x'.repeat(180), 180), 'x'.repeat(180));
+});
+
+test('clampText cuts at a word boundary, never mid-word', () => {
+  const s = 'The mechanical shark sank on its very first day of shooting';
+  const out = clampText(s, 30);
+  assert.ok(out.length <= 30);
+  assert.ok(s.startsWith(out), 'clamped text must be a prefix of the original');
+  // The give-away for the old behaviour was a severed word at the end.
+  assert.ok(!/\S$/.test(s.slice(out.length, out.length + 1)) || s[out.length] === ' ',
+    `cut mid-word: "${out}"`);
+  assert.doesNotMatch(out, /\s$/);
+});
+
+test('clampText never leaves a dangling comma or dash at the cut', () => {
+  assert.doesNotMatch(clampText('One thing, another thing, a third thing', 15), /[,;:-]$/);
+  assert.doesNotMatch(clampText('Alpha beta - gamma delta', 13), /[-\s]$/);
+});
+
+test('clampText handles multi-line text (the title slide is two lines)', () => {
+  const s = 'Jaws (1975)\nSome fun facts are coming up in a moment';
+  const out = clampText(s, 25);
+  assert.ok(out.length <= 25);
+  assert.ok(s.startsWith(out));
+});
+
+test('clampText falls back to a hard cut only for one unbroken word', () => {
+  // Nothing else is possible here, but it must still respect the cap.
+  const out = clampText('a'.repeat(50), 10);
+  assert.equal(out.length, 10);
+});
+
+test('clampText trims and tolerates junk', () => {
+  assert.equal(clampText('  padded  ', 100), 'padded');
+  assert.equal(clampText(null, 100), '');
+  assert.equal(clampText(undefined, 100), '');
+  assert.equal(clampText('text', 0), 'text');   // no cap → unchanged
+});
+
+test('the prompt states the target and never the accept ceiling', () => {
+  // A ceiling in the prompt would invite the model to write to it.
+  const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440 });
+  assert.match(p, new RegExp(`about ${CAPTION_TARGET} characters`));
+  assert.doesNotMatch(p, new RegExp(`${CAPTION_MAX} characters`));
 });

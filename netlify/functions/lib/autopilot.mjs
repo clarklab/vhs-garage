@@ -1,17 +1,37 @@
 // Pure helpers for autopilot. buildAutopilotPrompt() writes the LLM prompt;
 // normalizeSuggestions() validates/clamps the model's JSON. No network / DOM.
 export const AUTOPILOT_COUNT = 5;
-const CAPTION_MAX = 180;
-const GRAB_MAX = 120; // editor-facing "what shot to grab" hint, never shown to viewers
+
+// Two numbers per field, not one:
+//
+//   *_TARGET is what we ASK the model for, and the only number in the prompt.
+//   *_MAX is what we ACCEPT, set to whatever the UI actually allows.
+//
+// They used to be the same number, which meant a caption one word over target
+// was hard-sliced mid-word — while the editor's own textarea happily accepted
+// 300 characters and rendered them fine. The gap is deliberate slack: normal
+// overshoot passes through whole, and the ceiling only exists so a runaway
+// answer can't break the slide. Anything that does hit the ceiling is cut at a
+// word boundary by clampText(), never mid-word.
+//
+// Keep *_MAX in step with the matching maxLength in app.js.
+export const CAPTION_TARGET = 180;
+export const CAPTION_MAX = 300;  // = the caption textarea's maxLength in app.js
+const GRAB_TARGET = 120; // editor-facing "what shot to grab" hint, never shown to viewers
+const GRAB_MAX = 200;
 
 // Post meta (the TikTok caption, its hashtags, and song picks) is written by
 // THIS call rather than a separate one, because this is the only place where
 // "do not repeat a fact that is on a slide" is checkable: the model has the
 // captions it just wrote in front of it.
-export const META_HOOK_MAX = 200;
+export const META_HOOK_TARGET = 200;
+export const META_HOOK_MAX = 400;   // the description field holds 4000; be generous
 const FILM_TAG_MAX = 4;   // the client trims to 3; leave the model a spare
 const SONG_MAX = 3;
-const SONG_FIELD_MAX = 100;
+const SONG_WHY_TARGET = 100;
+// Song titles and artists are proper nouns: cutting one is worse than keeping a
+// long one, since a mangled title is a track you cannot find in the app.
+const SONG_FIELD_MAX = 200;
 
 // Shared between the background worker (writes) and the poller (reads) —
 // a single source of truth so the two can never drift apart.
@@ -62,9 +82,9 @@ export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUT
   const metaBlock = includeMeta ? `
 
 ALSO return a "meta" object describing the POST ITSELF. This is not a slide and no viewer reads it over an image; it is the TikTok caption, its hashtags, and the song the human will pick in the app.
-- "hook": one or two sentences, at most ${META_HOOK_MAX} characters, introducing the film. Name the film and its year, plus at least two of: the director, the lead cast, the genre or era, the studio. This is what makes the post findable in search, so use the words a person would actually type. It MUST NOT state or hint at any fact you used in a slide caption above: the slides are the payoff and the caption must not spoil them. Same house rules as the captions: no hype, no questions, no em dashes.
+- "hook": one or two sentences, about ${META_HOOK_TARGET} characters, introducing the film. Name the film and its year, plus at least two of: the director, the lead cast, the genre or era, the studio. This is what makes the post findable in search, so use the words a person would actually type. It MUST NOT state or hint at any fact you used in a slide caption above: the slides are the payoff and the caption must not spoil them. Same house rules as the captions: no hype, no questions, no em dashes.
 - "filmTags": 2 to ${FILM_TAG_MAX} hashtag words specific to THIS film. Lowercase, no "#", no spaces, no punctuation, no numbers-only tags. Use the film's title, its director or a lead actor, and one era/genre/subject tag. For a 1982 John Carpenter film that would be ["thething", "johncarpenter", "80shorror", "practicaleffects"].
-- "songs": up to ${SONG_MAX} songs from this film's soundtrack, most recognizable first. Licensed pop or rock songs and needle-drops ONLY, never the orchestral score and never a composer's cue. Each is { "title", "artist", "why" }, where "why" is at most ${SONG_FIELD_MAX} characters saying where it appears in the film. If the film has no notable licensed song, return an empty array. Never invent a song or guess an artist.` : '';
+- "songs": up to ${SONG_MAX} songs from this film's soundtrack, most recognizable first. Licensed pop or rock songs and needle-drops ONLY, never the orchestral score and never a composer's cue. Each is { "title", "artist", "why" }, where "why" is about ${SONG_WHY_TARGET} characters saying where it appears in the film. If the film has no notable licensed song, return an empty array. Never invent a song or guess an artist.` : '';
 
   const metaShape = includeMeta ? `,
   "meta": {
@@ -96,13 +116,13 @@ HOW TO WRITE EACH TRIVIA CAPTION (the title slide has its own rule below):
 - Do NOT use em dashes or en dashes (the — or – characters). Use commas, periods, or the word "and" instead.
 - Prefer facts the viewer can SEE in the frame (a prop, a background detail, a cameo, an on-set object) so the image supports the caption.
 - Be concrete: name the specific person, prop, number, line, or technique.
-- Keep it tight: one idea, ${CAPTION_MAX} characters max, no hashtags, no emoji.${orderRule}
+- Keep it tight: one idea, about ${CAPTION_TARGET} characters, no hashtags, no emoji. Going a little over is fine if the sentence needs it; do not pad to reach it.${orderRule}
 - Only include facts you are confident are TRUE. Never invent details.${discoveryRules}
 
 For each item, give:
 - "caption": the trivia text, following the rules above.
 - "timecode": a whole number of SECONDS between 0 and ${dur} pointing to where that scene appears (spread them across the runtime). A suggestion the user fine-tunes.
-- "grab": a terse visual pointer to help the human editor find the exact shot, e.g. "the scene where the building is on fire" (${GRAB_MAX} chars max, for the editor only, never shown to viewers).${titleSlideBlock}${focusBlock}${excludeBlock}${guidanceBlock}${sourceBlock}${metaBlock}
+- "grab": a terse visual pointer to help the human editor find the exact shot, e.g. "the scene where the building is on fire" (about ${GRAB_TARGET} chars, for the editor only, never shown to viewers).${titleSlideBlock}${focusBlock}${excludeBlock}${guidanceBlock}${sourceBlock}${metaBlock}
 
 Return ONLY valid JSON in this exact shape, nothing else:
 {
@@ -117,6 +137,26 @@ Return ONLY valid JSON in this exact shape, nothing else:
 // (doubled commas, comma-before-period, edge commas). Newlines are preserved
 // (title slide is two lines): the edge trim runs per line via the m flag.
 // Exported: someguys.mjs applies the same rule to hooks/blurbs.
+// Bound a model's prose without mangling it.
+//
+// The old `.slice(0, MAX)` severed the last word, which reads as a bug to
+// anyone looking at the slide. This cuts back to the last word boundary at or
+// before `max` and drops any punctuation left dangling at the seam. A single
+// unbroken word longer than `max` is the one case that still gets a hard cut,
+// because nothing else is possible.
+//
+// `max` of 0 or a non-number means "no cap" — return the text as given.
+// Exported: someguys.mjs and yearsnapshot.mjs apply the same rule.
+export function clampText(s, max) {
+  const str = String(s ?? '').trim();
+  if (!Number.isFinite(max) || max <= 0 || str.length <= max) return str;
+  const head = str.slice(0, max);
+  const lastBreak = Math.max(head.lastIndexOf(' '), head.lastIndexOf('\n'), head.lastIndexOf('\t'));
+  if (lastBreak <= 0) return head; // one long word: nothing to cut back to
+  const cut = head.slice(0, lastBreak).replace(/[\s,;:.!?—–-]+$/, '').trim();
+  return cut || head;
+}
+
 export function stripDashes(s) {
   return s
     .replace(/[ \t]*[—–][ \t]*/g, ', ')   // dash → comma
@@ -139,7 +179,7 @@ export function normalizeMeta(raw) {
   if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
 
   const hook = typeof m.hook === 'string'
-    ? stripDashes(m.hook.trim()).slice(0, META_HOOK_MAX)
+    ? clampText(stripDashes(m.hook), META_HOOK_MAX)
     : '';
 
   const filmTags = (Array.isArray(m.filmTags) ? m.filmTags : [])
@@ -164,7 +204,7 @@ export function normalizeMeta(raw) {
 }
 
 function str(v) {
-  return typeof v === 'string' ? v.trim().slice(0, SONG_FIELD_MAX) : '';
+  return typeof v === 'string' ? clampText(v, SONG_FIELD_MAX) : '';
 }
 
 export function normalizeSuggestions(raw, durationSeconds, max = AUTOPILOT_COUNT) {
@@ -179,8 +219,8 @@ export function normalizeSuggestions(raw, durationSeconds, max = AUTOPILOT_COUNT
     let tc = Number(item?.timecode);
     if (!Number.isFinite(tc)) tc = 0;
     tc = Math.min(dur, Math.max(0, Math.round(tc)));
-    const grab = typeof item?.grab === 'string' ? item.grab.trim().slice(0, GRAB_MAX) : '';
-    out.push({ caption: caption.slice(0, CAPTION_MAX), timecode: tc, grab });
+    const grab = typeof item?.grab === 'string' ? clampText(item.grab, GRAB_MAX) : '';
+    out.push({ caption: clampText(caption, CAPTION_MAX), timecode: tc, grab });
   }
   return out;
 }

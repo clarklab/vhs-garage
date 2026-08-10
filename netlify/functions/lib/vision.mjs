@@ -11,6 +11,8 @@
 
 export const MAX_ATTEMPTS = 3;
 const MIN_GAP_SECONDS = 4;   // a suggestion closer than this re-grabs the same shot
+import { clampText } from './autopilot.mjs';
+
 const REASON_MAX = 200;
 
 // Why a frame was rejected. Kept as a closed set so the UI can show an icon and
@@ -73,7 +75,7 @@ export function normalizeVerdict(raw, durationSeconds) {
   }
   const ok = raw.ok === true || raw.ok === 'true';
   const issue = ISSUES.includes(raw.issue) ? raw.issue : (ok ? 'ok' : 'unclear');
-  const reason = String(raw.reason || '').trim().slice(0, REASON_MAX);
+  const reason = clampText(raw.reason, REASON_MAX);
 
   let suggest = Number(raw.suggestSeconds);
   if (!Number.isFinite(suggest) || ok) suggest = null;
