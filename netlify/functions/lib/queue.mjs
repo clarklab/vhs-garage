@@ -107,6 +107,37 @@ export function summarizeHistory(rows) {
   return [...byMovie.values()].sort((a, b) => (b.postedAt || 0) - (a.postedAt || 0));
 }
 
+// Every post that carried a hashtag, for the tag report.
+//
+// summarizeHistory() answers "which films have we covered", so it drops any
+// post it cannot name a film for. The tag report asks a different question —
+// "which tags earn their slot" — and needs no film at all. Sharing the movie
+// gate meant a post retitled by hand in the TikTok app disappeared from the
+// report along with its tags and its numbers, which is exactly the post most
+// worth counting.
+//
+// No dedupe here either: two posts about the same film are two data points,
+// where for the covered-films list they are one film.
+export function summarizeTagRows(rows) {
+  const out = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const description = row?.video_description || row?.description || '';
+    const tags = parseHashtags(description);
+    if (!tags.length) continue;
+    out.push({
+      // Best effort, for display only — a null movie never excludes the row.
+      movie: parsePostedMovie(row?.title, description),
+      views: numOrNull(row?.view_count),
+      likes: numOrNull(row?.like_count),
+      comments: numOrNull(row?.comment_count),
+      shares: numOrNull(row?.share_count),
+      postedAt: numOrNull(row?.create_time),
+      tags,
+    });
+  }
+  return out.sort((a, b) => (b.postedAt || 0) - (a.postedAt || 0));
+}
+
 function numOrNull(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;

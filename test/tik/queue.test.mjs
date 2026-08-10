@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parsePostedMovie, movieKey, isAlreadyPosted, summarizeHistory,
-  buildQueuePrompt, normalizeQueue, QUEUE_COUNT, parseHashtags,
+  buildQueuePrompt, normalizeQueue, QUEUE_COUNT, parseHashtags, summarizeTagRows,
 } from '../../netlify/functions/lib/queue.mjs';
 import { parseTags } from '../../public/scripts/tik/tagreport.js';
 import { defaultPostFields } from '../../public/scripts/tik/project.js';
@@ -224,4 +224,65 @@ test('the server and client hashtag parsers agree', () => {
   for (const text of corpus) {
     assert.deepEqual(parseHashtags(text), parseTags(text), `disagreed on: ${text}`);
   }
+});
+
+// ---- tag rows: counted on tags, not on naming the film ----
+
+test('summarizeTagRows keeps a post whose title was rewritten by hand', () => {
+  // The exact case that used to vanish: finished in the TikTok app with a new
+  // caption, so parsePostedMovie can no longer name the film. Its tags and
+  // numbers are still perfectly good data.
+  const rows = summarizeTagRows([{
+    title: 'the thing is INSANE 🤯',
+    video_description: 'whatever I typed in the app #thething #vhs #videostore',
+    view_count: 4200, like_count: 300, comment_count: 40, share_count: 10,
+  }]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].movie, null);          // unnamed, but not dropped
+  assert.deepEqual(rows[0].tags, ['thething', 'vhs', 'videostore']);
+  assert.equal(rows[0].views, 4200);
+});
+
+test('summarizeHistory still drops that post — the covered list needs a film', () => {
+  // The two functions answer different questions; this is the difference.
+  const post = {
+    title: 'the thing is INSANE 🤯',
+    video_description: 'whatever I typed #thething #vhs #videostore',
+    view_count: 4200,
+  };
+  assert.equal(summarizeHistory([post]).length, 0);
+  assert.equal(summarizeTagRows([post]).length, 1);
+});
+
+test('summarizeTagRows skips posts with no hashtags at all', () => {
+  const rows = summarizeTagRows([
+    { title: 'A — movie trivia & behind-the-scenes facts', video_description: 'no tags', view_count: 10 },
+    { title: 'B', video_description: 'has one #vhs', view_count: 20 },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].views, 20);
+});
+
+test('summarizeTagRows counts two posts about one film separately', () => {
+  // summarizeHistory dedupes by film; two posts are two data points here.
+  const rows = summarizeTagRows([
+    { title: 'Jaws — movie trivia & behind-the-scenes facts', video_description: '#jaws #vhs #videostore', view_count: 1000 },
+    { title: 'Jaws — movie trivia & behind-the-scenes facts', video_description: '#jaws #filmtok #movietok', view_count: 5000 },
+  ]);
+  assert.equal(rows.length, 2);
+  assert.equal(summarizeHistory(rows.map((r) => ({
+    title: 'Jaws — movie trivia & behind-the-scenes facts',
+    video_description: `#${r.tags.join(' #')}`, view_count: r.views,
+  }))).length, 1);
+});
+
+test('summarizeTagRows sorts newest first and tolerates junk', () => {
+  const rows = summarizeTagRows([
+    { title: 'A', video_description: '#old', create_time: 100 },
+    { title: 'B', video_description: '#new', create_time: 900 },
+    null,
+    {},
+  ]);
+  assert.deepEqual(rows.map((r) => r.tags[0]), ['new', 'old']);
+  assert.deepEqual(summarizeTagRows(null), []);
 });
