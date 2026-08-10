@@ -37,7 +37,7 @@ const SONG_FIELD_MAX = 200;
 // a single source of truth so the two can never drift apart.
 export const JOBS_STORE = 'tik-jobs';
 export const ALLOWED_MODELS = new Set([
-  'claude-opus-4-8', 'claude-sonnet-5', 'claude-haiku-4-5', 'claude-sonnet-4-6',
+  'claude-opus-5', 'claude-opus-4-8', 'claude-sonnet-5', 'claude-haiku-4-5', 'claude-sonnet-4-6',
   'gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gpt-4.1-nano',
 ]);
 
@@ -46,7 +46,13 @@ export function buildAutopilotPrompt({ title, year, durationSeconds, count = AUT
   const film = year ? `${title} (${year})` : title;
 
   const titleSlideBlock = includeTitleSlide
-    ? `\n\nADDITIONALLY, the FIRST item in the array must be a TITLE slide (before the ${count} trivia item${count === 1 ? '' : 's'}): its caption is "${film}" on the first line, then a newline, then a short, fun lead-in for the whole set. Tease that fun behind-the-scenes trivia is coming and invite the viewer to comment with their favorite scene, fact, or quote from the movie. Unlike the trivia captions, this title slide MAY ask a friendly question. Keep it warm and playful, at most two short lines, not a quiz or a challenge, and use no hype words. Vary it per film and do not reference any specific fact. Its timecode must point at the film's TITLE CARD / main-title logo shot (usually within the first few minutes), and its "grab" should describe that title-card shot.`
+    ? `\n\nADDITIONALLY, the FIRST item in the array must be a TITLE slide (before the ${count} trivia item${count === 1 ? '' : 's'}). Its caption is "${film}" on the first line, then a newline, then the opener, written in EXACTLY this order:
+
+1. OPEN WITH THE FILM ITSELF. Lead with a famous line of dialogue in quotation marks, or name a specific moment, character, prop, or running joke a fan would recognize instantly. Be concrete: the actual quote, the actual thing. Never open with a generic line about the movie being great or beloved.
+2. THEN ONE KNOWING ASIDE. A short second beat that proves you have actually watched it, in the voice of someone who has seen it many times: the bit everyone quotes wrong, the scene people fast-forward to, the thing you only notice on a rewatch, the detail fans argue about. Affectionate and specific, never a plot summary and never an explanation of the film to someone who has not seen it.
+3. THEN THE ASK. Invite the viewer to comment with their favorite scene, fact, or quote. This is the only place the title slide may ask a question.
+
+Write it like a fan talking to other fans who already love the movie, not like a narrator introducing it. Three short beats, warm and playful, no hype words, no em dashes. Vary it completely per film, and do not give away or reference any of the trivia facts below: the slides are the payoff. Its timecode must point at the film's TITLE CARD / main-title logo shot (usually within the first few minutes), and its "grab" should describe that title-card shot.`
     : '';
   const focusBlock = Number.isFinite(focusTimecode)
     ? `\n\nFocus this one on the SCENE around ${Math.round(focusTimecode)} seconds in (roughly ${Math.round((focusTimecode / dur) * 100)}% through the film), or a behind-the-scenes fact about that part of the shoot.`

@@ -146,6 +146,46 @@ export function defaultPostFields(format, name = '', { meta = null, projectId = 
   };
 }
 
+// ---- the sign-off slide ----
+//
+// The last slide is the only one that asks for anything, so it asks for both
+// things that actually grow the account: a share to one specific person, and a
+// follow. One canned line every time reads like a footer people learn to skip,
+// so there are ten and each project draws one.
+//
+// The share half names a PERSON rather than saying "share this" — "send it to
+// the friend who quotes this constantly" is a specific instruction, and that is
+// the one that gets acted on.
+const OUTRO_TEMPLATES = [
+  (more) => `Send this to the friend who quotes this movie constantly.\nFollow VHS Garage for ${more}.`,
+  (more) => `Know someone who still owns this on tape? Send it to them.\nFollow VHS Garage for ${more}.`,
+  (more) => `Share this with the one person who will actually care.\nFollow VHS Garage for ${more}.`,
+  (more) => `Tag the friend you watched this with.\nFollow VHS Garage for ${more}.`,
+  (more) => `Somebody in your phone needs to see this. Send it over.\nFollow VHS Garage for ${more}.`,
+  (more) => `Pass this along to a fellow tape head.\nFollow VHS Garage for ${more}.`,
+  (more) => `Share it with someone who grew up on this one.\nFollow VHS Garage for ${more}.`,
+  (more) => `Send this to whoever you argue about movies with.\nFollow VHS Garage for ${more}.`,
+  (more) => `Send this to your friend who rewatches it every year.\nFollow VHS Garage for ${more}.`,
+  (more) => `Show this to someone who still misses the video store.\nFollow VHS Garage for ${more}.`,
+];
+
+// What "more" means per format, so one pool of templates serves all three.
+const OUTRO_MORE = {
+  trivia: 'more movie trivia',
+  guys: 'more forgotten legends',
+  year: 'more trips back',
+};
+
+export const OUTRO_COUNT = OUTRO_TEMPLATES.length;
+
+// `r` is a number in [0, 1) — pass one for a deterministic pick (tests), or
+// leave it out and get a random line.
+export function pickOutro(format, r = Math.random()) {
+  const more = OUTRO_MORE[format] || OUTRO_MORE.trivia;
+  const n = Number.isFinite(r) ? Math.min(0.999999, Math.max(0, r)) : Math.random();
+  return OUTRO_TEMPLATES[Math.floor(n * OUTRO_TEMPLATES.length)](more);
+}
+
 // Slide caption for a picked role: "Movie (Year)" heading line + the blurb
 // (falling back to the picker hook when the model dropped one).
 export function captionForRole(role, blurb = '') {

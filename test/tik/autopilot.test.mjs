@@ -55,13 +55,14 @@ test('buildAutopilotPrompt embeds source material when provided, omits when abse
 test('title slide invites engagement (favorite scene/fact/quote), no challenge framing', () => {
   const p = buildAutopilotPrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440, includeTitleSlide: true });
   assert.match(p, /favorite scene, fact, or quote/i);
-  assert.match(p, /invite the viewer to comment/i);
-  assert.match(p, /not reference any specific fact/i);
+  assert.match(p, /Invite the viewer to comment/i);
+  assert.match(p, /do not give away or reference any of the trivia facts/i);
   // Still not a "how many did you know" quiz/challenge, and doesn't tease a specific fact.
   assert.doesNotMatch(p, /TEASES the final fact/);
   assert.doesNotMatch(p, /how many of these/i);
-  // The title slide is exempt from the trivia "no questions" rule.
-  assert.match(p, /title slide MAY ask a friendly question/i);
+  // The title slide is exempt from the trivia "no questions" rule, and the ask
+  // is the ONLY beat allowed to use it.
+  assert.match(p, /the only place the title slide may ask a question/i);
 });
 
 test('buildAutopilotPrompt lists excluded trivia to avoid repeats', () => {
@@ -375,4 +376,20 @@ test('the prompt states the target and never the accept ceiling', () => {
   const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440 });
   assert.match(p, new RegExp(`about ${CAPTION_TARGET} characters`));
   assert.doesNotMatch(p, new RegExp(`${CAPTION_MAX} characters`));
+});
+
+test('the title slide opens on the film, not on a generic compliment', () => {
+  // The order is the whole point: a recognizable quote or moment first, one
+  // knowing aside second, the ask last. A slide that opens with "this movie is
+  // beloved" reads like a stranger describing it.
+  const p = buildAutopilotPrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440, includeTitleSlide: true });
+  assert.match(p, /OPEN WITH THE FILM ITSELF/);
+  assert.match(p, /THEN ONE KNOWING ASIDE/);
+  assert.match(p, /THEN THE ASK/);
+  assert.match(p, /famous line of dialogue in quotation marks/i);
+  assert.match(p, /Never open with a generic line about the movie being great or beloved/i);
+  assert.match(p, /fan talking to other fans/i);
+  assert.match(p, /proves you have actually watched it/i);
+  // Still not a plot summary for someone who hasn't seen it.
+  assert.match(p, /never a plot summary/i);
 });

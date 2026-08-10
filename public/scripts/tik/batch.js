@@ -22,7 +22,8 @@ import { createTriviaPool, helpfulLabel, DEFAULT_PICK } from './triviapool.js';
 // and the run, and nothing here reaches into it beyond showing and refreshing.
 import { initShoot, refreshShoot, isShooting } from './shoot.js';
 import { fetchTriviaPost } from './autopilot.js';
-import { makeProject, defaultPostFields } from './project.js';
+import { makeProject, defaultPostFields, pickOutro } from './project.js';
+import { parseTitleList, pickBestMatch } from './movielist.js';
 import { houseSetAt } from './hashtags.js';
 import { putProject, listProjects } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
@@ -67,6 +68,9 @@ export function initBatch({ onExit = () => {} } = {}) {
     // write
     suggest: $('batch-suggest'), suggestNote: $('batch-suggest-note'),
     search: $('batch-search'), results: $('batch-search-results'),
+    pasteBox: $('batch-paste-box'), paste: $('batch-paste'),
+    pasteMatch: $('batch-paste-match'), pasteNote: $('batch-paste-note'),
+    pasteReport: $('batch-paste-report'),
     queue: $('batch-queue'), queueEmpty: $('batch-queue-empty'), queueCount: $('batch-queue-count'),
     build: $('batch-build'), buildLabel: $('batch-build-label'),
     pickerTitle: $('batch-picker-title'), pickerMeta: $('batch-picker-meta'),
@@ -81,6 +85,8 @@ export function initBatch({ onExit = () => {} } = {}) {
   els.tabShoot.addEventListener('click', () => showTab('shoot'));
   els.suggest.addEventListener('click', suggestMovies);
   els.search.addEventListener('input', onSearchInput);
+  els.pasteMatch.addEventListener('click', matchPastedList);
+  els.paste.addEventListener('input', updatePasteNote);
   els.search.addEventListener('blur', () => setTimeout(hideResults, 150));
   els.build.addEventListener('click', buildAll);
   els.size.addEventListener('change', onSizeChange);
@@ -286,6 +292,113 @@ function renderResults(titles) {
 function hideResults() {
   els.results.classList.add('hidden');
   els.results.innerHTML = '';
+}
+
+// ---- paste a whole list ----
+//
+// Adding twenty films through a search box is twenty searches, twenty reads of
+// a dropdown, and twenty clicks. This takes the list as text, resolves each row
+// against IMDb, and reports what it did — including the rows it was unsure
+// about, which is the part that makes the result trustworthy enough to use.
+
+function updatePasteNote() {
+  const rows = parseTitleList(els.paste.value);
+  const room = MAX_QUEUE - queue.length;
+  els.pasteMatch.disabled = rows.length === 0 || room <= 0;
+  if (!rows.length) { els.pasteNote.textContent = ''; return; }
+  const willAdd = Math.min(rows.length, room);
+  els.pasteNote.textContent = room <= 0
+    ? `Queue is full (${MAX_QUEUE}).`
+    : `${rows.length} title${rows.length === 1 ? '' : 's'}${willAdd < rows.length ? `, room for ${willAdd}` : ''}.`;
+}
+
+// One search per title. Kept to a small concurrency: IMDb's endpoint is not
+// ours, and twenty parallel requests is how you get rate limited mid-list.
+const PASTE_CONCURRENCY = 3;
+
+async function resolveTitle(row) {
+  try {
+    const res = await fetchWithTimeout('/.netlify/functions/tik-imdb', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'search', query: row.title, first: 8 }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { row, ...pickBestMatch(row, data.titles || []) };
+  } catch (e) {
+    console.warn('[tik-batch] paste lookup failed', { title: row.title, message: e.message });
+    return { row, pick: null, confidence: 'error', error: e.message };
+  }
+}
+
+async function matchPastedList() {
+  const rows = parseTitleList(els.paste.value).slice(0, Math.max(0, MAX_QUEUE - queue.length));
+  if (!rows.length) return;
+
+  setBusy(true);
+  els.pasteReport.innerHTML = '';
+  const results = new Array(rows.length);
+  let done = 0;
+  say(`Looking up ${rows.length} title${rows.length === 1 ? '' : 's'}…`);
+
+  // A fixed pool of workers pulling from one cursor: bounded concurrency
+  // without batching, so one slow lookup never stalls the rest of the list.
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(PASTE_CONCURRENCY, rows.length) }, async () => {
+    while (cursor < rows.length) {
+      const i = cursor++;
+      results[i] = await resolveTitle(rows[i]);
+      say(`Looked up ${++done} of ${rows.length}…`);
+    }
+  }));
+
+  let added = 0;
+  const missed = [];
+  for (const r of results) {
+    const ok = r.pick && addToQueue({ ...r.pick, why: r.row.raw });
+    if (ok) added++;
+    else if (r.pick) missed.push({ ...r, confidence: 'dupe' });
+    else missed.push(r);
+    renderPasteRow(r, ok);
+  }
+
+  setBusy(false);
+  render();
+  prefetchPools();
+  updatePasteNote();
+  // Say what did not land as plainly as what did — a silent partial match is
+  // how three films quietly go missing from a batch of twenty.
+  say(
+    missed.length
+      ? `Added ${added} of ${results.length}. Check the ${missed.length} flagged below.`
+      : `Added ${added} movie${added === 1 ? '' : 's'}.`,
+    missed.length ? 'bad' : 'good',
+  );
+  if (added) els.paste.value = '';
+}
+
+const PASTE_TONE = {
+  exact: 'text-neutral-500',
+  title: 'text-neutral-500',
+  weak: 'text-amber-300',
+  dupe: 'text-neutral-600',
+  none: 'text-red-300',
+  error: 'text-red-300',
+};
+
+function renderPasteRow(r, added) {
+  const li = document.createElement('li');
+  li.className = `text-[11px] leading-snug ${PASTE_TONE[r.confidence] || 'text-neutral-500'}`;
+  const asked = r.row.year ? `${r.row.title} (${r.row.year})` : r.row.title;
+  if (!r.pick) {
+    li.textContent = r.confidence === 'error' ? `${asked} — lookup failed` : `${asked} — no match`;
+  } else if (!added) {
+    li.textContent = `${asked} — already queued`;
+  } else if (r.confidence === 'weak') {
+    li.textContent = `${asked} → ${r.pick.title}${r.pick.year ? ` (${r.pick.year})` : ''} — check this one`;
+  } else {
+    li.textContent = `${r.pick.title}${r.pick.year ? ` (${r.pick.year})` : ''}`;
+  }
+  els.pasteReport.appendChild(li);
 }
 
 function addToQueue(pick) {
@@ -832,7 +945,7 @@ async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
       })),
       ...(outro ? [{
         id: String(suggestions.length + 1),
-        caption: OUTRO_CAPTION,
+        caption: pickOutro('trivia'),
         timecode: null,
         grabHint: '',
         fontScale: 1, role: null, kind: 'outro', entry: null, section: null,
@@ -847,10 +960,9 @@ async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
 }
 
 // The branded sign-off, same logo and wording the hand-driven flow appends.
-// Duplicated rather than imported because app.js keeps it private and batch
-// mode stays self-contained; if the caption there changes, change it here too.
+// The caption now comes from project.js's shared pool rather than a copy kept
+// in step by hand, so batch drafts get the same rotating sign-off.
 const OUTRO_LOGO_URL = '/images/vhs-garage-logo-square.png';
-const OUTRO_CAPTION = 'Follow VHS Garage for more movie trivia';
 
 // Never fatal: a missing logo costs the outro slide, not the whole draft.
 async function fetchOutroFrame() {

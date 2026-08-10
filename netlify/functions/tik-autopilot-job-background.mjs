@@ -24,7 +24,7 @@ const JOB_MAX_AGE_MS = 60 * 60 * 1000; // sweep results older than 1h
 const AI_TIMEOUT_MS = 3.5 * 60 * 1000;
 
 // With the sync ceiling gone, default to the strongest model for trivia.
-const DEFAULT_MODEL = process.env.TIK_AUTOPILOT_MODEL || 'claude-opus-4-8';
+const DEFAULT_MODEL = process.env.TIK_AUTOPILOT_MODEL || 'claude-opus-5';
 
 // Ground the model in Wikipedia (film production sections, the actor's career
 // sections, or the "<year> in film" article). Best-effort: a Wikipedia hiccup

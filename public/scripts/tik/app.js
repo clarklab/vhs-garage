@@ -13,7 +13,7 @@ import { composeToCanvas, composeSlide } from './compose.js';
 import {
   FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, renumberYearEntries,
-  relativeTime, projectDisplayName,
+  relativeTime, projectDisplayName, pickOutro,
 } from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
@@ -153,11 +153,6 @@ async function grabAt(timecode) {
 // Branded outro slide: the VHS Garage logo as the "frame" + a follow CTA,
 // flowing through the normal slide pipeline (editable, reorderable).
 const OUTRO_LOGO_URL = '/images/vhs-garage-logo-square.png'; // yellow lockup (V mark), black field
-const OUTRO_CAPTIONS = {
-  trivia: 'Follow VHS Garage for more movie trivia',
-  guys: 'Follow VHS Garage, we remember more guys every week',
-  year: 'Follow VHS Garage, we rewind another year every week',
-};
 async function makeOutroSlide() {
   const res = await fetch(OUTRO_LOGO_URL);
   if (!res.ok) throw new Error(`Couldn't load the outro logo (${res.status})`);
@@ -165,7 +160,7 @@ async function makeOutroSlide() {
   const bitmap = await createImageBitmap(blob);
   return {
     id: String(nextId++), bitmap, blob,
-    caption: OUTRO_CAPTIONS[project?.format] || OUTRO_CAPTIONS.trivia,
+    caption: pickOutro(project?.format),
     grabHint: '', fontScale: 1, role: null, kind: 'outro',
   };
 }
