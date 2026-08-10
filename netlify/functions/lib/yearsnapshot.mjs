@@ -17,7 +17,8 @@ export const DEFAULT_MIN_VOTES = 100_000; // IMDb vote floor, matching the searc
 // ~1000 output tokens and can go higher with long notes. The shared 2048
 // default was sized for a 6-row trivia reply, so this format asks for more:
 // a reply cut off mid-array is unparseable and reads as a total failure.
-export const YEAR_MAX_TOKENS = 4096;
+// Sixteen entries, and on Claude 5 thinking shares this ceiling with the answer.
+export const YEAR_MAX_TOKENS = 16384;
 
 // The lists, in slide order. `key` is the JSON key the model returns and the
 // key the client builds a section from.

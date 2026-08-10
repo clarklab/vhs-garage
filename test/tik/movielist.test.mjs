@@ -1,0 +1,179 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  parseTitleList, pickBestMatch, titleKey, MAX_PASTED,
+} from '../../public/scripts/tik/movielist.js';
+
+// ---- parsing a pasted list ----
+
+test('parseTitleList reads a plain newline list', () => {
+  assert.deepEqual(
+    parseTitleList('The Thing\nJaws\nAlien').map((r) => r.title),
+    ['The Thing', 'Jaws', 'Alien'],
+  );
+});
+
+test('parseTitleList pulls the year out of every shape people write it', () => {
+  const rows = parseTitleList([
+    'The Thing (1982)',
+    'Jaws [1975]',
+    'Alien - 1979',
+    'Predator, 1987',
+    'Die Hard 1988',
+  ].join('\n'));
+  assert.deepEqual(rows.map((r) => [r.title, r.year]), [
+    ['The Thing', '1982'],
+    ['Jaws', '1975'],
+    ['Alien', '1979'],
+    ['Predator', '1987'],
+    ['Die Hard', '1988'],
+  ]);
+});
+
+test('parseTitleList strips numbering and bullets', () => {
+  const rows = parseTitleList('1. The Thing\n2) Jaws\n- Alien\n* Predator\n• Robocop');
+  assert.deepEqual(rows.map((r) => r.title), ['The Thing', 'Jaws', 'Alien', 'Predator', 'Robocop']);
+});
+
+test('parseTitleList takes the first column of a pasted table', () => {
+  const rows = parseTitleList('The Thing\t1982\t8.2\nJaws|1975|8.1');
+  assert.deepEqual(rows.map((r) => r.title), ['The Thing', 'Jaws']);
+});
+
+test('parseTitleList skips blanks and a heading line', () => {
+  const rows = parseTitleList('Movies:\n\nThe Thing\n\n   \nJaws\n');
+  assert.deepEqual(rows.map((r) => r.title), ['The Thing', 'Jaws']);
+});
+
+test('parseTitleList keeps a year that IS the title', () => {
+  // "1917" is a film. Stripping it would leave an empty row.
+  const rows = parseTitleList('1917\n2012');
+  assert.deepEqual(rows.map((r) => r.title), ['1917', '2012']);
+});
+
+test('parseTitleList keeps a title that contains a number', () => {
+  const rows = parseTitleList('Apollo 13\nSe7en\nOcean’s 11');
+  assert.deepEqual(rows.map((r) => r.title), ['Apollo 13', 'Se7en', 'Ocean’s 11']);
+});
+
+test('parseTitleList dedupes the same film listed twice', () => {
+  const rows = parseTitleList('The Thing (1982)\nthe thing (1982)\nThe Thing (2011)');
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.year), ['1982', '2011']);
+});
+
+test('parseTitleList caps a runaway paste', () => {
+  const rows = parseTitleList(Array.from({ length: 300 }, (_, i) => `Film ${i}`).join('\n'));
+  assert.equal(rows.length, MAX_PASTED);
+});
+
+test('parseTitleList on junk returns an empty array', () => {
+  assert.deepEqual(parseTitleList(''), []);
+  assert.deepEqual(parseTitleList('   \n\n  '), []);
+  assert.deepEqual(parseTitleList(null), []);
+  assert.deepEqual(parseTitleList(42), []);
+});
+
+// ---- title normalizing ----
+
+test('titleKey ignores case, punctuation, articles, and a trailing year', () => {
+  assert.equal(titleKey('The Thing (1982)'), titleKey('the thing'));
+  assert.equal(titleKey('E.T.'), titleKey('ET'));
+  assert.equal(titleKey('Ferris Bueller’s Day Off'), titleKey('Ferris Buellers Day Off'));
+  assert.equal(titleKey('Fast & Furious'), titleKey('Fast and Furious'));
+});
+
+test('titleKey keeps genuinely different films apart', () => {
+  assert.notEqual(titleKey('Alien'), titleKey('Aliens'));
+  assert.notEqual(titleKey('The Thing'), titleKey('The Thing Called Love'));
+});
+
+// ---- matching against search results ----
+
+const cand = (title, year) => ({ title, year, imdbId: `tt${title.length}${year}` });
+
+test('pickBestMatch takes the exact title and year', () => {
+  const { pick, confidence } = pickBestMatch(
+    { title: 'The Thing', year: '1982' },
+    [cand('The Thing', '2011'), cand('The Thing', '1982'), cand('The Thing', '1951')],
+  );
+  assert.equal(pick.year, '1982');
+  assert.equal(confidence, 'exact');
+});
+
+test('pickBestMatch prefers the original when no year is given', () => {
+  // A bare "The Thing" means Carpenter's, not the 2011 prequel.
+  const { pick, confidence } = pickBestMatch(
+    { title: 'The Thing', year: null },
+    [cand('The Thing', '2011'), cand('The Thing', '1982')],
+  );
+  assert.equal(pick.year, '1982');
+  assert.equal(confidence, 'title');
+});
+
+test('a wrong year still keeps the right film', () => {
+  // Mistyped years are more common than the wrong movie entirely.
+  const { pick, confidence } = pickBestMatch(
+    { title: 'Jaws', year: '1976' },
+    [cand('Jaws', '1975'), cand('Jaws 2', '1978')],
+  );
+  assert.equal(pick.title, 'Jaws');
+  assert.equal(confidence, 'title');
+});
+
+test('pickBestMatch falls back to the top hit and says it is weak', () => {
+  const { pick, confidence } = pickBestMatch(
+    { title: 'Teh Thnig', year: null },
+    [cand('The Thing', '1982'), cand('The Thing', '2011')],
+  );
+  assert.equal(pick.title, 'The Thing');
+  assert.equal(confidence, 'weak');
+});
+
+test('pickBestMatch never invents a result', () => {
+  assert.deepEqual(pickBestMatch({ title: 'Nothing' }, []), { pick: null, confidence: 'none' });
+  assert.deepEqual(pickBestMatch({ title: 'Nothing' }, null), { pick: null, confidence: 'none' });
+});
+
+test('a near-miss title with a matching year is weak, not exact', () => {
+  const { pick, confidence } = pickBestMatch(
+    { title: 'Blade Runnr', year: '1982' },
+    [cand('Blade Runner', '1982')],
+  );
+  assert.equal(pick.title, 'Blade Runner');
+  assert.equal(confidence, 'weak');
+});
+
+// ---- outro rotation ----
+
+test('the outro pool always asks for a share AND a follow', async () => {
+  const { pickOutro, OUTRO_COUNT } = await import('../../public/scripts/tik/project.js');
+  assert.ok(OUTRO_COUNT >= 10, `only ${OUTRO_COUNT} outros`);
+  const seen = new Set();
+  for (let i = 0; i < OUTRO_COUNT; i++) {
+    const line = pickOutro('trivia', i / OUTRO_COUNT);
+    seen.add(line);
+    assert.match(line, /Follow VHS Garage/, line);
+    assert.match(line, /send|share|tag|pass|show/i, `no share ask: ${line}`);
+    assert.doesNotMatch(line, /[—–]/, `em dash in: ${line}`);
+  }
+  assert.equal(seen.size, OUTRO_COUNT, 'the pool repeats itself');
+});
+
+test('pickOutro tails the follow line per format', () => {
+  // Imported lazily above; re-import here keeps this test self-contained.
+  return import('../../public/scripts/tik/project.js').then(({ pickOutro }) => {
+    assert.match(pickOutro('trivia', 0), /more movie trivia/);
+    assert.match(pickOutro('guys', 0), /more forgotten legends/);
+    assert.match(pickOutro('year', 0), /more trips back/);
+    assert.match(pickOutro('nonsense', 0), /more movie trivia/); // safe default
+  });
+});
+
+test('pickOutro clamps a junk r instead of returning undefined', () => {
+  return import('../../public/scripts/tik/project.js').then(({ pickOutro }) => {
+    for (const r of [0, 0.999999, 1, 1.5, -3, NaN]) {
+      assert.equal(typeof pickOutro('trivia', r), 'string', `broke on ${r}`);
+    }
+  });
+});

@@ -18,11 +18,39 @@ export function providerFor(model) {
   return 'gemini';
 }
 
-// Output budget. 2048 fits a title slide + 5 trivia suggestions; formats that
-// ask for more rows (a Year Snapshot returns 16 entries) pass a bigger number,
-// because a truncated reply is unparseable JSON and surfaces to the user as
-// "the AI returned nothing usable".
-export const DEFAULT_MAX_TOKENS = 2048;
+// Output budget.
+//
+// On Claude 5 models max_tokens caps THINKING PLUS the visible answer, and
+// thinking is on by default. 2048 used to fit a title slide plus five trivia
+// suggestions comfortably; with thinking sharing the same budget it does not,
+// and a truncated reply is unparseable JSON that surfaces to the user as "the
+// AI returned nothing usable". Formats that ask for more rows (a Year Snapshot
+// returns 16 entries) pass a bigger number still.
+export const DEFAULT_MAX_TOKENS = 8192;
+
+// How hard Claude works on a request: low | medium | high | xhigh | max.
+// Default `high` is the documented sweet spot for intelligence-sensitive work
+// like writing captions; `xhigh` is aimed at coding and agentic loops. Exposed
+// as an env var so the level can be swept without a deploy.
+const EFFORT = process.env.TIK_AI_EFFORT || 'high';
+const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+export const aiEffort = () => (EFFORT_LEVELS.has(EFFORT) ? EFFORT : 'high');
+
+// Adaptive thinking and `output_config.effort` exist on the 4.6-and-later
+// Opus/Sonnet lines and the 5 family. They are NOT accepted on Haiku 4.5, which
+// the sync fallback path still uses: sending either one there is a 400, so the
+// tuning has to be gated on the model rather than sent unconditionally.
+const THINKING_MODELS = /^claude-(opus-(4-6|4-7|4-8|5)|sonnet-(4-6|5)|fable-5|mythos-5)$/;
+export function supportsThinking(model) {
+  return THINKING_MODELS.test(String(model || ''));
+}
+
+// The tuning block for a Claude request, or {} for a model that rejects it.
+function tuning(model) {
+  return supportsThinking(model)
+    ? { thinking: { type: 'adaptive' }, output_config: { effort: aiEffort() } }
+    : {};
+}
 
 // Dispatch to the right provider for `model`.
 export async function callModel(prompt, model, signal, maxTokens = DEFAULT_MAX_TOKENS) {
@@ -81,7 +109,14 @@ async function callAnthropic(prompt, model, signal, maxTokens) {
       'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY,
       'anthropic-version': '2023-06-01',
     },
-    body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }),
+    // Adaptive thinking plus an effort level is how depth is controlled on the
+    // Claude 5 line; the old budget_tokens knob is rejected outright, as are
+    // sampling params, so steering lives in the prompt.
+    body: JSON.stringify({
+      model, max_tokens: maxTokens,
+      ...tuning(model),
+      messages: [{ role: 'user', content: prompt }],
+    }),
     signal,
   });
   if (!res.ok) throw new Error(`Anthropic ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
@@ -96,7 +131,9 @@ async function callAnthropic(prompt, model, signal, maxTokens) {
 // whether a slide ships with the wrong shot, and the studio standardizes on
 // Claude for that. Callers pass a non-Claude model at their peril, so say so
 // loudly rather than silently routing to a text-only provider.
-export async function callModelWithImage(prompt, image, model, signal, maxTokens = 512) {
+// 2048, not 512: the verdict itself is a few dozen tokens, but thinking is
+// billed against the same ceiling and a truncated verdict fails the frame check.
+export async function callModelWithImage(prompt, image, model, signal, maxTokens = 2048) {
   if (providerFor(model) !== 'anthropic') {
     throw new Error(`Vision requires a Claude model, got "${model}"`);
   }
@@ -113,6 +150,7 @@ export async function callModelWithImage(prompt, image, model, signal, maxTokens
     },
     body: JSON.stringify({
       model, max_tokens: maxTokens,
+      ...tuning(model),
       messages: [{
         role: 'user',
         content: [
