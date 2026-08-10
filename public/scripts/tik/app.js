@@ -69,6 +69,7 @@ const els = {
   mojoLink: $('mojo-link'), mojoPaste: $('mojo-paste'), mojoPasteNote: $('mojo-paste-note'),
   // post details
   postTitleInput: $('post-title-input'), postDescInput: $('post-desc-input'), postReset: $('post-reset'),
+  postDetails: $('post-details'), postDetailsBadge: $('post-details-badge'),
   songPicks: $('song-picks'), songList: $('song-list'),
   // hashtag performance, under the follower chart
   tagReport: $('tag-report'), tagReportNote: $('tag-report-note'), tagReportBody: $('tag-report-body'),
@@ -684,6 +685,13 @@ function renderSongPicks() {
   const songs = project?.postMeta?.songs || [];
   const show = project?.format === 'trivia' && songs.length > 0;
   els.songPicks.classList.toggle('hidden', !show);
+  // Picks buried in a collapsed panel are picks nobody uses: badge the summary
+  // so they are visible without expanding, and open it once when they arrive.
+  els.postDetailsBadge.classList.toggle('hidden', !show);
+  els.postDetailsBadge.textContent = show
+    ? `${songs.length} sound pick${songs.length === 1 ? '' : 's'}`
+    : '';
+  if (show) els.postDetails.open = true;
   if (!show) { els.songList.innerHTML = ''; return; }
   els.songList.innerHTML = songs.map((s) => `
     <li class="text-xs leading-snug text-neutral-300">

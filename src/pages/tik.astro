@@ -558,7 +558,10 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
 
           <!-- Post details (shared) -->
           <details id="post-details" class="rounded-xl border border-neutral-800 bg-neutral-900 p-3">
-            <summary class="cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-neutral-400">Post details — title, description &amp; hashtags</summary>
+            <summary class="cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-neutral-400">Post details — title, description &amp; hashtags<span
+                id="post-details-badge"
+                class="ml-2 hidden rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal text-amber-300"
+              ></span></summary>
             <label class="mt-3 block text-xs text-neutral-500">Title
               <input id="post-title-input" maxlength="90"
                      class="mt-1 w-full rounded-md border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
