@@ -5,6 +5,7 @@ import {
   sectionCaption, captionForYearEntry, photoQueryFor, relativeTime, projectDisplayName,
   YEAR_LIST_SIZE, numberWord, renumberYearEntries,
 } from '../../public/scripts/tik/project.js';
+import { houseSetByKey } from '../../public/scripts/tik/hashtags.js';
 
 test('makeProject builds a draft with the right shape and format fallback', () => {
   const p = makeProject({ id: 'abc', format: 'guys', now: 1000 });
@@ -208,4 +209,71 @@ test('sectionCaption spells the count and tracks YEAR_LIST_SIZE', () => {
   assert.equal(numberWord(99), '99');
   // The section cards must say the same number as the captions.
   for (const l of YEAR_LISTS) assert.match(l.heading, new RegExp(`\\b${YEAR_LIST_SIZE}\\b`));
+});
+
+// ---- Tape Trivia post copy: agent meta, film tags, rotating house pair ----
+
+test('defaultPostFields folds the agent hook and film tags into the post', () => {
+  const { title, description, hashtags, hashtagSet } = defaultPostFields(
+    'trivia', 'The Thing (1982)',
+    {
+      projectId: 'p1',
+      meta: {
+        hook: 'John Carpenter’s 1982 arctic paranoia classic with Kurt Russell.',
+        filmTags: ['#The Thing', 'John Carpenter', '80s horror'],
+      },
+    },
+  );
+  assert.match(title, /^The Thing \(1982\) — movie trivia/);
+  assert.match(description, /^John Carpenter/);
+  assert.deepEqual(hashtags.slice(0, 3), ['thething', 'johncarpenter', '80shorror']);
+  assert.equal(hashtags.length, 5);
+  assert.ok(houseSetByKey(hashtagSet), 'hashtagSet must name a real house set');
+  assert.match(description, /#thething/);
+});
+
+test('defaultPostFields still writes usable trivia copy with no agent meta', () => {
+  const { title, description, hashtags } = defaultPostFields('trivia', 'Jaws');
+  assert.match(title, /^Jaws — movie trivia/);
+  assert.match(description, /hidden details from Jaws/);
+  assert.equal(hashtags.length, 5);
+  assert.doesNotMatch(description, /undefined/);
+});
+
+test('defaultPostFields keeps a trivia post to five hashtags', () => {
+  const { description } = defaultPostFields('trivia', 'Jaws', {
+    projectId: 'p2',
+    meta: { hook: 'A hook.', filmTags: ['a1', 'b2', 'c3', 'd4', 'e5', 'f6'] },
+  });
+  assert.equal((description.match(/#/g) || []).length, 5);
+});
+
+test('an explicit houseSetKey wins over the id-based rotation', () => {
+  const a = defaultPostFields('trivia', 'Jaws', { projectId: 'p1', houseSetKey: 'cult' });
+  const b = defaultPostFields('trivia', 'Jaws', { projectId: 'p2', houseSetKey: 'cult' });
+  assert.equal(a.hashtagSet, 'cult');
+  assert.equal(b.hashtagSet, 'cult');
+  // An unknown key falls back to the rotation instead of throwing.
+  assert.ok(houseSetByKey(defaultPostFields('trivia', 'Jaws', { houseSetKey: 'bogus' }).hashtagSet));
+});
+
+test('the same project always regenerates the same tags', () => {
+  // Reopening a draft must not reshuffle copy the user already reviewed.
+  const opts = { projectId: 'stable-id', meta: { hook: 'A hook.', filmTags: ['jaws'] } };
+  assert.deepEqual(defaultPostFields('trivia', 'Jaws', opts), defaultPostFields('trivia', 'Jaws', opts));
+});
+
+test('the other two formats are untouched by the hashtag work', () => {
+  const guys = defaultPostFields('guys', 'Dick Miller');
+  const year = defaultPostFields('year', '1985');
+  assert.match(guys.description, /#rememberingsomeguys/);
+  assert.match(year.description, /#boxoffice/);
+  assert.equal(guys.hashtagSet, undefined);
+  assert.equal(year.hashtagSet, undefined);
+});
+
+test('makeProject starts with empty post meta, not undefined', () => {
+  const p = makeProject({ id: 'x', format: 'trivia', now: 0 });
+  assert.equal(p.postMeta, null);
+  assert.equal(p.hashtagSet, null);
 });

@@ -12,7 +12,7 @@
 // - 'blurbs': slide blurbs for picked roles       → { intro, blurbs }
 // - 'year': one year's two ranked lists           → { intro, rated, boxoffice }
 import { getStore } from '@netlify/blobs';
-import { buildAutopilotPrompt, normalizeSuggestions, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
+import { buildAutopilotPrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
@@ -53,7 +53,7 @@ export default async (req) => {
 
   const {
     jobId, kind = 'trivia',
-    title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide,
+    title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta,
     actor, roles,
     minVotes, ratedGiven, boxofficeGiven,
     model: requested,
@@ -96,7 +96,7 @@ export default async (req) => {
       });
     } else {
       prompt = buildAutopilotPrompt({
-        title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide,
+        title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta,
         sourceMaterial: source?.text || '', sourceName: source?.pageTitle || '',
       });
     }
@@ -130,9 +130,16 @@ export default async (req) => {
     } else {
       const base = Number(count) || AUTOPILOT_COUNT;
       const max = includeTitleSlide ? base + 1 : base;
-      const suggestions = normalizeSuggestions(parseModelJson(raw), durationSeconds, max);
+      const parsed = parseModelJson(raw);
+      const suggestions = normalizeSuggestions(parsed, durationSeconds, max);
+      // Meta is a bonus, never a gate: a malformed one costs the post copy, not
+      // the trivia we just paid for. The client falls back to the template.
+      const meta = includeMeta ? normalizeMeta(parsed) : null;
+      if (includeMeta && !meta) {
+        console.warn('[tik-autopilot-job] no usable post meta; falling back to template copy', { jobId, model });
+      }
       result = suggestions.length
-        ? { ok: true, model, suggestions }
+        ? { ok: true, model, suggestions, meta }
         : { ok: false, model, error: 'The AI returned no usable trivia — try again.' };
     }
     if (!result.ok) console.warn('[tik-autopilot-job] no usable result', { jobId, kind, model, rawPreview: String(raw).slice(0, 300) });

@@ -1,6 +1,7 @@
 // Pure project-model helpers for the studio: format registry, default post
 // copy, slide-caption formatting, relative timestamps. No DOM/IDB here —
 // unit-tested under node:test like the other pure modules.
+import { pickHouseSet, houseSetByKey, buildHashtags, buildDescription } from './hashtags.js';
 
 // How many films per list. The client sends this to the agent, so the number
 // in the prompt, on the section cards, and in the captions can never disagree.
@@ -74,15 +75,33 @@ export function makeProject({ id, format, now }) {
     postTitle: '',
     postDesc: '',
     postEdited: false,
+    // TikTok meta the writing agent supplies for Tape Trivia: { hook, filmTags,
+    // songs }. Kept whole so re-deriving the post copy (syncPostDefaults) does
+    // not lose the hook. Songs are picks for the human to search in the TikTok
+    // app, since no API mode can attach a specific track — see hashtags.js.
+    postMeta: null,
+    // Which rotating house hashtag pair shipped, so tagreport.js can tell the
+    // lanes apart even if the rotation itself is changed later.
+    hashtagSet: null,
     // Persisted by the serializer:
     slides: [],
     thumb: null,
   };
 }
 
-// Suggested TikTok post title + description per format. TikTok effectively
-// honors ~5 hashtags — keep them broad, skip niche tags.
-export function defaultPostFields(format, name = '') {
+// Suggested TikTok post title + description per format.
+//
+// Tape Trivia takes an optional `meta` from the writing agent ({ hook,
+// filmTags }) and an id to rotate the house hashtag pair off; see hashtags.js
+// for why the five tags are split the way they are. Called with neither, it
+// still returns usable copy, so nothing depends on the agent having answered.
+//
+// The trivia TITLE FORMAT IS LOAD-BEARING: parsePostedMovie() in
+// netlify/functions/lib/queue.mjs reads the film back out of "<Movie> — movie
+// trivia …" to know what we have already covered. Reword it and batch mode
+// silently starts proposing films we posted last week. queue.test.mjs guards
+// this against the real generator.
+export function defaultPostFields(format, name = '', { meta = null, projectId = '', houseSetKey = '' } = {}) {
   if (format === 'year') {
     const y = String(name || '').trim();
     const when = y || 'that year';
@@ -109,19 +128,21 @@ export function defaultPostFields(format, name = '') {
     };
   }
   const movie = name;
+  // An explicit key wins (batch mode balances a run of drafts across the sets).
+  // Otherwise rotate on the project id, so a draft's tags never change under
+  // the user, falling back to the film name when there is no id yet — anything
+  // but pinning the whole account to one house set.
+  const houseSet = houseSetByKey(houseSetKey) || pickHouseSet(projectId || movie);
+  const hashtags = buildHashtags({ filmTags: meta?.filmTags || [], houseSet });
   return {
     title: movie
       ? `${movie} — movie trivia & behind-the-scenes facts`
       : 'Movie trivia & behind-the-scenes facts',
-    description: [
-      movie
-        ? `Behind-the-scenes facts and hidden details from ${movie}.`
-        : 'Behind-the-scenes movie facts and hidden details.',
-      // Main ask: viewers love dropping quotes/one-liners, so ask for them outright.
-      'What’s your favorite quote from the movie? Drop it in the comments.',
-      'Save this for your next movie night, and follow VHS Garage for more.',
-      '#movietrivia #moviefacts #behindthescenes #movietok #moviequotes',
-    ].join(' '),
+    // The hook carries the searchable keywords (title, year, director, cast)
+    // and is barred from spoiling a slide. Without one we keep the old line.
+    description: buildDescription({ hook: meta?.hook || '', movie, hashtags }),
+    hashtags,
+    hashtagSet: houseSet.key,
   };
 }
 

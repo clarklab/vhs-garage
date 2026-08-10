@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  AUTOPILOT_COUNT, buildAutopilotPrompt, normalizeSuggestions,
+  AUTOPILOT_COUNT, buildAutopilotPrompt, normalizeSuggestions, normalizeMeta, META_HOOK_MAX,
 } from '../../netlify/functions/lib/autopilot.mjs';
 
 test('buildAutopilotPrompt embeds title, year, duration, count, and asks for JSON', () => {
@@ -208,4 +208,98 @@ test('normalizeSuggestions coerces a non-numeric timecode to 0 and truncates lon
 test('normalizeSuggestions on junk input returns an empty array', () => {
   assert.deepEqual(normalizeSuggestions(null, 100), []);
   assert.deepEqual(normalizeSuggestions({}, 100), []);
+});
+
+// ---- post meta (hook, film hashtags, songs) ----
+
+test('includeMeta off leaves the prompt byte-identical to the one we ship today', () => {
+  // The single-slide "write one more" path must not be touched by this feature.
+  const args = { title: 'Jaws', year: '1975', durationSeconds: 7440, focusTimecode: 900 };
+  assert.equal(buildAutopilotPrompt(args), buildAutopilotPrompt({ ...args, includeMeta: false }));
+  assert.doesNotMatch(buildAutopilotPrompt(args), /"meta"/);
+  assert.doesNotMatch(buildAutopilotPrompt(args), /filmTags/);
+});
+
+test('includeMeta asks for the hook, film tags, and soundtrack songs', () => {
+  const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440, includeMeta: true });
+  assert.match(p, /"meta"/);
+  assert.match(p, /"hook"/);
+  assert.match(p, /"filmTags"/);
+  assert.match(p, /"songs"/);
+  assert.match(p, new RegExp(String(META_HOOK_MAX)));
+});
+
+test('includeMeta forbids spoiling a slide and forbids the score', () => {
+  const p = buildAutopilotPrompt({ title: 'Jaws', durationSeconds: 7440, includeMeta: true });
+  assert.match(p, /MUST NOT state or hint at any fact you used in a slide caption/);
+  assert.match(p, /never the orchestral score/i);
+  assert.match(p, /Never invent a song/i);
+  assert.match(p, /return an empty array/i);
+});
+
+test('normalizeMeta keeps a good answer', () => {
+  const meta = normalizeMeta({
+    meta: {
+      hook: 'John Carpenter’s 1982 arctic paranoia classic with Kurt Russell.',
+      filmTags: ['thething', 'johncarpenter', '80shorror'],
+      songs: [{ title: 'Superstition', artist: 'Stevie Wonder', why: 'Opening scene' }],
+    },
+  });
+  assert.equal(meta.filmTags.length, 3);
+  assert.equal(meta.songs[0].artist, 'Stevie Wonder');
+  assert.match(meta.hook, /^John Carpenter/);
+});
+
+test('normalizeMeta strips em dashes from the hook like it does captions', () => {
+  const meta = normalizeMeta({ meta: { hook: 'The Thing — a 1982 classic.', filmTags: [] } });
+  assert.doesNotMatch(meta.hook, /[—–]/);
+});
+
+test('normalizeMeta truncates an over-long hook', () => {
+  const meta = normalizeMeta({ meta: { hook: 'x'.repeat(400), filmTags: ['a'] } });
+  assert.equal(meta.hook.length, META_HOOK_MAX);
+});
+
+test('normalizeMeta caps the tag and song lists', () => {
+  const meta = normalizeMeta({
+    meta: {
+      hook: 'A hook.',
+      filmTags: ['a1', 'b2', 'c3', 'd4', 'e5', 'f6'],
+      songs: Array.from({ length: 8 }, (_, i) => ({ title: `Song ${i}`, artist: 'A' })),
+    },
+  });
+  assert.ok(meta.filmTags.length <= 4);
+  assert.equal(meta.songs.length, 3);
+});
+
+test('normalizeMeta drops songs with no title and non-string tags', () => {
+  const meta = normalizeMeta({
+    meta: {
+      hook: 'A hook.',
+      filmTags: ['good', 42, null, '  ', 'alsogood'],
+      songs: [{ artist: 'Nobody' }, null, 'a string', { title: 'Real', artist: 'X' }],
+    },
+  });
+  assert.deepEqual(meta.filmTags, ['good', 'alsogood']);
+  assert.equal(meta.songs.length, 1);
+  assert.equal(meta.songs[0].title, 'Real');
+});
+
+test('normalizeMeta returns null when there is nothing usable', () => {
+  // Null is the caller's cue to fall back to the template copy.
+  assert.equal(normalizeMeta(null), null);
+  assert.equal(normalizeMeta({}), null);
+  assert.equal(normalizeMeta({ meta: null }), null);
+  assert.equal(normalizeMeta({ meta: 'a string' }), null);
+  assert.equal(normalizeMeta({ meta: [] }), null);
+  assert.equal(normalizeMeta({ meta: { hook: '', filmTags: [], songs: [] } }), null);
+  assert.equal(normalizeMeta({ meta: { hook: 42, filmTags: 'nope', songs: 'nope' } }), null);
+});
+
+test('normalizeMeta survives a partial answer', () => {
+  // Tags but no hook, or a hook but no tags, are both still worth having.
+  assert.deepEqual(normalizeMeta({ meta: { filmTags: ['jaws'] } }), { hook: '', filmTags: ['jaws'], songs: [] });
+  const hookOnly = normalizeMeta({ meta: { hook: 'Just a hook.' } });
+  assert.equal(hookOnly.hook, 'Just a hook.');
+  assert.deepEqual(hookOnly.filmTags, []);
 });

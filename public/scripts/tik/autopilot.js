@@ -81,9 +81,13 @@ async function runJobSync(params) {
 }
 
 // opts: { title, year, durationSeconds, count?, exclude?, focusTimecode?,
-//         guidance?, includeTitleSlide?, model?, onProgress? }
-// Returns [{ caption, timecode, grab }]. Throws a clear message on failure.
-export async function fetchScenes(opts = {}) {
+//         guidance?, includeTitleSlide?, includeMeta?, model?, onProgress? }
+// Returns { suggestions: [{ caption, timecode, grab }], meta }, where meta is
+// { hook, filmTags, songs } or null. Throws a clear message on failure.
+//
+// meta is only requested when includeMeta is set, and a null meta is a normal
+// outcome the caller falls back from — never a reason to throw away trivia.
+export async function fetchTriviaPost(opts = {}) {
   const data = await runJob({
     kind: 'trivia',
     title: opts.title,
@@ -94,12 +98,23 @@ export async function fetchScenes(opts = {}) {
     focusTimecode: opts.focusTimecode,
     guidance: opts.guidance || '',
     includeTitleSlide: !!opts.includeTitleSlide,
+    includeMeta: !!opts.includeMeta,
     model: opts.model, // optional override; server allowlist decides
   }, opts.onProgress);
   if (!data.suggestions?.length) {
     throw new Error(data.error || 'Autopilot couldn’t generate trivia — try again.');
   }
-  return data.suggestions;
+  if (opts.includeMeta && !data.meta) {
+    console.warn('[tik] post meta missing from the AI answer; using template copy', { title: opts.title });
+  }
+  return { suggestions: data.suggestions, meta: data.meta || null };
+}
+
+// Trivia only, for the callers that never wanted the post copy (the "write one
+// more slide" path). Returns [{ caption, timecode, grab }].
+export async function fetchScenes(opts = {}) {
+  const { suggestions } = await fetchTriviaPost(opts);
+  return suggestions;
 }
 
 // opts: { actor, count?, exclude?, model?, onProgress? }

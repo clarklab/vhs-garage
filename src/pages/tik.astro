@@ -142,6 +142,16 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
           <canvas id="stats-chart" class="block h-36 w-full"></canvas>
           <div id="stats-tip" class="pointer-events-none absolute hidden rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] tabular-nums text-neutral-200 shadow-lg"></div>
         </div>
+
+        <!-- Which hashtags earn their slot. Read off our own posts, because
+             TikTok exposes no hashtag volume data to us at all. -->
+        <div id="tag-report" class="mt-5 hidden border-t border-neutral-800 pt-4">
+          <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <h3 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Hashtags &middot; what&rsquo;s working</h3>
+            <p id="tag-report-note" class="text-[11px] text-neutral-600"></p>
+          </div>
+          <div id="tag-report-body" class="mt-3"></div>
+        </div>
       </div>
 
       <div class="mt-10 flex items-center justify-between">
@@ -548,18 +558,34 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
 
           <!-- Post details (shared) -->
           <details id="post-details" class="rounded-xl border border-neutral-800 bg-neutral-900 p-3">
-            <summary class="cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-neutral-400">Post details — title, description &amp; hashtags</summary>
+            <summary class="cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-neutral-400">Post details — title, description &amp; hashtags<span
+                id="post-details-badge"
+                class="ml-2 hidden rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal text-amber-300"
+              ></span></summary>
             <label class="mt-3 block text-xs text-neutral-500">Title
               <input id="post-title-input" maxlength="90"
                      class="mt-1 w-full rounded-md border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
             </label>
             <label class="mt-2 block text-xs text-neutral-500">Description
-              <textarea id="post-desc-input" rows="4" maxlength="2200"
+              <textarea id="post-desc-input" rows="6" maxlength="4000"
                         class="mt-1 w-full rounded-md border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100"></textarea>
             </label>
-            <div class="mt-2 flex items-center justify-between">
-              <span class="text-[11px] text-neutral-600">TikTok honors ~5 broad hashtags</span>
-              <button id="post-reset" class="text-[11px] font-semibold text-neutral-400 hover:text-neutral-200">Reset to suggested</button>
+            <div class="mt-2 flex items-center justify-between gap-3">
+              <span class="text-[11px] text-neutral-600">5 tags: the film&rsquo;s own, then a rotating house pair</span>
+              <button id="post-reset" class="shrink-0 text-[11px] font-semibold text-neutral-400 hover:text-neutral-200">Reset to suggested</button>
+            </div>
+
+            <!-- Soundtrack picks. No TikTok API mode can attach a specific
+                 song, so these exist to be searched by hand in the app. -->
+            <div id="song-picks" class="mt-3 hidden border-t border-neutral-800 pt-3">
+              <p class="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                <span class="material-symbols-outlined text-[14px] leading-none">music_note</span>
+                Sound picks
+              </p>
+              <p class="mt-0.5 text-[11px] leading-snug text-neutral-600">
+                Search one of these in the TikTok app when you finish the draft &mdash; the API can&rsquo;t set a song.
+              </p>
+              <ul id="song-list" class="mt-2 flex flex-col gap-1"></ul>
             </div>
           </details>
         </section>
