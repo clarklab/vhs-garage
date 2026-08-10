@@ -6,6 +6,7 @@
 // repeats and to lean on whatever is actually working on the account.
 //
 // Pure — no network, no DOM. Unit-tested.
+import { clampText } from './autopilot.mjs';
 
 export const QUEUE_COUNT = 10;
 // Picking ten films with a reason for each takes a strong model longer than
@@ -214,7 +215,7 @@ export function normalizeQueue(raw, { posted = [], count = QUEUE_COUNT } = {}) {
     out.push({
       title,
       year: Number.isInteger(year) && year >= 1890 && year <= 2100 ? year : null,
-      why: String(item?.why || '').trim().slice(0, WHY_MAX),
+      why: clampText(item?.why, WHY_MAX),
     });
   }
   return out;

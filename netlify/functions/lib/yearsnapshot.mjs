@@ -7,7 +7,7 @@
 // vote floor; when the user pastes their own IMDb search results the list is
 // FIXED and the model only writes the notes. IMDb has no free API and 403s
 // server-side fetches, so that paste is the only route to verified numbers.
-import { stripDashes } from './autopilot.mjs';
+import { stripDashes, clampText } from './autopilot.mjs';
 
 export const LIST_COUNT = 10;     // "top ten" — the client sends its own count too
 export const YEAR_MIN = 1930;     // before this there is no meaningful chart data
@@ -25,8 +25,10 @@ export const YEAR_LIST_KEYS = ['rated', 'boxoffice'];
 
 const TITLE_MAX = 120;
 const VALUE_MAX = 44;   // the short number line under the title
-const NOTE_MAX = 120;   // one-line "why it mattered"
-const INTRO_MAX = 160;  // opener lead-in
+const NOTE_TARGET = 120; // one-line "why it mattered"
+const NOTE_MAX = 160;
+const INTRO_TARGET = 160; // opener lead-in
+const INTRO_MAX = 240;
 
 // Coerce whatever the client sent into a usable release year, or null.
 export function normalizeYearInput(raw) {
@@ -108,9 +110,9 @@ For every entry, give:
 - "rank": its position, starting at 1.
 - "title": the film's exact title, with no year in it.
 - "value": the short number line described above (${VALUE_MAX} characters max).
-- "note": one short line on why it landed there, a scene, a record it broke, an audience it found (${NOTE_MAX} characters max). A confident statement: no questions, no hype phrasing like "you won't believe", and no em or en dashes (the — or – characters).
+- "note": one short line on why it landed there, a scene, a record it broke, an audience it found (${NOTE_TARGET} characters max). A confident statement: no questions, no hype phrasing like "you won't believe", and no em or en dashes (the — or – characters).
 
-ALSO write "intro": a warm one-line lead-in for the whole set (${INTRO_MAX} characters max) that sets up ${y} as a year at the movies and invites viewers to comment on what they were watching that year. It MAY ask a friendly question. No hype words, no em or en dashes.${sourceBlock}
+ALSO write "intro": a warm one-line lead-in for the whole set (${INTRO_TARGET} characters max) that sets up ${y} as a year at the movies and invites viewers to comment on what they were watching that year. It MAY ask a friendly question. No hype words, no em or en dashes.${sourceBlock}
 
 Return ONLY valid JSON in this exact shape, nothing else:
 {
@@ -136,9 +138,9 @@ function normalizeList(raw, max) {
     seen.add(key);
     out.push({
       rank: out.length + 1,
-      title: title.slice(0, TITLE_MAX),
-      value: typeof item?.value === 'string' ? stripDashes(item.value.trim()).slice(0, VALUE_MAX) : '',
-      note: typeof item?.note === 'string' ? stripDashes(item.note.trim()).slice(0, NOTE_MAX) : '',
+      title: clampText(title, TITLE_MAX),
+      value: typeof item?.value === 'string' ? clampText(stripDashes(item.value), VALUE_MAX) : '',
+      note: typeof item?.note === 'string' ? clampText(stripDashes(item.note), NOTE_MAX) : '',
     });
   }
   return out;
@@ -148,7 +150,7 @@ function normalizeList(raw, max) {
 // empty) so the client can loop the three sections without existence checks.
 export function normalizeYearSnapshot(raw, max = LIST_COUNT) {
   const out = {
-    intro: typeof raw?.intro === 'string' ? stripDashes(raw.intro.trim()).slice(0, INTRO_MAX) : '',
+    intro: typeof raw?.intro === 'string' ? clampText(stripDashes(raw.intro), INTRO_MAX) : '',
   };
   for (const key of YEAR_LIST_KEYS) out[key] = normalizeList(raw?.[key], max);
   return out;

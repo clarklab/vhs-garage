@@ -12,6 +12,7 @@
 // word rather than being replaced by it.
 //
 // Pure — no network, no DOM. Unit-tested.
+import { clampText } from './autopilot.mjs';
 
 export const CANDIDATE_COUNT = 25; // how many vote-ranked items the model sees
 export const CURATE_JOBS_STORE = 'tik-curate-jobs';
@@ -76,7 +77,7 @@ export function normalizeCuration(raw, candidates = [], count = 10) {
     if (!id || seen.has(id) || !known.has(id)) continue;
     seen.add(id);
     order.push(id);
-    const reason = String(p?.why || '').trim().slice(0, WHY_MAX);
+    const reason = clampText(p?.why, WHY_MAX);
     if (reason) why.set(id, reason);
     if (order.length >= want) break;
   }

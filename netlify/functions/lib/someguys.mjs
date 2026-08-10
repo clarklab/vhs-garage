@@ -2,13 +2,21 @@
 // one actor, their most memorable CULT-leaning roles. Pure (no network/DOM),
 // mirroring autopilot.mjs's contract: build*Prompt() writes the LLM prompt,
 // normalize*() validates/clamps the model's JSON.
-import { stripDashes } from './autopilot.mjs';
+import { stripDashes, clampText } from './autopilot.mjs';
 
 export const ROLES_COUNT = 20;    // how many roles the picker offers
 export const ROLES_MAX = 24;      // hard cap on what we accept back
-const HOOK_MAX = 110;             // one-liner shown in the role picker
-const BLURB_MAX = 200;            // slide blurb (target ≤170; slack for slicing)
-const INTRO_MAX = 160;            // title-slide lead-in
+// TARGET is what the prompt asks for; MAX is what we accept. See autopilot.mjs
+// for why they differ — the short version is that a caption one word over
+// target used to be sliced mid-word.
+const HOOK_TARGET = 110;          // one-liner shown in the role picker
+const HOOK_MAX = 160;
+const BLURB_TARGET = 170;         // slide blurb
+// The slide caption is "Movie (Year)" plus the blurb, and that whole string has
+// to fit the editor's 300-char textarea; 240 leaves room for the heading line.
+const BLURB_MAX = 240;
+const INTRO_TARGET = 160;         // title-slide lead-in
+const INTRO_MAX = 240;
 
 // The role-name line as it appears in prompts and pickers.
 export function roleLine(r, i) {
@@ -36,7 +44,7 @@ Rules:
 - Only real roles you are confident this actor actually played. Never invent a role or a film.
 - One entry per film. No duplicate films.
 - "movie": the film's exact title. "year": its release year. "role": the character's name (or a short descriptor like "the gas station clerk" when unnamed).
-- "hook": one short line on why the role is memorable (${HOOK_MAX} characters max). A confident statement: no questions, no hype, and no em or en dashes (the — or – characters).${excludeBlock}${sourceBlock}
+- "hook": one short line on why the role is memorable (${HOOK_TARGET} characters max). A confident statement: no questions, no hype, and no em or en dashes (the — or – characters).${excludeBlock}${sourceBlock}
 
 Return ONLY valid JSON in this exact shape, nothing else:
 {
@@ -62,7 +70,7 @@ export function normalizeRoles(raw, max = ROLES_MAX) {
     seen.add(key);
     let year = Number(item?.year);
     if (!Number.isInteger(year) || year < 1888 || year > 2035) year = null;
-    const hook = typeof item?.hook === 'string' ? stripDashes(item.hook.trim()).slice(0, HOOK_MAX) : '';
+    const hook = typeof item?.hook === 'string' ? clampText(stripDashes(item.hook), HOOK_MAX) : '';
     out.push({ movie: movie.slice(0, 120), year, role: role.slice(0, 90), hook });
   }
   return out;
@@ -89,7 +97,7 @@ HOW TO WRITE EACH BLURB:
 - Do NOT repeat the movie title or the year inside the blurb: the slide already shows them.
 - Keep it tight: ${BLURB_MAX - 30} characters max, no hashtags, no emoji.
 
-ALSO write "intro": a short, warm one-line lead-in for the whole set (${INTRO_MAX} characters max). It should invite viewers to comment with their favorite of this actor's roles, and it MAY ask a friendly question. No hype words, not a quiz, no em or en dashes.
+ALSO write "intro": a short, warm one-line lead-in for the whole set (${INTRO_TARGET} characters max). It should invite viewers to comment with their favorite of this actor's roles, and it MAY ask a friendly question. No hype words, not a quiz, no em or en dashes.
 
 <roles>
 ${list.map(roleLine).join('\n')}
@@ -108,12 +116,12 @@ Return ONLY valid JSON in this exact shape, nothing else:
 // by index on the client; entries without text are dropped (the client falls
 // back to the role's hook), so order is preserved for the survivors via echo.
 export function normalizeBlurbs(raw, max = ROLES_MAX) {
-  const intro = typeof raw?.intro === 'string' ? stripDashes(raw.intro.trim()).slice(0, INTRO_MAX) : '';
+  const intro = typeof raw?.intro === 'string' ? clampText(stripDashes(raw.intro), INTRO_MAX) : '';
   const list = Array.isArray(raw?.blurbs) ? raw.blurbs : [];
   const out = [];
   for (const item of list) {
     if (out.length >= max) break;
-    const blurb = typeof item?.blurb === 'string' ? stripDashes(item.blurb.trim()).slice(0, BLURB_MAX) : '';
+    const blurb = typeof item?.blurb === 'string' ? clampText(stripDashes(item.blurb), BLURB_MAX) : '';
     if (!blurb) continue;
     const movie = typeof item?.movie === 'string' ? item.movie.trim().slice(0, 120) : '';
     const role = typeof item?.role === 'string' ? item.role.trim().slice(0, 90) : '';
