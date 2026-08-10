@@ -644,11 +644,28 @@ async function refreshStatsCard() {
 // state, and the panel simply stays hidden rather than showing a broken widget.
 const TAG_REPORT_TTL_MS = 10 * 60 * 1000;
 let lastTagReportAt = 0;
+// Latched, not timed: video.list is granted by re-authorizing, which reloads
+// the page and resets this. Until then there is nothing to poll for, so a
+// missing scope stops the fetch entirely rather than retrying on a timer.
+let tagReportScopeMissing = false;
+
+// Called when the signed-in account changes, so a fresh sign-in isn't written
+// off because the previous account lacked the scope.
+function resetTagReport() {
+  lastTagReportAt = 0;
+  tagReportScopeMissing = false;
+}
+
 async function refreshTagReport() {
-  if (!isSignedIn()) { els.tagReport.classList.add('hidden'); return; }
+  if (!isSignedIn() || tagReportScopeMissing) { els.tagReport.classList.add('hidden'); return; }
   // Reading the history is up to ten TikTok API pages. It changes when we post,
   // not when we glance at the home screen, so don't re-pull it every visit.
   if (Date.now() - lastTagReportAt < TAG_REPORT_TTL_MS) return;
+  // Stamped up front so EVERY outcome backs off, not just the happy one.
+  // Stamping at the end meant each failure path returned early and left the
+  // guard unset, so a signed-in user without the scope re-ran this — a function
+  // invocation, a token refresh, and a TikTok call — on every home render.
+  lastTagReportAt = Date.now();
   try {
     const res = await fetch('/.netlify/functions/tik-history', {
       method: 'POST',
@@ -657,11 +674,17 @@ async function refreshTagReport() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.scope === 'missing' || !Array.isArray(data.movies)) {
-      if (data.scope === 'missing') console.warn('[tik] tag report needs the video.list scope', { hint: data.hint });
+      if (data.scope === 'missing') {
+        // Once per session: the panel is hidden with no on-screen explanation,
+        // so say why exactly once rather than on every render.
+        tagReportScopeMissing = true;
+        console.warn('[tik] tag report needs the video.list scope', { hint: data.hint });
+      } else {
+        console.warn('[tik] tag report unavailable', { status: res.status, error: data.error });
+      }
       els.tagReport.classList.add('hidden');
       return;
     }
-    lastTagReportAt = Date.now();
     const { note, body } = tagReportHtml(tagReport(data.movies));
     els.tagReport.classList.remove('hidden');
     els.tagReportNote.textContent = note;
@@ -730,6 +753,10 @@ function refreshAuthUI() {
   const signed = isSignedIn();
   els.authStatus.textContent = signed ? 'signed in' : 'not signed in';
   els.authBtn.textContent = signed ? 'Sign out' : 'Sign in to TikTok';
+  // Every auth transition funnels through here, so this is where the tag
+  // report's cached verdict is dropped: a new account may hold the video.list
+  // scope the previous one lacked.
+  resetTagReport();
   updatePostButton();
 }
 els.authBtn.addEventListener('click', async () => {
