@@ -673,7 +673,10 @@ async function refreshTagReport() {
       body: JSON.stringify({ refreshToken: getRefreshToken() }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.scope === 'missing' || !Array.isArray(data.movies)) {
+    // tagRows counts every tagged post; movies is the film-gated list and is
+    // only a fallback for a server that predates tagRows.
+    const rows = Array.isArray(data.tagRows) ? data.tagRows : data.movies;
+    if (!res.ok || data.scope === 'missing' || !Array.isArray(rows)) {
       if (data.scope === 'missing') {
         // Once per session: the panel is hidden with no on-screen explanation,
         // so say why exactly once rather than on every render.
@@ -685,7 +688,7 @@ async function refreshTagReport() {
       els.tagReport.classList.add('hidden');
       return;
     }
-    const { note, body } = tagReportHtml(tagReport(data.movies));
+    const { note, body } = tagReportHtml(tagReport(rows));
     els.tagReport.classList.remove('hidden');
     els.tagReportNote.textContent = note;
     els.tagReportBody.innerHTML = body;
