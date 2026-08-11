@@ -9,9 +9,12 @@
 // because you are already looking at the result and can scrub it yourself.
 
 import { seekAndSettle, grabFrame } from './capture.js';
+import { sheetSeconds, MAX_ROUNDS } from './sheet.js';
 
 export const MAX_ATTEMPTS = 3;
-const CHECK_MAX_EDGE = 768;   // plenty for "is this the right scene", cheap to send
+// Six frames per call instead of one: smaller each, but the model is choosing
+// between shots it can see rather than guessing at one it cannot.
+const CHECK_MAX_EDGE = 560;   // plenty for "is this the right scene", cheap to send
 const CHECK_QUALITY = 0.8;
 const BLANK_NUDGES = 4;         // local hops off a black/flat frame per attempt
 const BLANK_NUDGE_SECONDS = 3;  // far enough to clear a cut or a fade
@@ -89,78 +92,107 @@ async function judge(payload) {
   return res.json();
 }
 
-// Grab the frame for one slide, verifying and re-seeking as needed.
+// Grab one frame at `at`, nudging off a blank if we land on a cut or a fade.
+// Local brightness/contrast catches those without spending a model call.
+async function grabAt(video, at, dur, onProgress) {
+  let seconds = Math.min(dur, Math.max(0, Math.round(at)));
+  await seekAndSettle(video, seconds);
+  let bitmap = await grabFrame(video);
+  for (let nudge = 0; nudge < BLANK_NUDGES && frameStats(bitmap).blank; nudge++) {
+    const bumped = Math.min(dur, seconds + BLANK_NUDGE_SECONDS);
+    if (bumped === seconds) break; // already at the end; nothing to nudge into
+    onProgress('Skipping a blank frame…');
+    bitmap.close?.();
+    seconds = bumped;
+    await seekAndSettle(video, seconds);
+    bitmap = await grabFrame(video);
+  }
+  return { bitmap, seconds };
+}
+
+// Grab the frame for one slide by showing the checker a spread of the film.
+//
+// The old loop sent one frame, was told "try 400 seconds later", and re-grabbed
+// blind — three round trips, three guesses, and often three misses. This grabs
+// SHEET_SIZE frames around the guess (seeking is cheap; the model call is not),
+// sends them together, and lets the checker pick the best one it can actually
+// see. Only when every frame is ruled out does it fall back to a suggestion,
+// and then it sends another sheet centred there.
 //
 // Returns { bitmap, timecode, verified, attempts, reason } — always with a
-// bitmap, so a caller can render a slide no matter how the check went. The
-// verifier failing open is deliberate: a Claude outage should cost the second
-// opinion, not the frame.
+// bitmap, so a caller can render a slide no matter how the check went.
 export async function grabVerifiedFrame(video, {
   timecode, durationSeconds, caption, grab = '', kind = 'trivia',
-  maxAttempts = MAX_ATTEMPTS, onProgress = () => {},
+  maxRounds = MAX_ROUNDS, onProgress = () => {},
 }) {
   const dur = Math.max(1, Math.round(Number(durationSeconds) || video.duration || 0));
-  let at = Math.min(dur, Math.max(0, Math.round(Number(timecode) || 0)));
+  let center = Math.min(dur, Math.max(0, Math.round(Number(timecode) || 0)));
   const tried = [];
-  const seen = [];   // { bitmap, seconds, issue, reason }
+  const seen = [];   // { bitmap, seconds, issue, reason } — every frame we grabbed
+  let grabbed = 0;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    onProgress(attempt === 1
-      ? 'Grabbing the frame…'
-      : `Checking a different shot (try ${attempt} of ${maxAttempts})…`);
+  for (let round = 1; round <= maxRounds; round++) {
+    const wanted = sheetSeconds({ center, durationSeconds: dur, tried });
+    if (!wanted.length) break;
 
-    await seekAndSettle(video, at);
-    let bitmap = await grabFrame(video);
-
-    // Nudge off a blank frame before asking anyone's opinion. Cuts between
-    // scenes and fades are common landing spots for a guessed timecode, and
-    // they're recognisable locally — so step forward a couple of seconds
-    // instead of burning one of three vision calls to be told it's black.
-    for (let nudge = 0; nudge < BLANK_NUDGES && frameStats(bitmap).blank; nudge++) {
-      const bumped = Math.min(dur, at + BLANK_NUDGE_SECONDS);
-      if (bumped === at) break; // already at the end; nothing to nudge into
-      onProgress('Skipping a blank frame…');
-      bitmap.close?.();
-      at = bumped;
-      await seekAndSettle(video, at);
-      bitmap = await grabFrame(video);
+    const shots = [];
+    for (const [i, at] of wanted.entries()) {
+      onProgress(round === 1
+        ? `Grabbing frame ${i + 1} of ${wanted.length}…`
+        : `Looking further out — frame ${i + 1} of ${wanted.length}…`);
+      shots.push(await grabAt(video, at, dur, onProgress));
     }
+    grabbed += shots.length;
 
     let verdict;
     try {
+      onProgress(`Checking ${shots.length} frames…`);
       verdict = await judge({
-        imageBase64: await frameToBase64(bitmap),
-        mediaType: 'image/jpeg',
-        caption, grab, timecode: at, durationSeconds: dur, kind, attempt, tried,
+        frames: await Promise.all(shots.map(async (s) => ({
+          base64: await frameToBase64(s.bitmap),
+          mediaType: 'image/jpeg',
+          seconds: s.seconds,
+        }))),
+        caption, grab, durationSeconds: dur, kind, round, tried,
       });
     } catch (e) {
-      // Fail open: keep the frame we have and stop checking.
-      console.warn('[tik] frame check unavailable, keeping the grabbed frame', { message: e.message });
-      return { bitmap, timecode: at, verified: false, attempts: attempt, reason: e.message, degraded: true };
-    }
-
-    seen.push({ bitmap, seconds: at, issue: verdict.issue, reason: verdict.reason });
-
-    if (verdict.ok) {
+      // Fail open on the frame sitting closest to autopilot's own guess.
+      console.warn('[tik] frame check unavailable, keeping the first frame', { message: e.message });
+      shots.slice(1).forEach((s) => s.bitmap.close?.());
       return {
-        bitmap, timecode: at, verified: !verdict.degraded, attempts: attempt,
-        reason: verdict.reason, degraded: !!verdict.degraded,
+        bitmap: shots[0].bitmap, timecode: shots[0].seconds, verified: false,
+        attempts: grabbed, reason: e.message, degraded: true,
       };
     }
 
-    tried.push({ seconds: at, reason: verdict.reason || verdict.issue });
-    const next = verdict.nextSeconds;
-    if (!Number.isFinite(next) || attempt === maxAttempts) break;
-    at = next;
+    const picked = Number.isInteger(verdict.pick) ? shots[verdict.pick] : null;
+    if (picked) {
+      shots.forEach((s) => { if (s !== picked) s.bitmap.close?.(); });
+      return {
+        bitmap: picked.bitmap, timecode: picked.seconds, verified: !verdict.degraded,
+        attempts: grabbed, reason: verdict.reason, degraded: !!verdict.degraded,
+      };
+    }
+
+    // Whole sheet rejected: remember it so the next one looks somewhere new.
+    shots.forEach((s) => {
+      seen.push({ bitmap: s.bitmap, seconds: s.seconds, issue: verdict.issue, reason: verdict.reason });
+      tried.push({ seconds: s.seconds, reason: verdict.issue || 'rejected' });
+    });
+    const next = verdict.suggestSeconds;
+    if (!Number.isFinite(next) || round === maxRounds) break;
+    center = next;
   }
 
   // Nothing passed. Hand back the least-bad frame we saw and say so.
   const best = seen.slice().sort((a, b) => severity(a.issue) - severity(b.issue))[0];
+  if (!best) throw new Error('Could not grab any frame for this slide.');
+  seen.forEach((s) => { if (s !== best) s.bitmap.close?.(); });
   return {
     bitmap: best.bitmap,
     timecode: best.seconds,
     verified: false,
-    attempts: seen.length,
+    attempts: grabbed,
     reason: best.reason || 'No frame passed the check.',
   };
 }

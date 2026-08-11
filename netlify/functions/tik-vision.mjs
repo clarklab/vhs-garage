@@ -10,8 +10,8 @@
 //
 // One frame per call, so the client can show progress between attempts and
 // stop early the moment a frame passes.
-import { buildVisionPrompt, normalizeVerdict, nextAttemptSeconds, MAX_ATTEMPTS } from './lib/vision.mjs';
-import { callModelWithImage, parseModelJson } from './lib/ai-providers.mjs';
+import { buildSheetPrompt, normalizeSheetVerdict, SHEET_SIZE, MAX_ROUNDS } from './lib/vision.mjs';
+import { callModelWithImages, parseModelJson } from './lib/ai-providers.mjs';
 
 const DEFAULT_MODEL = process.env.TIK_VISION_MODEL || 'claude-sonnet-5';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // Anthropic's per-image ceiling
@@ -23,40 +23,55 @@ export default async (req) => {
   let body;
   try { body = await req.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
 
-  const base64 = String(body?.imageBase64 || '').replace(/^data:[^,]+,/, '');
-  if (!base64) return json({ error: 'Missing frame image' }, 400);
-  if (base64.length * 0.75 > MAX_IMAGE_BYTES) {
-    return json({ error: 'Frame too large — downscale before sending' }, 413);
+  // frames: [{ base64, mediaType, seconds }] — a spread of the film, in order.
+  const raw = Array.isArray(body?.frames) ? body.frames.slice(0, SHEET_SIZE) : [];
+  const frames = raw
+    .map((f) => ({
+      base64: String(f?.base64 || '').replace(/^data:[^,]+,/, ''),
+      mediaType: ALLOWED_MEDIA.has(f?.mediaType) ? f.mediaType : 'image/jpeg',
+      seconds: Math.max(0, Math.round(Number(f?.seconds) || 0)),
+    }))
+    .filter((f) => f.base64);
+  if (!frames.length) return json({ error: 'Missing frame images' }, 400);
+
+  const totalBytes = frames.reduce((n, f) => n + f.base64.length * 0.75, 0);
+  if (totalBytes > MAX_IMAGE_BYTES * SHEET_SIZE) {
+    return json({ error: 'Frames too large — downscale before sending' }, 413);
   }
-  const mediaType = ALLOWED_MEDIA.has(body?.mediaType) ? body.mediaType : 'image/jpeg';
+
   const caption = String(body?.caption || '').trim();
   if (!caption) return json({ error: 'Missing caption' }, 400);
 
   const durationSeconds = Math.max(1, Math.round(Number(body?.durationSeconds) || 0));
-  const timecode = Math.max(0, Math.round(Number(body?.timecode) || 0));
-  const attempt = Math.min(MAX_ATTEMPTS, Math.max(1, Math.round(Number(body?.attempt) || 1)));
-  const tried = Array.isArray(body?.tried) ? body.tried.slice(0, MAX_ATTEMPTS) : [];
+  const round = Math.min(MAX_ROUNDS, Math.max(1, Math.round(Number(body?.round) || 1)));
+  const tried = Array.isArray(body?.tried) ? body.tried.slice(0, SHEET_SIZE * MAX_ROUNDS) : [];
 
-  const prompt = buildVisionPrompt({
-    caption, grab: body?.grab, timecode, durationSeconds,
+  const prompt = buildSheetPrompt({
+    caption, grab: body?.grab, frames, durationSeconds,
     kind: body?.kind === 'title' ? 'title' : 'trivia',
-    attempt, maxAttempts: MAX_ATTEMPTS, tried,
+    round, maxRounds: MAX_ROUNDS, tried,
   });
 
   try {
-    const raw = await callModelWithImage(prompt, { base64, mediaType }, DEFAULT_MODEL);
-    const verdict = normalizeVerdict(parseModelJson(raw), durationSeconds);
-    const nextSeconds = verdict.ok
-      ? null
-      : nextAttemptSeconds(verdict, { current: timecode, durationSeconds, tried, attempt });
-    return json({ ...verdict, nextSeconds, attempt });
+    const answer = await callModelWithImages(
+      prompt,
+      frames.map((f) => ({ base64: f.base64, mediaType: f.mediaType })),
+      DEFAULT_MODEL,
+    );
+    const verdict = normalizeSheetVerdict(parseModelJson(answer), frames.length, durationSeconds);
+    // Hand back the chosen frame's timecode so the client never has to re-derive
+    // which image the index referred to.
+    const pickedSeconds = verdict.pick === null ? null : frames[verdict.pick].seconds;
+    return json({ ...verdict, pickedSeconds, round });
   } catch (e) {
-    console.error('[tik-vision] frame check failed', { message: e.message, attempt, timecode });
-    // Fail OPEN. A verifier outage must not block the slide — the user still
-    // gets the frame autopilot picked, just without the second opinion.
+    console.error('[tik-vision] sheet check failed', {
+      message: e.message, round, frames: frames.length,
+    });
+    // Fail OPEN on the first frame, which sits on autopilot's own guess: an
+    // outage costs the second opinion, never the slide.
     return json({
-      ok: true, issue: 'unclear', reason: `Frame check unavailable: ${e.message}`,
-      suggestSeconds: null, nextSeconds: null, confidence: 0, attempt, degraded: true,
+      pick: 0, ok: true, issue: 'unclear', reason: `Frame check unavailable: ${e.message}`,
+      suggestSeconds: null, pickedSeconds: frames[0].seconds, confidence: 0, round, degraded: true,
     });
   }
 };

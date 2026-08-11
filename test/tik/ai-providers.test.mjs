@@ -135,3 +135,51 @@ test('the effort level is env-tunable and falls back on junk', async () => {
     assert.equal(aiEffort(), 'high');
   }, { TIK_AI_EFFORT: 'ludicrous' });
 });
+
+// ---- multi-image vision calls ----
+
+test('callModelWithImages sends every frame in order, then the prompt', async () => {
+  await withStubbedFetch(async ({ callModelWithImages }, sent) => {
+    await callModelWithImages('which one?', [
+      { base64: 'AAA', mediaType: 'image/jpeg' },
+      { base64: 'BBB', mediaType: 'image/png' },
+      { base64: 'CCC' },
+    ], 'claude-sonnet-5');
+    const content = sent[0].body.messages[0].content;
+    assert.equal(content.length, 4, 'three images plus the prompt');
+    assert.deepEqual(content.map((b) => b.type), ['image', 'image', 'image', 'text']);
+    // Order is load-bearing: the prompt refers to "Frame 3".
+    assert.deepEqual(content.slice(0, 3).map((b) => b.source.data), ['AAA', 'BBB', 'CCC']);
+    assert.equal(content[1].source.media_type, 'image/png');
+    assert.equal(content[2].source.media_type, 'image/jpeg', 'defaults to jpeg');
+    assert.equal(content[3].text, 'which one?');
+  });
+});
+
+test('callModelWithImages drops empty frames and refuses an empty sheet', async () => {
+  await withStubbedFetch(async ({ callModelWithImages }, sent) => {
+    await callModelWithImages('p', [{ base64: '' }, { base64: 'AAA' }, null], 'claude-sonnet-5');
+    assert.equal(sent[0].body.messages[0].content.filter((b) => b.type === 'image').length, 1);
+    await assert.rejects(
+      () => callModelWithImages('p', [{ base64: '' }, null], 'claude-sonnet-5'),
+      /No image data/,
+    );
+  });
+});
+
+test('callModelWithImage still works and routes through the multi path', async () => {
+  await withStubbedFetch(async ({ callModelWithImage }, sent) => {
+    await callModelWithImage('p', { base64: 'AAA', mediaType: 'image/jpeg' }, 'claude-sonnet-5');
+    const content = sent[0].body.messages[0].content;
+    assert.deepEqual(content.map((b) => b.type), ['image', 'text']);
+  });
+});
+
+test('a vision call on a non-Claude model is refused, not silently downgraded', async () => {
+  await withStubbedFetch(async ({ callModelWithImages }) => {
+    await assert.rejects(
+      () => callModelWithImages('p', [{ base64: 'AAA' }], 'gemini-2.5-flash'),
+      /requires a Claude model/,
+    );
+  });
+});
