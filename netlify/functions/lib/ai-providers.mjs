@@ -134,13 +134,27 @@ async function callAnthropic(prompt, model, signal, maxTokens) {
 // 2048, not 512: the verdict itself is a few dozen tokens, but thinking is
 // billed against the same ceiling and a truncated verdict fails the frame check.
 export async function callModelWithImage(prompt, image, model, signal, maxTokens = 2048) {
+  return callModelWithImages(prompt, [image], model, signal, maxTokens);
+}
+
+// Several images in one message, in order, followed by the prompt.
+//
+// The frame checker sends a spread of the film at once so the model chooses
+// between shots it can see rather than guessing at one it cannot. Image blocks
+// keep their array order, which is what lets the prompt refer to "Frame 3".
+export async function callModelWithImages(prompt, images, model, signal, maxTokens = 2048) {
   if (providerFor(model) !== 'anthropic') {
     throw new Error(`Vision requires a Claude model, got "${model}"`);
   }
   if (!ANTHROPIC_API_KEY) throw new Error('Anthropic not configured');
-  const mediaType = image?.mediaType || 'image/jpeg';
-  const data = String(image?.base64 || '');
-  if (!data) throw new Error('No image data');
+  const blocks = (Array.isArray(images) ? images : [])
+    .map((img) => ({ mediaType: img?.mediaType || 'image/jpeg', data: String(img?.base64 || '') }))
+    .filter((img) => img.data)
+    .map((img) => ({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType, data: img.data },
+    }));
+  if (!blocks.length) throw new Error('No image data');
 
   const res = await fetch(`${ANTHROPIC_BASE_URL}/v1/messages`, {
     method: 'POST',
@@ -151,13 +165,7 @@ export async function callModelWithImage(prompt, image, model, signal, maxTokens
     body: JSON.stringify({
       model, max_tokens: maxTokens,
       ...tuning(model),
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType, data } },
-          { type: 'text', text: prompt },
-        ],
-      }],
+      messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }],
     }),
     signal,
   });

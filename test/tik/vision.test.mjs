@@ -1,160 +1,195 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildVisionPrompt, normalizeVerdict, nextAttemptSeconds, MAX_ATTEMPTS, ISSUES,
+  buildSheetPrompt, normalizeSheetVerdict, ISSUES, SHEET_SIZE, MAX_ROUNDS,
 } from '../../netlify/functions/lib/vision.mjs';
+import {
+  sheetSeconds, SHEET_OFFSETS,
+  SHEET_SIZE as CLIENT_SHEET_SIZE, MAX_ROUNDS as CLIENT_MAX_ROUNDS,
+} from '../../public/scripts/tik/sheet.js';
+
+const frames = (secs) => secs.map((seconds) => ({ seconds }));
+
+// ---- the two halves must agree ----
+
+test('the client and server agree on sheet size and round count', () => {
+  // The browser decides where to grab; the server caps the request and writes
+  // the prompt. A mismatch means frames get silently dropped on arrival.
+  assert.equal(CLIENT_SHEET_SIZE, SHEET_SIZE);
+  assert.equal(CLIENT_MAX_ROUNDS, MAX_ROUNDS);
+});
+
+test('a sheet is worth more than the old one-frame loop', () => {
+  // The whole point: more frames seen, fewer round trips.
+  assert.ok(SHEET_SIZE >= 4, `only ${SHEET_SIZE} frames per call`);
+  assert.ok(SHEET_SIZE * MAX_ROUNDS >= 10, 'fewer frames seen than the old 3-attempt loop');
+  assert.ok(MAX_ROUNDS <= 3, 'too many round trips');
+});
+
+// ---- where to sample ----
+
+test('sheetSeconds keeps several frames near the guess and fans the rest out', () => {
+  const out = sheetSeconds({ center: 3000, durationSeconds: 7200 });
+  assert.equal(out.length, SHEET_SIZE);
+  assert.equal(out[0], 3000, 'the guess itself must be sampled first');
+  const near = out.filter((s) => Math.abs(s - 3000) <= 45);
+  assert.ok(near.length >= 3, `only ${near.length} frames near the guess`);
+  const span = Math.max(...out) - Math.min(...out);
+  assert.ok(span >= 240, `sheet only spans ${span}s — that is not a range`);
+});
+
+test('sheetSeconds never samples the same shot twice', () => {
+  const out = sheetSeconds({ center: 3000, durationSeconds: 7200 });
+  for (const a of out) {
+    assert.equal(out.filter((b) => Math.abs(a - b) < 4).length, 1, `duplicate near ${a}`);
+  }
+});
+
+test('sheetSeconds stays inside the film at either end', () => {
+  for (const center of [0, 5, 7195, 7200]) {
+    const out = sheetSeconds({ center, durationSeconds: 7200 });
+    assert.equal(out.length, SHEET_SIZE, `short sheet at ${center}`);
+    assert.ok(out.every((s) => s >= 0 && s <= 7200), `out of range at ${center}`);
+    assert.equal(new Set(out).size, out.length, `duplicates at ${center}`);
+  }
+});
+
+test('sheetSeconds avoids everything already rejected', () => {
+  const first = sheetSeconds({ center: 3000, durationSeconds: 7200 });
+  const second = sheetSeconds({
+    center: 5000, durationSeconds: 7200,
+    tried: first.map((seconds) => ({ seconds })),
+  });
+  assert.equal(second.length, SHEET_SIZE);
+  for (const s of second) {
+    assert.ok(first.every((t) => Math.abs(t - s) >= 4), `${s} was already shown`);
+  }
+});
+
+test('sheetSeconds fills a sheet even in a very short film', () => {
+  const out = sheetSeconds({ center: 30, durationSeconds: 60 });
+  assert.ok(out.length >= 1 && out.length <= SHEET_SIZE);
+  assert.ok(out.every((s) => s >= 0 && s <= 60));
+  assert.equal(new Set(out).size, out.length);
+});
+
+test('sheetSeconds survives junk', () => {
+  assert.deepEqual(sheetSeconds({ center: NaN, durationSeconds: 0 }), [0]);
+  assert.ok(Array.isArray(sheetSeconds()));
+  assert.ok(sheetSeconds({ center: -50, durationSeconds: 100 }).every((s) => s >= 0));
+});
+
+test('the offsets lead with the guess and cover both directions', () => {
+  assert.equal(SHEET_OFFSETS[0], 0);
+  assert.ok(SHEET_OFFSETS.some((o) => o > 0) && SHEET_OFFSETS.some((o) => o < 0));
+});
 
 // ---- the prompt ----
 
-test('buildVisionPrompt carries the caption, the shot hint and where we are', () => {
-  const p = buildVisionPrompt({
-    caption: 'Joe Pesci avoided Macaulay Culkin on set.',
-    grab: 'Pesci glaring in the doorway',
-    timecode: 1200, durationSeconds: 6180, attempt: 1,
+test('buildSheetPrompt numbers every frame with its timecode', () => {
+  const p = buildSheetPrompt({
+    caption: 'The shark was named Bruce.', grab: 'the shark surfacing',
+    frames: frames([1200, 1240, 1160]), durationSeconds: 7440,
   });
-  assert.match(p, /Joe Pesci avoided Macaulay Culkin on set\./);
-  assert.match(p, /Pesci glaring in the doorway/);
-  assert.match(p, /grabbed at 1200 seconds/);
-  assert.match(p, /19% through a 6180-second film/);
-  assert.match(p, /attempt 1 of 3/);
+  assert.match(p, /Frame 1: 1200s/);
+  assert.match(p, /Frame 2: 1240s/);
+  assert.match(p, /Frame 3: 1160s/);
+  assert.match(p, /The shark was named Bruce\./);
+  assert.match(p, /<shot_wanted>the shark surfacing<\/shot_wanted>/);
 });
 
-test('buildVisionPrompt omits the shot block when there is no hint', () => {
-  const p = buildVisionPrompt({ caption: 'A fact.', timecode: 10, durationSeconds: 100 });
-  assert.ok(!p.includes('<shot_wanted>'));
+test('buildSheetPrompt asks for a pick, not a yes or no', () => {
+  const p = buildSheetPrompt({ caption: 'A fact.', frames: frames([10, 20]), durationSeconds: 100 });
+  assert.match(p, /"pick"/);
+  assert.match(p, /pick the single best one/i);
+  // Rejecting the whole sheet is the exception, not the default.
+  assert.match(p, /Only if EVERY frame is ruled out/);
+  assert.match(p, /Prefer a merely-decent frame over rejecting the whole sheet/i);
 });
 
-test('buildVisionPrompt asks for a title card in title mode only', () => {
-  const title = buildVisionPrompt({ caption: 'Home Alone', timecode: 60, durationSeconds: 6180, kind: 'title' });
-  const trivia = buildVisionPrompt({ caption: 'A fact.', timecode: 60, durationSeconds: 6180 });
-  assert.match(title, /TITLE CARD/);
-  assert.ok(!trivia.includes('TITLE CARD'));
+test('buildSheetPrompt omits the shot block when there is no hint', () => {
+  const p = buildSheetPrompt({ caption: 'A fact.', frames: frames([10]), durationSeconds: 100 });
+  assert.doesNotMatch(p, /<shot_wanted>/);
 });
 
-test('buildVisionPrompt lists what has already been tried so it stops repeating itself', () => {
-  const p = buildVisionPrompt({
-    caption: 'A fact.', timecode: 900, durationSeconds: 6180, attempt: 3,
-    tried: [{ seconds: 100, reason: 'black frame' }, { seconds: 500, reason: 'end credits' }],
+test('buildSheetPrompt asks for a title card in title mode only', () => {
+  const t = buildSheetPrompt({ caption: 'Jaws', frames: frames([60]), durationSeconds: 7440, kind: 'title' });
+  const v = buildSheetPrompt({ caption: 'A fact.', frames: frames([60]), durationSeconds: 7440 });
+  assert.match(t, /TITLE CARD/);
+  assert.doesNotMatch(v, /TITLE CARD/);
+});
+
+test('buildSheetPrompt lists rejected timecodes so round two looks elsewhere', () => {
+  const p = buildSheetPrompt({
+    caption: 'A fact.', frames: frames([3000]), durationSeconds: 7200, round: 2,
+    tried: [{ seconds: 1200, reason: 'credits' }, { seconds: 1240, reason: 'black' }],
   });
-  assert.match(p, /do NOT suggest these again/);
-  assert.match(p, /- 100s: black frame/);
-  assert.match(p, /- 500s: end credits/);
+  assert.match(p, /do not send us back to these/i);
+  assert.match(p, /1200s: credits/);
+  assert.match(p, /1240s: black/);
+  assert.match(p, /round 2 of/);
 });
 
-test('buildVisionPrompt tells the model a decent frame beats running out of tries', () => {
-  // Without this it rejects three good-enough frames and we ship the worst one.
-  const p = buildVisionPrompt({ caption: 'A fact.', timecode: 10, durationSeconds: 100 });
-  assert.match(p, /merely-decent frame beats running out of attempts/);
+// ---- reading the answer ----
+
+test('normalizeSheetVerdict turns a 1-based pick into an index', () => {
+  const v = normalizeSheetVerdict({ pick: 3, issue: 'ok', reason: 'Shark surfacing.', confidence: 0.9 }, 6, 7200);
+  assert.equal(v.pick, 2);
+  assert.equal(v.ok, true);
+  assert.equal(v.suggestSeconds, null);
 });
 
-test('buildVisionPrompt survives a zero or missing duration', () => {
-  const p = buildVisionPrompt({ caption: 'A fact.', timecode: 0, durationSeconds: 0 });
-  assert.ok(!p.includes('NaN'));
-  assert.ok(!p.includes('Infinity'));
+test('normalizeSheetVerdict accepts the first and last frame', () => {
+  assert.equal(normalizeSheetVerdict({ pick: 1 }, 6, 100).pick, 0);
+  assert.equal(normalizeSheetVerdict({ pick: 6 }, 6, 100).pick, 5);
 });
 
-// ---- the verdict ----
-
-test('normalizeVerdict passes a clean accept through', () => {
-  const v = normalizeVerdict({ ok: true, issue: 'ok', reason: 'Pesci in the doorway.', confidence: 0.9 }, 6180);
-  assert.deepEqual(v, { ok: true, issue: 'ok', reason: 'Pesci in the doorway.', suggestSeconds: null, confidence: 0.9 });
+test('normalizeSheetVerdict rejects an out-of-range pick rather than trusting it', () => {
+  // Picking frame 7 of 6 would index past the end and crash the client.
+  for (const pick of [0, 7, -1, 99, 'three', null]) {
+    const v = normalizeSheetVerdict({ pick }, 6, 100);
+    assert.equal(v.pick, null, `accepted pick=${pick}`);
+    assert.equal(v.ok, false);
+  }
 });
 
-test('normalizeVerdict keeps a rejection and its suggestion', () => {
-  const v = normalizeVerdict({ ok: false, issue: 'credits', reason: 'End credits.', suggestSeconds: 900, confidence: 0.95 }, 6180);
-  assert.equal(v.ok, false);
-  assert.equal(v.issue, 'credits');
-  assert.equal(v.suggestSeconds, 900);
+test('a whole-sheet rejection carries a clamped suggestion', () => {
+  const v = normalizeSheetVerdict({ pick: null, issue: 'wrong-scene', suggestSeconds: 99999 }, 6, 7200);
+  assert.equal(v.pick, null);
+  assert.equal(v.suggestSeconds, 7200);
+  assert.equal(v.issue, 'wrong-scene');
 });
 
-test('normalizeVerdict clamps a suggestion into the runtime', () => {
-  assert.equal(normalizeVerdict({ ok: false, suggestSeconds: 99999 }, 6180).suggestSeconds, 6180);
-  assert.equal(normalizeVerdict({ ok: false, suggestSeconds: -50 }, 6180).suggestSeconds, 0);
-  assert.equal(normalizeVerdict({ ok: false, suggestSeconds: 900.6 }, 6180).suggestSeconds, 901);
+test('a suggestion alongside a pick is ignored', () => {
+  const v = normalizeSheetVerdict({ pick: 2, suggestSeconds: 500 }, 6, 7200);
+  assert.equal(v.pick, 1);
+  assert.equal(v.suggestSeconds, null);
 });
 
-test('normalizeVerdict drops a suggestion on an accepted frame', () => {
-  assert.equal(normalizeVerdict({ ok: true, suggestSeconds: 900 }, 6180).suggestSeconds, null);
+test('an unknown issue falls back inside the closed set', () => {
+  const v = normalizeSheetVerdict({ pick: null, issue: 'vibes' }, 6, 100);
+  assert.ok(ISSUES.includes(v.issue));
 });
 
-test('normalizeVerdict rejects an issue outside the known set', () => {
-  assert.equal(normalizeVerdict({ ok: false, issue: 'vibes' }, 100).issue, 'unclear');
-  assert.equal(normalizeVerdict({ ok: true, issue: 'vibes' }, 100).issue, 'ok');
-  ISSUES.forEach((i) => assert.equal(normalizeVerdict({ ok: false, issue: i }, 100).issue, i));
-});
-
-test('normalizeVerdict treats unparseable output as a low-confidence accept', () => {
-  // A broken verifier must not throw away a frame that was probably fine.
-  for (const junk of [null, undefined, 'nope', 42]) {
-    const v = normalizeVerdict(junk, 6180);
+test('junk degrades to the first frame, never to a rejection', () => {
+  // Frame 1 sits on autopilot's own guess, so a broken verifier leaves us
+  // exactly where we would have been without one.
+  for (const raw of [null, undefined, 'nope', 42, []]) {
+    const v = normalizeSheetVerdict(raw, 6, 100);
+    assert.equal(v.pick, 0, `raw=${JSON.stringify(raw)}`);
     assert.equal(v.ok, true);
     assert.equal(v.confidence, 0);
-    assert.equal(v.suggestSeconds, null);
   }
 });
 
-test('normalizeVerdict clamps confidence and survives junk', () => {
-  assert.equal(normalizeVerdict({ ok: true, confidence: 5 }, 100).confidence, 1);
-  assert.equal(normalizeVerdict({ ok: true, confidence: -2 }, 100).confidence, 0);
-  assert.equal(normalizeVerdict({ ok: true, confidence: 'high' }, 100).confidence, 0.5);
+test('junk with no frames at all picks nothing instead of index 0', () => {
+  const v = normalizeSheetVerdict(null, 0, 100);
+  assert.equal(v.pick, null);
+  assert.equal(v.ok, false);
 });
 
-test('normalizeVerdict accepts a stringified boolean', () => {
-  assert.equal(normalizeVerdict({ ok: 'true' }, 100).ok, true);
-});
-
-// ---- picking the next frame ----
-
-const V = (suggest) => ({ ok: false, suggestSeconds: suggest });
-
-test('nextAttemptSeconds takes a usable suggestion', () => {
-  assert.equal(nextAttemptSeconds(V(2400), { current: 1200, durationSeconds: 6180, tried: [] }), 2400);
-});
-
-test('nextAttemptSeconds refuses a suggestion that re-grabs the same shot', () => {
-  // The loop exists to stop wasting attempts on one frame; a 2-second nudge is
-  // the same frame.
-  const out = nextAttemptSeconds(V(1202), { current: 1200, durationSeconds: 6180, tried: [] });
-  assert.notEqual(out, 1202);
-  assert.ok(Math.abs(out - 1200) >= 4);
-});
-
-test('nextAttemptSeconds refuses a suggestion we already rejected', () => {
-  const tried = [{ seconds: 300 }, { seconds: 900 }];
-  const out = nextAttemptSeconds(V(900), { current: 1200, durationSeconds: 6180, tried });
-  assert.ok(![300, 900, 1200].includes(out));
-});
-
-test('nextAttemptSeconds probes elsewhere when the model suggests nothing', () => {
-  const out = nextAttemptSeconds({ ok: false, suggestSeconds: null }, { current: 1200, durationSeconds: 6180, tried: [], attempt: 1 });
-  assert.ok(Number.isFinite(out));
-  assert.ok(Math.abs(out - 1200) >= 45, 'moved a meaningful distance');
-  assert.ok(out >= 0 && out <= 6180);
-});
-
-test('three attempts sample three different parts of the runtime', () => {
-  const dur = 6180;
-  const tried = [];
-  let current = 1200;
-  const picks = [];
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const next = nextAttemptSeconds({ ok: false, suggestSeconds: null }, { current, durationSeconds: dur, tried, attempt });
-    assert.ok(Number.isFinite(next), 'always finds somewhere new to look');
-    picks.push(next);
-    tried.push({ seconds: current });
-    current = next;
-  }
-  assert.equal(new Set(picks).size, picks.length, 'no repeats');
-  picks.forEach((p) => assert.ok(p >= 0 && p <= dur));
-});
-
-test('nextAttemptSeconds stays inside a very short film', () => {
-  const out = nextAttemptSeconds(V(500), { current: 5, durationSeconds: 20, tried: [] });
-  assert.ok(out === null || (out >= 0 && out <= 20));
-});
-
-test('nextAttemptSeconds gives up rather than looping when there is nowhere new', () => {
-  // A 6-second film with the start already tried: every candidate collides.
-  const out = nextAttemptSeconds(V(3), { current: 0, durationSeconds: 6, tried: [{ seconds: 6 }] });
-  assert.equal(out, null);
+test('confidence is clamped to 0..1', () => {
+  assert.equal(normalizeSheetVerdict({ pick: 1, confidence: 9 }, 6, 100).confidence, 1);
+  assert.equal(normalizeSheetVerdict({ pick: 1, confidence: -3 }, 6, 100).confidence, 0);
+  assert.equal(normalizeSheetVerdict({ pick: 1 }, 6, 100).confidence, 0.5);
 });
