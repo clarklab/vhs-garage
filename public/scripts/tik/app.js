@@ -9,7 +9,7 @@ import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, getRef
 import { publishSlideshow } from './publish.js';
 import { fetchScenes, fetchTriviaPost, fetchRoles, fetchBlurbs, fetchYearSnapshot } from './autopilot.js';
 import { parseMovieName } from './filename.js';
-import { composeToCanvas, composeSlide } from './compose.js';
+import { composeToCanvas, composeSlide, captionFontReady } from './compose.js';
 import {
   FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, renumberYearEntries,
@@ -48,6 +48,10 @@ const els = {
   download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
   // trivia pane
   paneTrivia: $('pane-trivia'), file: $('file-input'), videoNote: $('video-note'),
+  triviaSeed: $('trivia-seed'), triviaSeedShow: $('trivia-seed-show'),
+  triviaSeedShowLabel: $('trivia-seed-show-label'),
+  slidePreview: $('slide-preview'), slidePreviewCanvas: $('slide-preview-canvas'),
+  slidePreviewClose: $('slide-preview-close'), slidePreviewMeta: $('slide-preview-meta'),
   videoReload: $('video-reload'), videoReloadLabel: $('video-reload-label'),
   video: $('video'), range: $('scrub-range'), timecode: $('timecode'),
   grab: $('grab-btn'), grabIcon: $('grab-icon'), grabLabel: $('grab-label'),
@@ -319,6 +323,17 @@ async function goHome() {
   await renderLibrary();
 }
 
+// Previews drawn before Inter arrived wrap at the fallback font's widths,
+// which is not where the uploaded slide will break. Redraw them once the real
+// font is in. Cheap and idempotent: after the font has loaded this resolves
+// immediately and the redraw is a no-op visually.
+function syncThumbsToCaptionFont() {
+  captionFontReady().then((ok) => {
+    if (!ok) return;
+    if (project) redrawAllThumbs();
+  }).catch((e) => console.warn('[tik] caption font sync failed:', e));
+}
+
 function enterEditor() {
   showScreen('editor');
   history.replaceState({}, '', `${location.pathname}${location.search}#p/${project.id}`);
@@ -341,8 +356,11 @@ function enterEditor() {
   refreshSourceLinks();
   refreshImdbPasteNote();
   refreshMojoPasteNote();
+  seedForced = false;
   setSaveState(storageAvailable() ? (dirty ? 'saving' : 'saved') : 'off');
   render();
+  syncSeedControls();
+  syncThumbsToCaptionFont();
 }
 
 // Appends a persistent warning when local saving can't work in this browser.
@@ -427,6 +445,29 @@ function applyFormatUI() {
   els.formatChip.textContent = f.label;
   els.formatChip.className = `rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${f.chip}`;
   els.slidesHint.textContent = f.editorHint;
+}
+
+// Once a set is written, the starter prompt / bookmarklet help / Autopilot
+// button are setup instructions for work already done, and they push the frame
+// picker below the fold. Collapse them behind a one-line toggle instead.
+let seedForced = false;
+function syncSeedControls() {
+  if (!els.triviaSeed) return;
+  const trivia = project?.format === 'trivia';
+  const written = slides.length > 0;
+  const show = trivia && (!written || seedForced);
+  els.triviaSeed.classList.toggle('hidden', !show);
+  els.triviaSeed.classList.toggle('flex', show);
+  const offerToggle = trivia && written;
+  els.triviaSeedShow.classList.toggle('hidden', !offerToggle);
+  els.triviaSeedShow.classList.toggle('flex', offerToggle);
+  els.triviaSeedShowLabel.textContent = seedForced
+    ? 'Hide autopilot & paste box'
+    : 'Show autopilot & paste box';
+  // The amber note only repeats what the reload button already says, and that
+  // button names the actual file. Two warnings for one fact is one too many.
+  const reloadVisible = !els.videoReload.classList.contains('hidden');
+  if (reloadVisible) els.videoNote.classList.add('hidden');
 }
 
 // Keep the suggested post title/description fresh until the user edits them.
@@ -590,6 +631,39 @@ async function offerRememberedReload() {
 }
 // A manual pick supersedes the offer.
 els.file.addEventListener('change', () => els.videoReload.classList.add('hidden'));
+els.triviaSeedShow.addEventListener('click', () => { seedForced = !seedForced; syncSeedControls(); });
+
+// ================= Full-slide preview =================
+// The thumbnail is 72px wide, which is enough to spot a missing frame and not
+// enough to judge a line break. This renders the same composed slide big, from
+// the same code path the upload uses, so what you tune is what ships.
+const PREVIEW_MODAL_SCALE = 0.5;
+function openSlidePreview(slide) {
+  captionFontReady().then(() => {
+    composeToCanvas(els.slidePreviewCanvas, slide.bitmap, slide.caption, {
+      titleLine: currentTitleLine(),
+      scale: PREVIEW_MODAL_SCALE,
+      fontScale: slide.fontScale || 1,
+      maxFrameHeightRatio: frameHeightRatio(),
+    });
+    const idx = slides.findIndex((s) => s.id === slide.id);
+    const scale = Math.round((slide.fontScale || 1) * 100);
+    els.slidePreviewMeta.textContent =
+      `Slide ${idx + 1} of ${slides.length} · text ${scale}%${scale === 100 ? ' (auto)' : ''}`;
+    els.slidePreview.classList.remove('hidden');
+    els.slidePreview.classList.add('flex');
+  }).catch((e) => console.error('[tik] slide preview failed:', e));
+}
+function closeSlidePreview() {
+  els.slidePreview.classList.add('hidden');
+  els.slidePreview.classList.remove('flex');
+}
+els.slidePreviewClose.addEventListener('click', closeSlidePreview);
+// Click the backdrop (not the slide itself) to dismiss.
+els.slidePreview.addEventListener('click', (e) => { if (e.target === els.slidePreview) closeSlidePreview(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !els.slidePreview.classList.contains('hidden')) closeSlidePreview();
+});
 
 // ---- Followers card (home) ----
 // Current count from TikTok when signed in (snapshotted at most hourly);
@@ -1627,6 +1701,7 @@ function render() {
   els.download.disabled = slides.length === 0;
   els.list.innerHTML = '';
   slides.forEach((slide, index) => els.list.appendChild(renderSlide(slide, index)));
+  syncSeedControls();
   updatePostButton();
 }
 
@@ -1865,9 +1940,12 @@ function renderSlide(slide, index) {
   }
   mid.append(toolbar);
 
-  // Delete (top-right).
+  // Delete, then preview, stacked at the top-right.
+  const side = document.createElement('div');
+  side.className = 'flex flex-none flex-col gap-1';
+
   const del = document.createElement('button');
-  del.className = 'self-start rounded-md bg-neutral-800 px-2 py-1 text-neutral-400 hover:bg-neutral-700 hover:text-red-400 disabled:opacity-40';
+  del.className = 'rounded-md bg-neutral-800 px-2 py-1 text-neutral-400 hover:bg-neutral-700 hover:text-red-400 disabled:opacity-40';
   del.title = 'Delete slide';
   del.append(iconSpan('delete'));
   del.addEventListener('click', () => {
@@ -1876,7 +1954,16 @@ function renderSlide(slide, index) {
     reRankAndRender(); // the films below just moved up a place
   });
 
-  row.append(thumb, mid, del);
+  // The 72px thumb is enough to notice a wrong frame and nowhere near enough to
+  // judge where a line breaks, which is the thing actually being tuned here.
+  const preview = document.createElement('button');
+  preview.className = 'rounded-md bg-neutral-800 px-2 py-1 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-100';
+  preview.title = 'Preview this slide full size';
+  preview.append(iconSpan('visibility'));
+  preview.addEventListener('click', () => openSlidePreview(slide));
+
+  side.append(del, preview);
+  row.append(thumb, mid, side);
   li.append(row);
 
   // Drag: reorder slides, or drop an image FILE from the desktop onto a slide.
@@ -2009,10 +2096,11 @@ els.post.addEventListener('click', async () => {
   } catch (e) { console.error('[tik] sign-in failed:', e); authMsg = e.message; }
   refreshAuthUI();
 
-  // Canvas previews render with the system stack until Inter arrives; upgrade
-  // them in place once it has.
-  document.fonts?.ready?.then(() => { if (project) redrawAllThumbs(); })
-    .catch((e) => console.warn('[tik] fonts.ready failed:', e));
+  // Font readiness is armed once here and re-checked whenever a project opens
+  // (see enterEditor). The old one-shot fired at boot behind `if (project)`,
+  // which at boot is almost always false — so the single repair opportunity was
+  // spent doing nothing and previews kept the fallback font's line breaks.
+  syncThumbsToCaptionFont();
 
   // Deep link: #p/<id> reopens a saved project (survives reloads).
   const m = location.hash.match(/^#p\/([A-Za-z0-9-]+)$/);

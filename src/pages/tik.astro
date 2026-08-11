@@ -346,6 +346,21 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
     </section>
 
     <!-- ============ EDITOR ============ -->
+    <!-- Full-slide preview. Composed by the same code path as the upload, so a
+         line break judged here is the one that ships. -->
+    <div id="slide-preview" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+      <div class="flex max-h-full flex-col items-center gap-2">
+        <div class="flex w-full items-center justify-between gap-4">
+          <p id="slide-preview-meta" class="text-xs tabular-nums text-neutral-400"></p>
+          <button id="slide-preview-close" title="Close (Esc)"
+                  class="flex items-center gap-1 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs font-semibold text-neutral-300 hover:bg-neutral-800">
+            <span class="material-symbols-outlined text-[15px] leading-none">close</span> Close
+          </button>
+        </div>
+        <canvas id="slide-preview-canvas" class="max-h-[80vh] w-auto rounded-lg bg-black shadow-2xl"></canvas>
+      </div>
+    </div>
+
     <section id="screen-editor" class="mx-auto hidden w-full max-w-6xl px-4 py-4">
       <div class="flex flex-wrap items-center gap-2 pb-2">
         <button id="back-btn" title="Back to your library" class="flex items-center gap-1 rounded-md border border-neutral-800 bg-neutral-900 px-2.5 py-1.5 text-xs font-semibold text-neutral-300 hover:bg-neutral-800">
@@ -368,7 +383,7 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
            set you scroll the slides without losing the frame picker, the
            scrubber, or your place in the video. `self-start` is load-bearing —
            a stretched grid item is as tall as the row and sticky does nothing. -->
-      <main class="grid items-start gap-6 lg:grid-cols-2">
+      <main class="grid items-start gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
         <!-- Source pane -->
         <section class="flex flex-col gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto lg:pr-1">
           <!-- Tape Trivia -->
@@ -378,8 +393,8 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
               <input id="file-input" type="file" accept="video/*"
                      class="mt-1 block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-red-600 file:px-3 file:py-2 file:font-semibold file:text-white hover:file:bg-red-500" />
             </label>
-            <p id="video-note" class="hidden rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs leading-snug text-amber-200">
-              This saved project's slides are intact — re-pick the movie file above if you want to grab new frames.
+            <p id="video-note" class="hidden text-[11px] leading-snug text-amber-300/80">
+              Slides intact. Re-pick the file to grab new frames.
             </p>
             <!-- One-click reload when batch mode remembers where this movie's
                  file lives (folder grant / past pick). Hidden until a
@@ -389,6 +404,7 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
               <span id="video-reload-label">Load the movie file again</span>
             </button>
 
+            <div id="trivia-seed" class="flex flex-col gap-3">
             <textarea id="autopilot-prompt" rows="2"
                       class="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-600"
                       placeholder="Optional starter prompt — paste trivia you found (IMDb, Reddit, anywhere) or give a direction; autopilot verifies and riffs on it"></textarea>
@@ -410,6 +426,14 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
                     disabled title="Load a video first">
               <span class="material-symbols-outlined text-[20px] leading-none">auto_awesome</span>
               Autopilot — title slide + trivia scenes
+            </button>
+            </div>
+
+            <!-- Shown in place of the seeding controls once slides exist, so the
+                 pane is a frame picker rather than a wall of setup copy. -->
+            <button id="trivia-seed-show" class="hidden items-center gap-1.5 self-start text-[11px] font-semibold text-neutral-500 hover:text-neutral-300">
+              <span class="material-symbols-outlined text-[14px] leading-none">tune</span>
+              <span id="trivia-seed-show-label">Show autopilot &amp; paste box</span>
             </button>
 
             <video id="video" class="w-full rounded-xl bg-black" playsinline muted></video>
