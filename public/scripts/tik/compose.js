@@ -11,6 +11,39 @@ const CANVAS_H = 1920;
 // Inter first (loaded by the page); system stack until it arrives. app.js
 // redraws thumbnails on document.fonts.ready so previews upgrade in place.
 const FONT = (size) => `700 ${size}px Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+
+// Wrapping is decided by measureText, and Inter measures about 8% wider than
+// the system fallback — so a caption laid out before the webfont arrives breaks
+// at different words than the same caption laid out after. That is the whole
+// reason a preview could disagree with the uploaded slide, and why hand-tuned
+// font sizing looked like it "didn't stick": the preview being tuned was
+// measured against a different font than the final.
+//
+// Memoized so every caller shares one load, and resolving (never rejecting)
+// because a font that fails to load is a cosmetic problem, not a reason to
+// block composing entirely.
+let fontPromise = null;
+export function captionFontReady() {
+  if (fontPromise) return fontPromise;
+  fontPromise = (async () => {
+    try {
+      if (!document.fonts) return false;
+      // Load the sizes the composer actually asks for. `document.fonts.ready`
+      // alone is not enough: it settles when nothing is *pending*, which is
+      // true before anything has requested Inter at all.
+      await Promise.all([
+        document.fonts.load(`700 ${MAX_FONT}px Inter`),
+        document.fonts.load('700 100px Inter'), // the reference size wrapping measures at
+      ]);
+      await document.fonts.ready;
+      return document.fonts.check('700 100px Inter');
+    } catch (e) {
+      console.warn('[tik] caption font never loaded; previews may wrap differently:', e);
+      return false;
+    }
+  })();
+  return fontPromise;
+}
 const TEXT_MAX_W = CANVAS_W - 220; // generous side padding for the text block
 const GAP = 52;                    // gap between frame and text block
 const MIN_VPAD = 100;              // minimum space above/below the centered group
@@ -146,7 +179,12 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
 }
 
 // Render to an offscreen canvas and return a JPEG Blob for upload.
+//
+// Awaits the caption font first, so the uploaded slide is always measured
+// against Inter. Previews that were drawn before it arrived get redrawn by the
+// caller; this end is the authoritative one and must never be the odd one out.
 export async function composeSlide(bitmap, caption, opts = {}) {
+  await captionFontReady();
   const cvs = document.createElement('canvas');
   composeToCanvas(cvs, bitmap, caption, opts);
   return await new Promise((resolve) => cvs.toBlob(resolve, 'image/jpeg', 0.9));
