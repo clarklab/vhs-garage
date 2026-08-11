@@ -79,6 +79,7 @@ const els = {
   // hashtag performance, under the follower chart
   tagReport: $('tag-report'), tagReportNote: $('tag-report-note'), tagReportBody: $('tag-report-body'),
   statsModes: $('stats-modes'), statsForecast: $('stats-forecast'),
+  statsLegend: $('stats-legend'),
   // slides pane
   count: $('slide-count'), list: $('slide-list'), addScene: $('add-scene'), slidesHint: $('slides-hint'),
   imgFile: $('img-file-input'),
@@ -675,9 +676,11 @@ let lastStatsSeries = null;
 // 'history' (what happened, with the fitted trend) or 'forecast' (both paces
 // extended into dated future). The milestone table only belongs to the latter.
 let statsMode = 'history';
-function drawStats(series) {
+function drawStats(series, { animate = false } = {}) {
   if (!series?.length) return;
-  renderFollowerChart(els.statsChart, series, els.statsTip, { mode: statsMode });
+  renderFollowerChart(els.statsChart, series, els.statsTip, {
+    mode: statsMode, legendEl: els.statsLegend, animate,
+  });
   const forecasting = statsMode === 'forecast';
   els.statsForecast.classList.toggle('hidden', !forecasting);
   if (forecasting) els.statsForecast.innerHTML = forecastHtml(series);
@@ -692,7 +695,7 @@ els.statsModes.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-mode]');
   if (!btn || btn.dataset.mode === statsMode) return;
   statsMode = btn.dataset.mode;
-  drawStats(lastStatsSeries);
+  drawStats(lastStatsSeries, { animate: true });
 });
 async function refreshStatsCard() {
   refreshTagReport(); // non-blocking, separate scope, handles its own errors
@@ -718,7 +721,7 @@ async function refreshStatsCard() {
       lastStatsSeries = series;
       // Render on the next frame so layout reflects the just-unhidden plot —
       // measuring too early bakes a 0-width fallback into the raster.
-      requestAnimationFrame(() => drawStats(series));
+      requestAnimationFrame(() => drawStats(series, { animate: true }));
     } else {
       els.statsPlot.classList.add('hidden');
       lastStatsSeries = null;
