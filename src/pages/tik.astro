@@ -146,8 +146,11 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
             <p id="stats-note" class="max-w-64 text-right text-[11px] leading-snug text-neutral-600">Logged each time you open the studio</p>
           </div>
         </div>
-        <div id="stats-plot" class="relative mt-3 hidden">
-          <canvas id="stats-chart" class="block h-36 w-full"></canvas>
+        <div id="stats-plot" class="relative mt-4 hidden">
+          <!-- Legend lives in HTML, not on the canvas: selectable, screen-
+               readable, and identity never rests on colour alone. -->
+          <div id="stats-legend" class="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1"></div>
+          <canvas id="stats-chart" class="block h-64 w-full"></canvas>
           <div id="stats-tip" class="pointer-events-none absolute hidden rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] tabular-nums text-neutral-200 shadow-lg"></div>
         </div>
 
