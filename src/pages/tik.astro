@@ -130,18 +130,29 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
       <div id="stats-card" class="mt-10 hidden rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
         <div class="flex flex-wrap items-end gap-x-6 gap-y-1">
           <div>
-            <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Followers · @vhsgarage.com</h2>
+            <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Followers · @vhsgaragevideo</h2>
             <p class="mt-1 flex items-baseline gap-2.5">
               <span id="stats-count" class="text-3xl font-extrabold tabular-nums tracking-tight">—</span>
               <span id="stats-delta" class="text-xs font-semibold tabular-nums text-neutral-500"></span>
             </p>
           </div>
-          <p id="stats-note" class="ml-auto max-w-64 text-right text-[11px] leading-snug text-neutral-600">Logged each time you open the studio</p>
+          <div class="ml-auto flex flex-col items-end gap-1.5">
+            <!-- History vs forecast. Two views of the same series: what
+                 happened, and where two straight lines say it goes. -->
+            <div id="stats-modes" class="inline-flex overflow-hidden rounded-lg border border-neutral-800">
+              <button data-mode="history" class="px-2.5 py-1 text-[11px] font-semibold text-neutral-200">History</button>
+              <button data-mode="forecast" class="border-l border-neutral-800 px-2.5 py-1 text-[11px] font-semibold text-neutral-500">Forecast</button>
+            </div>
+            <p id="stats-note" class="max-w-64 text-right text-[11px] leading-snug text-neutral-600">Logged each time you open the studio</p>
+          </div>
         </div>
         <div id="stats-plot" class="relative mt-3 hidden">
           <canvas id="stats-chart" class="block h-36 w-full"></canvas>
           <div id="stats-tip" class="pointer-events-none absolute hidden rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] tabular-nums text-neutral-200 shadow-lg"></div>
         </div>
+
+        <!-- Milestone dates, shown with the forecast view. -->
+        <div id="stats-forecast" class="mt-4 hidden border-t border-neutral-800 pt-4"></div>
 
         <!-- Which hashtags earn their slot. Read off our own posts, because
              TikTok exposes no hashtag volume data to us at all. -->

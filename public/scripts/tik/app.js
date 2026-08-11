@@ -23,6 +23,7 @@ import {
   parseGrossList, toGrossEntries, boxOfficeMojoUrl, formatGross,
 } from './charts.js';
 import { fetchFollowerStats, renderFollowerChart, fmtCount } from './stats.js';
+import { forecastHtml } from './forecast.js';
 import { tagReport, tagReportHtml } from './tagreport.js';
 // Batch mode (beta) owns its own screen end to end; this file only shows it.
 import { initBatch, refreshBatch } from './batch.js';
@@ -77,6 +78,7 @@ const els = {
   songPicks: $('song-picks'), songList: $('song-list'),
   // hashtag performance, under the follower chart
   tagReport: $('tag-report'), tagReportNote: $('tag-report-note'), tagReportBody: $('tag-report-body'),
+  statsModes: $('stats-modes'), statsForecast: $('stats-forecast'),
   // slides pane
   count: $('slide-count'), list: $('slide-list'), addScene: $('add-scene'), slidesHint: $('slides-hint'),
   imgFile: $('img-file-input'),
@@ -669,6 +671,29 @@ document.addEventListener('keydown', (e) => {
 // Current count from TikTok when signed in (snapshotted at most hourly);
 // the accumulated series renders as a line chart once it has 2+ days.
 let lastStatsSeries = null;
+
+// 'history' (what happened, with the fitted trend) or 'forecast' (both paces
+// extended into dated future). The milestone table only belongs to the latter.
+let statsMode = 'history';
+function drawStats(series) {
+  if (!series?.length) return;
+  renderFollowerChart(els.statsChart, series, els.statsTip, { mode: statsMode });
+  const forecasting = statsMode === 'forecast';
+  els.statsForecast.classList.toggle('hidden', !forecasting);
+  if (forecasting) els.statsForecast.innerHTML = forecastHtml(series);
+  for (const btn of els.statsModes.querySelectorAll('button')) {
+    const on = btn.dataset.mode === statsMode;
+    btn.classList.toggle('bg-neutral-800', on);
+    btn.classList.toggle('text-neutral-100', on);
+    btn.classList.toggle('text-neutral-500', !on);
+  }
+}
+els.statsModes.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-mode]');
+  if (!btn || btn.dataset.mode === statsMode) return;
+  statsMode = btn.dataset.mode;
+  drawStats(lastStatsSeries);
+});
 async function refreshStatsCard() {
   refreshTagReport(); // non-blocking, separate scope, handles its own errors
   try {
@@ -693,7 +718,7 @@ async function refreshStatsCard() {
       lastStatsSeries = series;
       // Render on the next frame so layout reflects the just-unhidden plot —
       // measuring too early bakes a 0-width fallback into the raster.
-      requestAnimationFrame(() => renderFollowerChart(els.statsChart, series, els.statsTip));
+      requestAnimationFrame(() => drawStats(series));
     } else {
       els.statsPlot.classList.add('hidden');
       lastStatsSeries = null;
