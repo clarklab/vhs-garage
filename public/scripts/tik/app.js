@@ -78,8 +78,9 @@ const els = {
   songPicks: $('song-picks'), songList: $('song-list'),
   // hashtag performance, under the follower chart
   tagReport: $('tag-report'), tagReportNote: $('tag-report-note'), tagReportBody: $('tag-report-body'),
-  statsModes: $('stats-modes'), statsForecast: $('stats-forecast'),
+  statsModes: $('stats-modes'), statsStyles: $('stats-styles'), statsForecast: $('stats-forecast'),
   statsLegend: $('stats-legend'),
+  libraryFilters: $('library-filters'), libraryViews: $('library-views'),
   // slides pane
   count: $('slide-count'), list: $('slide-list'), addScene: $('add-scene'), slidesHint: $('slides-hint'),
   imgFile: $('img-file-input'),
@@ -495,6 +496,57 @@ function formatBadge(rec) {
   return `<span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${f.chip}">${f.label}</span>`;
 }
 
+// Library view state. Persisted because a view preference you have to re-pick
+// every visit is not a preference.
+const LS_LIB_VIEW = 'tik_library_view';
+const LS_LIB_FILTER = 'tik_library_filter';
+const LIB_VIEWS = ['large', 'grid', 'list'];
+let libView = LIB_VIEWS.includes(localStorage.getItem(LS_LIB_VIEW)) ? localStorage.getItem(LS_LIB_VIEW) : 'grid';
+let libFilter = ['all', 'draft', 'posted'].includes(localStorage.getItem(LS_LIB_FILTER))
+  ? localStorage.getItem(LS_LIB_FILTER) : 'all';
+
+const GRID_CLASS = {
+  large: 'mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3',
+  grid: 'mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4',
+  list: 'mt-3 flex flex-col gap-1.5',
+};
+
+function renderLibraryChrome(counts) {
+  els.libraryFilters.innerHTML = '';
+  for (const [key, label] of [['all', 'All'], ['draft', 'Drafts'], ['posted', 'Posted']]) {
+    const n = counts[key] || 0;
+    const on = libFilter === key;
+    const pill = document.createElement('button');
+    pill.className = `flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+      on ? 'border-neutral-600 bg-neutral-800 text-neutral-100' : 'border-neutral-800 text-neutral-500 hover:text-neutral-300'}`;
+    pill.innerHTML = `${label}<span class="tabular-nums ${on ? 'text-neutral-400' : 'text-neutral-600'}">${n}</span>`;
+    // A filter that empties the screen is a dead end, so an empty bucket is
+    // shown with its zero but cannot be selected.
+    pill.disabled = n === 0 && key !== 'all';
+    if (pill.disabled) pill.classList.add('opacity-40');
+    else pill.addEventListener('click', () => {
+      libFilter = key;
+      localStorage.setItem(LS_LIB_FILTER, key);
+      renderLibrary();
+    });
+    els.libraryFilters.appendChild(pill);
+  }
+  for (const btn of els.libraryViews.querySelectorAll('button')) {
+    const on = btn.dataset.view === libView;
+    btn.classList.toggle('bg-neutral-800', on);
+    btn.classList.toggle('text-neutral-100', on);
+    btn.classList.toggle('text-neutral-500', !on);
+  }
+}
+
+els.libraryViews.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-view]');
+  if (!btn || btn.dataset.view === libView) return;
+  libView = btn.dataset.view;
+  localStorage.setItem(LS_LIB_VIEW, libView);
+  renderLibrary();
+});
+
 async function renderLibrary() {
   thumbUrls.forEach((u) => URL.revokeObjectURL(u));
   thumbUrls = [];
@@ -513,15 +565,33 @@ async function renderLibrary() {
     els.libraryEmpty.classList.remove('hidden');
     return;
   }
-  els.libraryEmpty.classList.toggle('hidden', list.length > 0);
+  const counts = {
+    all: list.length,
+    draft: list.filter((r) => r.status !== 'posted').length,
+    posted: list.filter((r) => r.status === 'posted').length,
+  };
+  // A filter whose bucket emptied (last draft posted) would otherwise strand
+  // the screen on an empty list with no obvious way back.
+  if (libFilter !== 'all' && !counts[libFilter]) libFilter = 'all';
+  renderLibraryChrome(counts);
 
-  for (const rec of list) {
+  const shown = libFilter === 'all' ? list
+    : list.filter((r) => (libFilter === 'posted') === (r.status === 'posted'));
+  els.grid.className = GRID_CLASS[libView] || GRID_CLASS.grid;
+  els.libraryEmpty.classList.toggle('hidden', shown.length > 0);
+
+  const listView = libView === 'list';
+  for (const rec of shown) {
     const card = document.createElement('button');
-    card.className = 'group relative overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900 text-left transition hover:border-neutral-600';
+    card.className = listView
+      ? 'group relative flex w-full items-center gap-3 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-left transition hover:border-neutral-600'
+      : 'group relative overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900 text-left transition hover:border-neutral-600';
     card.title = `Open ${projectDisplayName(rec)}`;
 
     const frame = document.createElement('div');
-    frame.className = 'relative aspect-[9/14] w-full overflow-hidden bg-neutral-950';
+    frame.className = listView
+      ? 'relative h-12 w-9 flex-none overflow-hidden rounded bg-neutral-950'
+      : 'relative aspect-[9/14] w-full overflow-hidden bg-neutral-950';
     if (rec.thumb) {
       const url = URL.createObjectURL(rec.thumb);
       thumbUrls.push(url);
@@ -538,12 +608,16 @@ async function renderLibrary() {
     }
     const posted = rec.status === 'posted';
     const badge = document.createElement('span');
-    badge.className = `absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${posted ? 'bg-green-500/90 text-neutral-950' : 'bg-neutral-950/80 text-amber-300'}`;
+    badge.className = listView
+      ? `flex-none rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${posted ? 'bg-green-500/90 text-neutral-950' : 'bg-neutral-800 text-amber-300'}`
+      : `absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${posted ? 'bg-green-500/90 text-neutral-950' : 'bg-neutral-950/80 text-amber-300'}`;
     badge.textContent = posted ? 'Posted' : 'Draft';
-    frame.appendChild(badge);
+    if (!listView) frame.appendChild(badge);
 
     const del = document.createElement('span');
-    del.className = 'absolute right-2 top-2 hidden rounded-md bg-neutral-950/80 p-1 text-neutral-400 hover:text-red-400 group-hover:block';
+    del.className = listView
+      ? 'ml-auto flex-none rounded-md p-1 text-neutral-600 hover:text-red-400'
+      : 'absolute right-2 top-2 hidden rounded-md bg-neutral-950/80 p-1 text-neutral-400 hover:text-red-400 group-hover:block';
     del.title = 'Delete project';
     del.setAttribute('role', 'button');
     del.appendChild(iconSpan('delete', 'text-[16px]'));
@@ -558,10 +632,10 @@ async function renderLibrary() {
         alert('Couldn’t delete that project — check the console.');
       }
     });
-    frame.appendChild(del);
+    if (!listView) frame.appendChild(del);
 
     const meta = document.createElement('div');
-    meta.className = 'flex flex-col gap-1 p-2.5';
+    meta.className = listView ? 'flex min-w-0 flex-1 flex-col gap-0.5' : 'flex flex-col gap-1 p-2.5';
     const name = document.createElement('span');
     name.className = 'truncate text-sm font-bold tracking-tight';
     name.textContent = projectDisplayName(rec);
@@ -571,6 +645,7 @@ async function renderLibrary() {
     meta.append(name, sub);
 
     card.append(frame, meta);
+    if (listView) card.append(badge, del);
     card.addEventListener('click', () => {
       openProject(rec.id).catch((e) => {
         console.error('[tik] open failed:', e);
@@ -675,12 +750,22 @@ let lastStatsSeries = null;
 
 // 'history' (what happened, with the fitted trend) or 'forecast' (both paces
 // extended into dated future). The milestone table only belongs to the latter.
+const LS_CHART_STYLE = 'tik_chart_style';
 let statsMode = 'history';
+let statsStyle = ['area', 'bars', 'retro'].includes(localStorage.getItem(LS_CHART_STYLE))
+  ? localStorage.getItem(LS_CHART_STYLE) : 'area';
+
 function drawStats(series, { animate = false } = {}) {
   if (!series?.length) return;
   renderFollowerChart(els.statsChart, series, els.statsTip, {
-    mode: statsMode, legendEl: els.statsLegend, animate,
+    mode: statsMode, style: statsStyle, legendEl: els.statsLegend, animate,
   });
+  for (const btn of els.statsStyles.querySelectorAll('button')) {
+    const on = btn.dataset.style === statsStyle;
+    btn.classList.toggle('bg-neutral-800', on);
+    btn.classList.toggle('text-neutral-100', on);
+    btn.classList.toggle('text-neutral-500', !on);
+  }
   const forecasting = statsMode === 'forecast';
   els.statsForecast.classList.toggle('hidden', !forecasting);
   if (forecasting) els.statsForecast.innerHTML = forecastHtml(series);
@@ -691,6 +776,13 @@ function drawStats(series, { animate = false } = {}) {
     btn.classList.toggle('text-neutral-500', !on);
   }
 }
+els.statsStyles.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-style]');
+  if (!btn || btn.dataset.style === statsStyle) return;
+  statsStyle = btn.dataset.style;
+  localStorage.setItem(LS_CHART_STYLE, statsStyle);
+  drawStats(lastStatsSeries, { animate: true });
+});
 els.statsModes.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-mode]');
   if (!btn || btn.dataset.mode === statsMode) return;
