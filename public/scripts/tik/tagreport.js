@@ -19,6 +19,7 @@
 // Pure — no DOM, no network. Unit-tested under node:test.
 
 import { HOUSE_SETS } from './hashtags.js';
+import { esc, count, pct, rate } from './fmt.js';
 
 // Below this many posts, a row is shown but marked as not yet meaning anything.
 export const MIN_SAMPLE = 4;
@@ -67,23 +68,38 @@ function tagsOf(row) {
   return parseTags(row?.description ?? row?.video_description);
 }
 
-function summarize(rows, baselineViews) {
+// `basis` picks what the lift column compares:
+//
+//   'lifetime' — median lifetime views. What TikTok shows, and all we can
+//                compute when the caller has no post ages.
+//   'daily'    — median views per day since posting. Lifetime totals
+//                structurally favour older posts, so a lift column built on
+//                them is partly just a ranking of post age. When the caller
+//                supplies `viewsPerDay` (postmetrics.enrichPosts does), this
+//                removes that bias.
+//
+// Lifetime views are reported either way — only the comparison changes.
+function summarize(rows, baselineValue, basis = 'lifetime') {
   const views = rows.map((r) => Number(r.views)).filter(Number.isFinite);
+  const perDay = rows.map((r) => Number(r.viewsPerDay)).filter(Number.isFinite);
   const rates = rows.map(engagementRate).filter((r) => r !== null);
   const medianViews = median(views);
-  const lift = medianViews !== null && Number.isFinite(baselineViews) && baselineViews > 0
-    ? medianViews / baselineViews - 1
+  const medianPerDay = median(perDay);
+  const value = basis === 'daily' ? medianPerDay : medianViews;
+  const lift = value !== null && Number.isFinite(baselineValue) && baselineValue > 0
+    ? value / baselineValue - 1
     : null;
   return {
     n: rows.length,
     medianViews,
+    medianPerDay,
     medianEngagement: median(rates),
     lift,
     enough: rows.length >= MIN_SAMPLE,
   };
 }
 
-// rows: [{ movie, views, likes, comments, shares, tags? , description? }]
+// rows: [{ movie, views, likes, comments, shares, tags?, description?, viewsPerDay? }]
 //
 // A post is credited to a house set only when it carried BOTH of that set's
 // tags. Half a set is not that set: crediting on one tag would let a legacy
@@ -91,18 +107,24 @@ function summarize(rows, baselineViews) {
 //
 // Sets are not a partition — if two sets ever shared a tag a post could count
 // toward both — so the per-set `n` may not sum to the baseline `n`.
-export function tagReport(rows) {
+export function tagReport(rows, { basis = 'lifetime' } = {}) {
   const clean = (Array.isArray(rows) ? rows : [])
     .filter((r) => r && typeof r === 'object')
     .map((r) => ({ ...r, tags: tagsOf(r) }))
     .filter((r) => r.tags.length);
 
-  const baseline = summarize(clean, null);
-  const baseViews = baseline.medianViews;
+  // Asking for a daily basis the rows cannot support would silently blank
+  // every lift cell. Fall back rather than report nothing.
+  const usable = basis === 'daily' && clean.some((r) => Number.isFinite(Number(r.viewsPerDay)))
+    ? 'daily'
+    : 'lifetime';
+
+  const baseline = summarize(clean, null, usable);
+  const base = usable === 'daily' ? baseline.medianPerDay : baseline.medianViews;
 
   const bySet = HOUSE_SETS.map((set) => {
     const hits = clean.filter((r) => set.tags.every((t) => r.tags.includes(t)));
-    return { key: set.key, label: set.label, tags: set.tags, ...summarize(hits, baseViews) };
+    return { key: set.key, label: set.label, tags: set.tags, ...summarize(hits, base, usable) };
   });
 
   const byTagMap = new Map();
@@ -113,12 +135,12 @@ export function tagReport(rows) {
     }
   }
   const byTag = [...byTagMap.entries()]
-    .map(([tag, hits]) => ({ tag, ...summarize(hits, baseViews) }))
+    .map(([tag, hits]) => ({ tag, ...summarize(hits, base, usable) }))
     // Sample size first: a tag used once that happened to do well is not a
     // finding, and sorting on median alone would put it at the top.
     .sort((a, b) => (b.n - a.n) || ((b.medianViews ?? -1) - (a.medianViews ?? -1)));
 
-  return { baseline, bySet, byTag };
+  return { baseline, bySet, byTag, basis: usable };
 }
 
 // ---- rendering ----
@@ -128,22 +150,6 @@ export function tagReport(rows) {
 // pure function of the numbers. app.js only fetches and assigns.
 
 const TOP_TAGS = 8;
-
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, (c) => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-  ));
-}
-
-function count(n) {
-  const v = Math.round(n);
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
-  return String(v);
-}
-
-const pct = (n) => `${n >= 0 ? '+' : '−'}${Math.abs(Math.round(n * 100))}%`;
-const rate = (n) => (n === null ? '—' : `${(n * 100).toFixed(1)}%`);
 
 // Grey until the sample could plausibly mean something: coloring an n=1 row
 // green dresses up a coin flip as a finding.
@@ -155,29 +161,35 @@ function liftCell(row) {
   return `<span class="${tone}">${pct(row.lift)}</span>`;
 }
 
-function rows(list, labelOf) {
+function rows(list, labelOf, basis = 'lifetime') {
+  const daily = basis === 'daily';
   return list.map((r) => `
     <tr class="${r.enough ? '' : 'text-neutral-500'}">
       <td class="py-1 pr-3">${labelOf(r)}</td>
       <td class="py-1 pr-3 text-right tabular-nums">${r.n || '—'}</td>
       <td class="py-1 pr-3 text-right tabular-nums">${r.medianViews === null ? '—' : count(r.medianViews)}</td>
+      ${daily ? `<td class="py-1 pr-3 text-right tabular-nums">${r.medianPerDay === null ? '—' : count(r.medianPerDay)}</td>` : ''}
       <td class="py-1 pr-3 text-right tabular-nums">${rate(r.medianEngagement)}</td>
       <td class="py-1 text-right font-semibold tabular-nums">${liftCell(r)}</td>
     </tr>`).join('');
 }
 
-const HEAD = `
+function head(basis = 'lifetime') {
+  const daily = basis === 'daily';
+  return `
   <tr class="text-[10px] uppercase tracking-wide text-neutral-600">
     <th class="py-1 pr-3 text-left font-semibold">Tag set</th>
     <th class="py-1 pr-3 text-right font-semibold">Posts</th>
     <th class="py-1 pr-3 text-right font-semibold">Med. views</th>
+    ${daily ? '<th class="py-1 pr-3 text-right font-semibold">Per day</th>' : ''}
     <th class="py-1 pr-3 text-right font-semibold">Eng.</th>
     <th class="py-1 text-right font-semibold">vs median</th>
   </tr>`;
+}
 
 // → { note, body }: the header line and the panel's inner HTML.
 export function tagReportHtml(report) {
-  const { baseline, bySet, byTag } = report;
+  const { baseline, bySet, byTag, basis = 'lifetime' } = report;
 
   // No tagged posts is what a fresh account looks like, not an error. Say so
   // rather than rendering an empty grid that reads like a finding.
@@ -195,21 +207,24 @@ export function tagReportHtml(report) {
   const body = `
     <div class="overflow-x-auto">
       <table class="w-full min-w-[22rem] text-xs text-neutral-300">
-        <thead>${HEAD}</thead>
+        <thead>${head(basis)}</thead>
         <tbody>${rows(bySet, (r) => `
           <span class="font-semibold text-neutral-200">${esc(r.label)}</span>
-          <span class="ml-1.5 text-[11px] text-neutral-600">${esc(r.tags.map((t) => `#${t}`).join(' '))}</span>`)}
+          <span class="ml-1.5 text-[11px] text-neutral-600">${esc(r.tags.map((t) => `#${t}`).join(' '))}</span>`, basis)}
         </tbody>
       </table>
       ${tags.length ? `
         <p class="mt-4 text-[10px] font-semibold uppercase tracking-wide text-neutral-600">Individual tags</p>
         <table class="mt-1 w-full min-w-[22rem] text-xs text-neutral-300">
-          <tbody>${rows(tags, (r) => `<span class="text-neutral-200">#${esc(r.tag)}</span>`)}</tbody>
+          <tbody>${rows(tags, (r) => `<span class="text-neutral-200">#${esc(r.tag)}</span>`, basis)}</tbody>
         </table>` : ''}
     </div>
     <p class="mt-3 text-[11px] leading-relaxed text-neutral-600">
       Rows under ${MIN_SAMPLE} posts are greyed out: too few to mean anything yet, so treat this as a nudge and not a verdict.${
         shipped < 2 ? ' Only one house set has shipped so far, so there is nothing to compare it against.' : ''}
+      ${basis === 'daily'
+        ? 'Comparison runs on views per day since posting, so older posts do not win on age alone.'
+        : ''}
       TikTok publishes no hashtag volume data, so these are your numbers only.
     </p>`;
 

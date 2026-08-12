@@ -5,7 +5,9 @@
 import { loadVideoFile, grabFrame, awaitSeekSettled, seekAndSettle } from './capture.js';
 import { initScrubber } from './scrubber.js';
 import { addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame } from './slides.js';
-import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, getRefreshToken } from './auth.js';
+// getRefreshToken is no longer needed here: the only fetch in this file that
+// used it (the hashtag panel) now goes through reports.js loadPosts().
+import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory } from './auth.js';
 import { publishSlideshow } from './publish.js';
 import { fetchScenes, fetchTriviaPost, fetchRoles, fetchBlurbs, fetchYearSnapshot } from './autopilot.js';
 import { parseMovieName } from './filename.js';
@@ -27,6 +29,9 @@ import { forecastHtml } from './forecast.js';
 import { tagReport, tagReportHtml } from './tagreport.js';
 // Batch mode (beta) owns its own screen end to end; this file only shows it.
 import { initBatch, refreshBatch } from './batch.js';
+// Same deal for the Reports screen. loadPosts is shared with the hashtag panel
+// below so a single home render does not page video/list twice.
+import { initReports, showReports, loadPosts, resetPostsCache } from './reports.js';
 // Remembered movie-file handles (batch mode's folder grant). Read-only here:
 // the editor offers a one-click reload when a reopened project's file is known.
 import { fsSupported, resolveMovie, armHandle } from './filestore.js';
@@ -38,6 +43,7 @@ const els = {
   saveState: $('save-state'), saveDot: $('save-dot'), saveLabel: $('save-label'),
   // screens
   home: $('screen-home'), editor: $('screen-editor'), batch: $('screen-batch'),
+  reports: $('screen-reports'),
   // home
   newTrivia: $('new-trivia'), newGuys: $('new-guys'), newYear: $('new-year'),
   newBatch: $('new-batch'),
@@ -78,6 +84,7 @@ const els = {
   songPicks: $('song-picks'), songList: $('song-list'),
   // hashtag performance, under the follower chart
   tagReport: $('tag-report'), tagReportNote: $('tag-report-note'), tagReportBody: $('tag-report-body'),
+  openReports: $('open-reports'), connectHistoryBtn: $('connect-history'), reportsHint: $('reports-hint'),
   statsModes: $('stats-modes'), statsStyles: $('stats-styles'), statsForecast: $('stats-forecast'),
   statsLegend: $('stats-legend'),
   libraryFilters: $('library-filters'), libraryViews: $('library-views'),
@@ -275,6 +282,7 @@ function showScreen(name) {
   els.home.classList.toggle('hidden', name !== 'home');
   els.editor.classList.toggle('hidden', name !== 'editor');
   els.batch.classList.toggle('hidden', name !== 'batch');
+  els.reports.classList.toggle('hidden', name !== 'reports');
 }
 
 async function teardownProject() {
@@ -666,6 +674,27 @@ els.newYear.addEventListener('click', () => { newProject('year').catch((e) => co
 initBatch({ onExit: () => { goHome().catch((e) => console.error('[tik] leaving batch failed:', e)); } });
 els.newBatch.addEventListener('click', () => { showScreen('batch'); refreshBatch(); });
 
+// ---- Reports ----
+initReports({
+  onExit: () => { goHome().catch((e) => console.error('[tik] leaving reports failed:', e)); },
+  // The Reports screen learns the scope state from its own fetch; the home
+  // screen's Connect button follows it rather than guessing separately.
+  onScope: (scope) => setHistoryPrompt(scope),
+});
+els.openReports.addEventListener('click', () => {
+  showScreen('reports');
+  showReports().catch((e) => console.error('[tik] reports failed to open:', e));
+});
+els.connectHistoryBtn.addEventListener('click', async () => {
+  try {
+    // Navigates away to TikTok and comes back through handleRedirect().
+    await connectHistory();
+  } catch (e) {
+    console.error('[tik] connecting post history failed:', e);
+    alert(e.message);
+  }
+});
+
 // ---- Remembered movie file (batch mode's folder grant) ----
 // When a reopened trivia project's file is remembered (the movies folder, or a
 // past pick in batch mode), offer a one-click reload. The File is injected
@@ -836,52 +865,53 @@ async function refreshStatsCard() {
 //
 // Needs the video.list scope, which may not be granted — that is an expected
 // state, and the panel simply stays hidden rather than showing a broken widget.
-const TAG_REPORT_TTL_MS = 10 * 60 * 1000;
-let lastTagReportAt = 0;
-// Latched, not timed: video.list is granted by re-authorizing, which reloads
-// the page and resets this. Until then there is nothing to poll for, so a
-// missing scope stops the fetch entirely rather than retrying on a timer.
+//
+// The fetch itself lives in reports.js and is shared with the Reports screen.
+// Both used to page video/list independently, which meant a single visit to
+// the home screen could cost twenty TikTok API calls to answer one question
+// twice.
 let tagReportScopeMissing = false;
 
 // Called when the signed-in account changes, so a fresh sign-in isn't written
-// off because the previous account lacked the scope.
+// off because the previous account lacked the scope, and the previous
+// account's posts are not reported as this one's.
 function resetTagReport() {
-  lastTagReportAt = 0;
   tagReportScopeMissing = false;
+  resetPostsCache();
+}
+
+// Whether to offer the video.list opt-in, and what to say about it. Shown only
+// when signed in: "Connect post history" is meaningless to a signed-out user,
+// who needs to sign in first.
+function setHistoryPrompt(scope) {
+  const needed = isSignedIn() && (scope === 'missing' || scope === 'stored');
+  els.connectHistoryBtn.classList.toggle('hidden', !needed);
+  els.connectHistoryBtn.classList.toggle('flex', needed);
+  els.reportsHint.textContent = needed
+    ? 'Post-level stats need TikTok’s video.list permission, which is a separate approval from sign-in.'
+    : '';
 }
 
 async function refreshTagReport() {
   if (!isSignedIn() || tagReportScopeMissing) { els.tagReport.classList.add('hidden'); return; }
-  // Reading the history is up to ten TikTok API pages. It changes when we post,
-  // not when we glance at the home screen, so don't re-pull it every visit.
-  if (Date.now() - lastTagReportAt < TAG_REPORT_TTL_MS) return;
-  // Stamped up front so EVERY outcome backs off, not just the happy one.
-  // Stamping at the end meant each failure path returned early and left the
-  // guard unset, so a signed-in user without the scope re-ran this — a function
-  // invocation, a token refresh, and a TikTok call — on every home render.
-  lastTagReportAt = Date.now();
   try {
-    const res = await fetch('/.netlify/functions/tik-history', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: getRefreshToken() }),
-    });
-    const data = await res.json().catch(() => ({}));
-    // tagRows counts every tagged post; movies is the film-gated list and is
-    // only a fallback for a server that predates tagRows.
-    const rows = Array.isArray(data.tagRows) ? data.tagRows : data.movies;
-    if (!res.ok || data.scope === 'missing' || !Array.isArray(rows)) {
+    // TTL and in-flight de-duplication are handled inside loadPosts().
+    const data = await loadPosts();
+    const rows = Array.isArray(data.posts) ? data.posts.filter((p) => p?.tags?.length) : [];
+    setHistoryPrompt(data.scope);
+    if (data.scope === 'missing' || !rows.length) {
       if (data.scope === 'missing') {
         // Once per session: the panel is hidden with no on-screen explanation,
         // so say why exactly once rather than on every render.
         tagReportScopeMissing = true;
         console.warn('[tik] tag report needs the video.list scope', { hint: data.hint });
-      } else {
-        console.warn('[tik] tag report unavailable', { status: res.status, error: data.error });
       }
       els.tagReport.classList.add('hidden');
       return;
     }
+    // Lifetime basis here on purpose: this panel has no post ages to work
+    // with beyond what tik-posts sends, and the Reports screen carries the
+    // age-adjusted version with the extra column to explain itself.
     const { note, body } = tagReportHtml(tagReport(rows));
     els.tagReport.classList.remove('hidden');
     els.tagReportNote.textContent = note;

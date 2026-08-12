@@ -10,7 +10,12 @@ import { STATS_STORE, SERIES_KEY, normalizeSeries, appendSnapshot, seriesDelta, 
 const CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY;
 const CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET;
 const TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/';
-const USER_INFO_URL = 'https://open.tiktokapis.com/v2/user/info/?fields=display_name,follower_count,likes_count,video_count';
+// following_count costs nothing extra: it is the same user.info.stats scope we
+// already hold for follower_count. The profile-scope fields (username,
+// is_verified, bio_description) are deliberately NOT requested — that is a
+// scope this app does not hold, and TikTok rejects the entire authorize
+// request when an app asks for one it lacks.
+const USER_INFO_URL = 'https://open.tiktokapis.com/v2/user/info/?fields=display_name,avatar_url,follower_count,following_count,likes_count,video_count';
 
 export default async (req) => {
   if (req.method === 'GET') {
@@ -56,11 +61,16 @@ export default async (req) => {
     }, scopeIssue ? 403 : 502);
   }
 
+  // `null` for anything TikTok did not send, never 0 — an absent count and a
+  // count of zero mean different things to every report that reads this.
+  const int = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null);
   const profile = {
     displayName: user.display_name || '',
+    avatar: typeof user.avatar_url === 'string' ? user.avatar_url : '',
     followers: Math.round(Number(user.follower_count)),
-    likes: Number.isFinite(Number(user.likes_count)) ? Math.round(Number(user.likes_count)) : null,
-    videos: Number.isFinite(Number(user.video_count)) ? Math.round(Number(user.video_count)) : null,
+    following: int(user.following_count),
+    likes: int(user.likes_count),
+    videos: int(user.video_count),
   };
 
   // Append today's snapshot. Failures to persist must not hide the live count.

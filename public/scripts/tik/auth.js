@@ -48,13 +48,28 @@ function randomHex(bytes = 16) {
 }
 
 // Kick off sign-in: fetch client_key, set a CSRF state, redirect to TikTok.
-export async function startAuth() {
+//
+// `scope` defaults to the safe set. Pass HISTORY_SCOPE (via connectHistory)
+// to ask for post history as well — see the note on HISTORY_SCOPE above for
+// why that is a separate, opt-in trip rather than part of normal sign-in.
+export async function startAuth({ scope = SCOPE } = {}) {
   const { clientKey } = await fetch('/.netlify/functions/tik-auth').then((r) => r.json());
   if (!clientKey) throw new Error('TikTok OAuth is not configured on the server.');
   const state = randomHex(16);
   sessionStorage.setItem(SS_STATE, state);
   const redirectUri = location.origin + location.pathname;
-  location.href = buildAuthorizeUrl({ clientKey, redirectUri, state });
+  location.href = buildAuthorizeUrl({ clientKey, redirectUri, state, scope });
+}
+
+// Re-authorize with video.list added, so the reporting screens can read our own
+// post history. Navigates away; the caller gets no return value.
+//
+// This is the ONLY caller of HISTORY_SCOPE. Until it existed, every sign-in
+// authorized without video.list, so tik-history and tik-posts always 403'd and
+// the hashtag panel could never appear no matter what the developer portal
+// said.
+export async function connectHistory() {
+  return startAuth({ scope: HISTORY_SCOPE });
 }
 
 // On page load: if we came back with ?code=&state=, exchange it for tokens.
