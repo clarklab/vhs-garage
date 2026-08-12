@@ -90,7 +90,7 @@ test('titleKey keeps genuinely different films apart', () => {
 
 // ---- matching against search results ----
 
-const cand = (title, year) => ({ title, year, imdbId: `tt${title.length}${year}` });
+const cand = (title, year, votes = null) => ({ title, year, votes, imdbId: `tt${title.length}${year}` });
 
 test('pickBestMatch takes the exact title and year', () => {
   const { pick, confidence } = pickBestMatch(
@@ -101,21 +101,50 @@ test('pickBestMatch takes the exact title and year', () => {
   assert.equal(confidence, 'exact');
 });
 
-test('pickBestMatch prefers the original when no year is given', () => {
-  // A bare "The Thing" means Carpenter's, not the 2011 prequel.
+test('pickBestMatch takes the most-watched when no year is given', () => {
+  // A bare "The Thing" means the one people mean — Carpenter's — and votes are
+  // what say so. Order in the list deliberately puts the wrong one first.
   const { pick, confidence } = pickBestMatch(
     { title: 'The Thing', year: null },
-    [cand('The Thing', '2011'), cand('The Thing', '1982')],
+    [cand('The Thing', '2011', 130_000), cand('The Thing', '1982', 460_000)],
   );
   assert.equal(pick.year, '1982');
   assert.equal(confidence, 'title');
 });
 
-test('a wrong year still keeps the right film', () => {
+test('popularity beats age — a remake that outgrew the original wins', () => {
+  // The old rule picked the oldest print, which is wrong whenever the remake is
+  // the famous one. Nothing here should make 1932 the answer.
+  const { pick } = pickBestMatch(
+    { title: 'Scarface', year: null },
+    [cand('Scarface', '1932', 26_000), cand('Scarface', '1983', 890_000)],
+  );
+  assert.equal(pick.year, '1983');
+});
+
+test('with no vote counts it falls back to IMDb order, which is relevance', () => {
+  const { pick } = pickBestMatch(
+    { title: 'The Thing', year: null },
+    [cand('The Thing', '1982'), cand('The Thing', '2011')],
+  );
+  assert.equal(pick.year, '1982', 'should keep the order IMDb returned');
+});
+
+test('an explicit year still outranks popularity', () => {
+  // Asking for The Thing (1951) means the 1951 one, however small its audience.
+  const { pick, confidence } = pickBestMatch(
+    { title: 'The Thing', year: '1951' },
+    [cand('The Thing', '1982', 460_000), cand('The Thing', '1951', 40_000)],
+  );
+  assert.equal(pick.year, '1951');
+  assert.equal(confidence, 'exact');
+});
+
+test('a wrong year still keeps the right film, and the popular cut of it', () => {
   // Mistyped years are more common than the wrong movie entirely.
   const { pick, confidence } = pickBestMatch(
     { title: 'Jaws', year: '1976' },
-    [cand('Jaws', '1975'), cand('Jaws 2', '1978')],
+    [cand('Jaws', '1975', 650_000), cand('Jaws 2', '1978', 70_000)],
   );
   assert.equal(pick.title, 'Jaws');
   assert.equal(confidence, 'title');
