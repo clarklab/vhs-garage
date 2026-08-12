@@ -77,6 +77,20 @@ export function parseTitleList(text) {
   return out;
 }
 
+// The most-watched of several same-named films.
+//
+// A bare "The Thing" or "Forrest Gump" should resolve to the one people mean,
+// and that is the popular one — not the oldest, and not whichever happens to
+// come back first. IMDb's vote count is the direct measure of that; where it is
+// missing we fall back to IMDb's own result order, which is already relevance
+// ranked and is what the search box shows you first.
+//
+// Sorting an already-ordered list with a stable sort keeps that fallback
+// meaningful: equal-vote entries stay in the order IMDb returned them.
+function mostPopular(list) {
+  return [...list].sort((a, b) => (Number(b.votes) || 0) - (Number(a.votes) || 0))[0];
+}
+
 // Which search result did this row mean?
 //
 // Returns { pick, confidence } where confidence is:
@@ -96,20 +110,17 @@ export function pickBestMatch(want, candidates) {
   const sameTitle = list.filter((c) => titleKey(c.title) === wantKey);
 
   if (wantYear) {
+    // An explicit year is the strongest thing the paste can tell us, so it
+    // outranks popularity: asking for The Thing (1951) means the 1951 one.
     const exact = sameTitle.find((c) => String(c.year || '') === wantYear);
     if (exact) return { pick: exact, confidence: 'exact' };
-    // A year that matches nothing is more often a wrong year in the paste than
-    // the wrong film, so a title match still wins over a different film.
-    if (sameTitle.length) return { pick: sameTitle[0], confidence: 'title' };
+    // A year that matches nothing is more often a typo in the paste than the
+    // wrong film, so a title match still wins — the most popular one.
+    if (sameTitle.length) return { pick: mostPopular(sameTitle), confidence: 'title' };
     const byYear = list.find((c) => String(c.year || '') === wantYear);
     if (byYear) return { pick: byYear, confidence: 'weak' };
   } else if (sameTitle.length) {
-    // No year given: prefer the oldest same-title film, which is the original
-    // rather than a remake or a same-named TV movie.
-    const oldest = [...sameTitle].sort(
-      (a, b) => (Number(a.year) || 9999) - (Number(b.year) || 9999),
-    )[0];
-    return { pick: oldest, confidence: 'title' };
+    return { pick: mostPopular(sameTitle), confidence: 'title' };
   }
 
   return { pick: list[0], confidence: 'weak' };
