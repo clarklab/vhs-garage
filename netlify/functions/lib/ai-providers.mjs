@@ -45,6 +45,18 @@ export function supportsThinking(model) {
   return THINKING_MODELS.test(String(model || ''));
 }
 
+// On the Claude 5 line max_tokens caps THINKING PLUS the visible answer, so a
+// caller's number has to be read as the answer budget and thinking given its
+// own room on top. Without this, a call site sized before thinking existed
+// (the queue asked for 1536) spends its whole budget reasoning and comes back
+// with no text block at all — which reads downstream as "the AI returned
+// nothing usable" rather than as a truncation.
+const THINKING_HEADROOM = 6144;
+export function budgetFor(model, maxTokens) {
+  const cap = Math.max(256, Math.round(Number(maxTokens) || DEFAULT_MAX_TOKENS));
+  return supportsThinking(model) ? cap + THINKING_HEADROOM : cap;
+}
+
 // The tuning block for a Claude request, or {} for a model that rejects it.
 function tuning(model) {
   return supportsThinking(model)
@@ -55,7 +67,9 @@ function tuning(model) {
 // Dispatch to the right provider for `model`.
 export async function callModel(prompt, model, signal, maxTokens = DEFAULT_MAX_TOKENS) {
   const provider = providerFor(model);
-  const cap = Math.max(256, Math.round(Number(maxTokens) || DEFAULT_MAX_TOKENS));
+  // budgetFor adds thinking headroom only where thinking is actually on, so
+  // Gemini and OpenAI get the caller's number unchanged.
+  const cap = budgetFor(model, maxTokens);
   if (provider === 'openai') return callOpenAI(prompt, model, signal, cap);
   if (provider === 'anthropic') return callAnthropic(prompt, model, signal, cap);
   return callGemini(prompt, model, signal, cap);
@@ -120,9 +134,7 @@ async function callAnthropic(prompt, model, signal, maxTokens) {
     signal,
   });
   if (!res.ok) throw new Error(`Anthropic ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
-  const data = await res.json();
-  const block = (data.content || []).find((b) => b.type === 'text');
-  return block?.text || '';
+  return anthropicText(await res.json());
 }
 
 // Look at an image and answer in JSON. Used by the screenshot verifier, which
@@ -163,16 +175,30 @@ export async function callModelWithImages(prompt, images, model, signal, maxToke
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model, max_tokens: maxTokens,
+      model, max_tokens: budgetFor(model, maxTokens),
       ...tuning(model),
       messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }],
     }),
     signal,
   });
   if (!res.ok) throw new Error(`Anthropic vision ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
-  const body = await res.json();
-  const block = (body.content || []).find((b) => b.type === 'text');
-  return block?.text || '';
+  return anthropicText(await res.json());
+}
+
+// The text block, or a loud error naming the reason there isn't one.
+//
+// Returning '' here is how a truncated reply used to travel all the way to the
+// UI disguised as "the AI returned nothing usable": stop_reason said max_tokens
+// and nobody looked.
+function anthropicText(body) {
+  const block = (body?.content || []).find((b) => b.type === 'text');
+  if (block?.text) return block.text;
+  const stop = body?.stop_reason || 'unknown';
+  if (stop === 'max_tokens') {
+    throw new Error('Anthropic hit max_tokens before writing an answer — raise the token budget');
+  }
+  console.warn('[ai] no text block in reply', { stop_reason: stop, blocks: (body?.content || []).map((b) => b.type) });
+  return '';
 }
 
 // Lenient JSON parse — strips ```json fences and recovers the first {...} block.

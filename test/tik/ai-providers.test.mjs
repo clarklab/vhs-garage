@@ -61,9 +61,10 @@ async function withStubbedFetch(run, envOverrides = {}) {
 }
 
 test('callModel sends the requested output budget to every provider', async () => {
-  await withStubbedFetch(async ({ callModel }, sent) => {
+  await withStubbedFetch(async ({ callModel, budgetFor }, sent) => {
+    // Claude gets the request plus thinking headroom; the others get it as-is.
     await callModel('p', 'claude-opus-4-8', undefined, 4096);
-    assert.equal(sent[0].body.max_tokens, 4096);
+    assert.equal(sent[0].body.max_tokens, budgetFor('claude-opus-4-8', 4096));
     await callModel('p', 'gpt-4.1-nano', undefined, 4096);
     assert.equal(sent[1].body.max_completion_tokens, 4096);
     await callModel('p', 'gemini-2.5-flash', undefined, 4096);
@@ -72,15 +73,16 @@ test('callModel sends the requested output budget to every provider', async () =
 });
 
 test('callModel falls back to the default budget, never to an unbounded or junk one', async () => {
-  await withStubbedFetch(async ({ callModel, DEFAULT_MAX_TOKENS }, sent) => {
+  await withStubbedFetch(async ({ callModel, DEFAULT_MAX_TOKENS, budgetFor }, sent) => {
     await callModel('p', 'claude-opus-4-8');                    // omitted
     await callModel('p', 'claude-opus-4-8', undefined, 'lots'); // junk
     await callModel('p', 'claude-opus-4-8', undefined, 0);      // falsy
     await callModel('p', 'claude-opus-4-8', undefined, 10);     // below the floor
-    assert.equal(sent[0].body.max_tokens, DEFAULT_MAX_TOKENS);
-    assert.equal(sent[1].body.max_tokens, DEFAULT_MAX_TOKENS);
-    assert.equal(sent[2].body.max_tokens, DEFAULT_MAX_TOKENS);
-    assert.equal(sent[3].body.max_tokens, 256);
+    const dflt = budgetFor('claude-opus-4-8', DEFAULT_MAX_TOKENS);
+    assert.equal(sent[0].body.max_tokens, dflt);
+    assert.equal(sent[1].body.max_tokens, dflt);
+    assert.equal(sent[2].body.max_tokens, dflt);
+    assert.equal(sent[3].body.max_tokens, budgetFor('claude-opus-4-8', 10), 'floors at 256, then adds headroom');
     // The default has to leave room for thinking: on Claude 5 max_tokens caps
     // thinking plus the answer, and a budget sized for the answer alone
     // truncates the JSON.
@@ -182,4 +184,71 @@ test('a vision call on a non-Claude model is refused, not silently downgraded', 
       /requires a Claude model/,
     );
   });
+});
+
+// ---- thinking shares max_tokens with the answer ----
+
+test('a small explicit budget still leaves a thinking model room to answer', async () => {
+  // The regression this guards: batch mode's queue asked for 1536 tokens, which
+  // was ample before thinking existed. Once thinking shared that ceiling the
+  // model spent it all reasoning and returned no text block at all, which
+  // surfaced as "The AI returned no usable picks".
+  await withStubbedFetch(async ({ callModel, DEFAULT_MAX_TOKENS }, sent) => {
+    await callModel('p', 'claude-sonnet-5', undefined, 1536);
+    assert.ok(sent[0].body.max_tokens > 1536, `still ${sent[0].body.max_tokens}`);
+    assert.ok(sent[0].body.max_tokens >= 4096, 'not enough room for adaptive thinking');
+    assert.deepEqual(sent[0].body.thinking, { type: 'adaptive' });
+  });
+});
+
+test('headroom is added only where thinking is actually on', async () => {
+  await withStubbedFetch(async ({ callModel, budgetFor }, sent) => {
+    // Haiku rejects thinking, so its budget must pass through untouched.
+    await callModel('p', 'claude-haiku-4-5', undefined, 1536);
+    assert.equal(sent[0].body.max_tokens, 1536);
+    // Non-Claude providers likewise.
+    await callModel('p', 'gpt-4.1-nano', undefined, 1536);
+    assert.equal(sent[1].body.max_completion_tokens, 1536);
+    assert.equal(budgetFor('claude-haiku-4-5', 1536), 1536);
+    assert.ok(budgetFor('claude-opus-5', 1536) > 1536);
+  });
+});
+
+test('every explicit budget in the codebase survives the headroom rule', async () => {
+  await withStubbedFetch(async ({ budgetFor }) => {
+    // The four call sites that pass a number, smallest first.
+    for (const n of [1024, 1536, 2048, 16384]) {
+      assert.ok(budgetFor('claude-sonnet-5', n) >= n + 4096, `${n} got too little headroom`);
+      assert.ok(budgetFor('claude-opus-5', n) >= n + 4096);
+    }
+  });
+});
+
+test('the vision path gets the same headroom as the text path', async () => {
+  await withStubbedFetch(async ({ callModelWithImages, budgetFor }, sent) => {
+    await callModelWithImages('p', [{ base64: 'AAA' }], 'claude-sonnet-5', undefined, 2048);
+    assert.equal(sent[0].body.max_tokens, budgetFor('claude-sonnet-5', 2048));
+    assert.ok(sent[0].body.max_tokens > 2048);
+  });
+});
+
+test('a reply truncated before any text throws instead of returning empty', async () => {
+  // Returning '' is how this travelled to the UI disguised as "nothing usable".
+  const realFetch = globalThis.fetch;
+  const env = { ...process.env };
+  process.env.ANTHROPIC_API_KEY = 'test';
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ stop_reason: 'max_tokens', content: [{ type: 'thinking', thinking: '' }] }),
+  });
+  try {
+    const mod = await import(`../../netlify/functions/lib/ai-providers.mjs?trunc=${Math.random()}`);
+    await assert.rejects(
+      () => mod.callModel('p', 'claude-sonnet-5'),
+      /max_tokens before writing an answer/,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+    process.env = env;
+  }
 });
