@@ -9,13 +9,13 @@ import { addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLID
 // used it (the hashtag panel) now goes through reports.js loadPosts().
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory } from './auth.js';
 import { publishSlideshow } from './publish.js';
-import { fetchScenes, fetchTriviaPost, fetchRoles, fetchBlurbs, fetchYearSnapshot } from './autopilot.js';
+import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot } from './autopilot.js';
 import { parseMovieName } from './filename.js';
 import { composeToCanvas, composeSlide, captionFontReady } from './compose.js';
 import {
   FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, renumberYearEntries,
-  relativeTime, projectDisplayName, pickOutro, matchesSearch,
+  relativeTime, projectDisplayName, pickOutro, nextOutro, isIntroSlide, isOutroSlide, matchesSearch,
 } from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
@@ -1171,6 +1171,10 @@ els.autopilot.addEventListener('click', async () => {
       slides = addSlide(slides, {
         id: String(nextId++), bitmap, blob: null,
         caption: scenes[i].caption, timecode: scenes[i].timecode, grabHint: scenes[i].grab || '', fontScale: 1,
+        // includeTitleSlide above means the first item is the intro, not a
+        // fact. Marking it is what lets its editor buttons differ from a
+        // fact's — an unmarked intro gets rewritten as another fact.
+        kind: i === 0 ? 'title' : null,
       });
       added++;
     }
@@ -2082,27 +2086,63 @@ function renderSlide(slide, index) {
 
   toolbar.append(pickBtn, ...(photoSearch ? [photoSearch] : []), ...(insertBtn ? [insertBtn] : []), fontDown, fontUp);
 
-  if (isTrivia) {
-    // Two AI actions, no prompt: one rewrites this fact, the other creates a
-    // new one (new frame). Both run on Opus.
-    const rewriteBtn = tbBtn('auto_awesome', 'Rewrite this fact', 'New wording for this same fact, keeps the frame', 'text-fuchsia-300');
-    const newFactBtn = tbBtn('refresh', 'Create a new fact', 'A different fact, with a new frame');
+  if (isTrivia && isOutroSlide(slide)) {
+    // The sign-off is house copy from a fixed pool, so "another one" is a pool
+    // pick, not a model call: there is nothing here for an LLM to know, and
+    // paying Opus to re-say "follow VHS Garage" would be silly.
+    const swapBtn = tbBtn('auto_awesome', 'Try another sign-off', 'A different closing line from the set', 'text-fuchsia-300');
+    swapBtn.addEventListener('click', () => {
+      const line = nextOutro(project?.format, slide.caption);
+      slides = editCaption(slides, slide.id, line);
+      ta.value = line;
+      redrawThumb();
+      markDirty();
+      els.status.textContent = 'New sign-off.';
+    });
+    toolbar.append(swapBtn);
+  } else if (isTrivia) {
+    // The intro is a different writing job from a fact: it opens the post
+    // rather than paying one off, so it gets its own prompt on the server and
+    // has no "new fact" twin (its frame is the title card, which does not
+    // move). Everything else on the slideshow is a fact and keeps both.
+    const isIntro = isIntroSlide(slide, index, project?.format);
+    const rewriteBtn = isIntro
+      ? tbBtn('auto_awesome', 'Rewrite the intro', 'A fresh opening line, keeps the title card', 'text-fuchsia-300')
+      : tbBtn('auto_awesome', 'Rewrite this fact', 'New wording for this same fact, keeps the frame', 'text-fuchsia-300');
+    const newFactBtn = isIntro ? null : tbBtn('refresh', 'Create a new fact', 'A different fact, with a new frame');
+    const btns = [rewriteBtn, ...(newFactBtn ? [newFactBtn] : [])];
 
     const runAi = async (mode) => {
       if (aiBusy) return;
       if (mode === 'newFact' && !videoReady) { els.status.textContent = 'Load the movie file first — a new fact needs a new frame.'; return; }
       setAiBusy(true);
       const ticket = project?.id; // bail if the user opens another project mid-job
-      rewriteBtn.disabled = true; newFactBtn.disabled = true;
+      for (const b of btns) b.disabled = true;
       try {
-        if (mode === 'rewrite') {
+        if (mode === 'rewrite' && isIntro) {
+          // A fresh opener; the title card stays. Every other caption goes in
+          // as "already used" so the new intro can neither repeat itself nor
+          // spoil a fact the slides are about to pay off.
+          els.status.textContent = 'Rewriting the intro…';
+          const scene = await fetchTitleSlide({
+            title: movie.title || project.name, year: movie.year,
+            durationSeconds: els.video.duration || 7200,
+            exclude: slides.map((s) => s.caption),
+            onProgress: (m) => { els.status.textContent = `Rewriting the intro — ${m}`; },
+          });
+          if (project?.id !== ticket) return;
+          slides = editCaption(slides, slide.id, scene.caption);
+          ta.value = scene.caption;
+          redrawThumb();
+          els.status.textContent = 'Intro rewritten.';
+        } else if (mode === 'rewrite') {
           // A fresh take on THIS fact; the frame stays.
           els.status.textContent = 'Rewriting this fact…';
           const exclude = slides.filter((s) => s.id !== slide.id).map((s) => s.caption);
           const [scene] = await fetchScenes({
             title: movie.title || project.name, year: movie.year,
             durationSeconds: els.video.duration || 7200,
-            count: 1, exclude, focusTimecode: slide.timecode, model: 'claude-opus-4-8',
+            count: 1, exclude, focusTimecode: slide.timecode,
             onProgress: (m) => { els.status.textContent = `Rewriting this fact — ${m}`; },
           });
           if (project?.id !== ticket) return;
@@ -2116,7 +2156,7 @@ function renderSlide(slide, index) {
           const exclude = slides.map((s) => s.caption);
           const [scene] = await fetchScenes({
             title: movie.title, year: movie.year, durationSeconds: els.video.duration,
-            count: 1, exclude, model: 'claude-opus-4-8',
+            count: 1, exclude,
             onProgress: (m) => { els.status.textContent = `Creating a new fact — ${m}`; },
           });
           if (project?.id !== ticket) return;
@@ -2134,12 +2174,12 @@ function renderSlide(slide, index) {
         els.status.textContent = err.message;
       } finally {
         setAiBusy(false);
-        rewriteBtn.disabled = false; newFactBtn.disabled = false;
+        for (const b of btns) b.disabled = false;
       }
     };
     rewriteBtn.addEventListener('click', () => runAi('rewrite'));
-    newFactBtn.addEventListener('click', () => runAi('newFact'));
-    toolbar.append(rewriteBtn, newFactBtn);
+    newFactBtn?.addEventListener('click', () => runAi('newFact'));
+    toolbar.append(...btns);
   } else if (slide.role) {
     // Some Guys: rewrite this role's blurb (title/outro slides have no role).
     const rewriteBtn = tbBtn('auto_awesome', 'Rewrite blurb', 'A fresh blurb for this role', 'text-cyan-300');

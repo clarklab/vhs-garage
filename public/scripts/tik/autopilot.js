@@ -117,6 +117,27 @@ export async function fetchScenes(opts = {}) {
   return suggestions;
 }
 
+// The intro slide only. Its own call because the intro is a different writing
+// job from a trivia fact: rewriting it through fetchScenes produced another
+// fact, which is exactly what it must not be.
+//
+// opts: { title, year, durationSeconds, exclude?, model?, onProgress? }
+// Returns one { caption, timecode, grab }.
+export async function fetchTitleSlide(opts = {}) {
+  const data = await runJob({
+    kind: 'trivia',
+    titleOnly: true,
+    title: opts.title,
+    year: opts.year,
+    durationSeconds: opts.durationSeconds || 0,
+    exclude: opts.exclude || [],
+    model: opts.model,
+  }, opts.onProgress);
+  const [scene] = data.suggestions || [];
+  if (!scene?.caption) throw new Error(data.error || 'The AI couldn’t rewrite the intro — try again.');
+  return scene;
+}
+
 // opts: { actor, count?, exclude?, model?, onProgress? }
 // Returns [{ movie, year, role, hook }]. Throws a clear message on failure.
 export async function fetchRoles(opts = {}) {
