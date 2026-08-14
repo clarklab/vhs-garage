@@ -90,7 +90,7 @@ const els = {
   statsLegend: $('stats-legend'),
   libraryFilters: $('library-filters'), libraryViews: $('library-views'),
   librarySearch: $('library-search'),
-  homeNav: $('home-nav'), tabPosts: $('tab-posts'), tabStats: $('tab-stats'), tabModels: $('tab-models'),
+  homeNav: $('home-nav'), homeLink: $('home-link'), tabPosts: $('tab-posts'), tabStats: $('tab-stats'), tabModels: $('tab-models'),
   // slides pane
   count: $('slide-count'), list: $('slide-list'), addScene: $('add-scene'), slidesHint: $('slides-hint'),
   imgFile: $('img-file-input'),
@@ -321,6 +321,27 @@ async function teardownProject() {
   setSaveState('off');
 }
 
+// Leaving whatever screen you are on for a home tab.
+//
+// The nav sits in the app bar, so it is on screen from the editor, batch mode
+// and reports too — clicking it there used to toggle a hidden panel and appear
+// to do nothing, while the editor's #p/<id> stayed in the address bar. Routing
+// through goHome() is what makes it navigation: it saves the open project,
+// tears it down, and drops the hash.
+async function goToHomeTab(tab) {
+  const inEditor = !els.editor.classList.contains('hidden');
+  if (inEditor && aiBusy && !confirm('An AI job is still running — leave this project anyway?')) return;
+  // Remember the choice first, so goHome() restores the tab that was asked for
+  // rather than the one from last session.
+  homeTab = HOME_TABS.includes(tab) ? tab : 'posts';
+  localStorage.setItem(LS_HOME_TAB, homeTab);
+  if (!els.home.classList.contains('hidden')) {
+    showHomeTab(homeTab); // already home: just switch panels
+    return;
+  }
+  await goHome();
+}
+
 async function goHome() {
   openSeq++; // abort any in-flight openProject load
   if (project && dirty) {
@@ -540,7 +561,11 @@ function showHomeTab(tab) {
 }
 els.homeNav.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-tab]');
-  if (btn) showHomeTab(btn.dataset.tab);
+  if (btn) goToHomeTab(btn.dataset.tab).catch((err) => console.error('[tik] nav failed:', err));
+});
+// The wordmark is the other way home, the way every site's logo is.
+els.homeLink.addEventListener('click', () => {
+  goToHomeTab('posts').catch((err) => console.error('[tik] nav failed:', err));
 });
 
 // Library view state. Persisted because a view preference you have to re-pick

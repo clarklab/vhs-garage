@@ -51,8 +51,10 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
   <div id="studio" class="min-h-screen bg-neutral-950 text-neutral-100 antialiased">
     <!-- App bar -->
     <header class="sticky top-0 z-20 flex items-center gap-3 border-b border-neutral-800/80 bg-neutral-950/90 px-4 py-2.5 backdrop-blur">
-      <img src="/images/vhs-garage-logo-square.png" alt="VHS Garage" class="h-6 w-6 rounded" />
-      <h1 class="text-sm font-extrabold tracking-tight">VHS Studio</h1>
+      <button id="home-link" title="Back to your posts" class="flex items-center gap-3 rounded-md text-left hover:opacity-80">
+        <img src="/images/vhs-garage-logo-square.png" alt="VHS Garage" class="h-6 w-6 rounded" />
+        <h1 class="text-sm font-extrabold tracking-tight">VHS Studio</h1>
+      </button>
       <nav id="home-nav" class="flex items-center gap-0.5">
         <button data-tab="posts" class="rounded-md px-2.5 py-1 text-xs font-semibold text-neutral-200">Posts</button>
         <button data-tab="stats" class="rounded-md px-2.5 py-1 text-xs font-semibold text-neutral-500">Stats</button>
