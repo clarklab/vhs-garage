@@ -53,7 +53,11 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
     <header class="sticky top-0 z-20 flex items-center gap-3 border-b border-neutral-800/80 bg-neutral-950/90 px-4 py-2.5 backdrop-blur">
       <img src="/images/vhs-garage-logo-square.png" alt="VHS Garage" class="h-6 w-6 rounded" />
       <h1 class="text-sm font-extrabold tracking-tight">VHS Studio</h1>
-      <span class="hidden text-xs text-neutral-500 sm:inline">TikTok slideshow maker</span>
+      <nav id="home-nav" class="flex items-center gap-0.5">
+        <button data-tab="posts" class="rounded-md px-2.5 py-1 text-xs font-semibold text-neutral-200">Posts</button>
+        <button data-tab="stats" class="rounded-md px-2.5 py-1 text-xs font-semibold text-neutral-500">Stats</button>
+        <button data-tab="models" class="rounded-md px-2.5 py-1 text-xs font-semibold text-neutral-500">Models</button>
+      </nav>
       <div class="ml-auto flex items-center gap-3">
         <span id="save-state" class="hidden items-center gap-1.5 text-xs text-neutral-400">
           <span id="save-dot" class="h-1.5 w-1.5 rounded-full bg-neutral-600"></span>
@@ -66,7 +70,15 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
 
     <!-- ============ HOME ============ -->
     <section id="screen-home" class="mx-auto w-full max-w-5xl px-4 py-8">
-      <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">New TikTok</h2>
+      <!-- ---- POSTS ---- -->
+      <div id="tab-posts">
+      <label class="relative block">
+        <span class="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] leading-none text-neutral-600">search</span>
+        <input id="library-search" type="search" autocomplete="off" placeholder="Search your posts and drafts…"
+               class="w-full rounded-xl border border-neutral-800 bg-neutral-900 py-2.5 pl-10 pr-3 text-sm text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none" />
+      </label>
+
+      <h2 class="mt-8 text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">New TikTok</h2>
       <div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <button id="new-trivia" class="group relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900 p-5 text-left transition hover:border-amber-400/60">
           <div class="tape-lines pointer-events-none absolute inset-0 opacity-40"></div>
@@ -125,6 +137,33 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
         </button>
       </div>
 
+      <div class="mt-10 flex flex-wrap items-center justify-between gap-3">
+        <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Open</h2>
+        <div class="flex items-center gap-3">
+          <!-- Counts double as filters: the number is the useful part, and once
+               it is on screen it may as well be clickable. -->
+          <div id="library-filters" class="flex items-center gap-1"></div>
+          <div id="library-views" class="inline-flex overflow-hidden rounded-lg border border-neutral-800">
+            <button data-view="large" title="Large grid" class="px-2 py-1 leading-none text-neutral-500">
+              <span class="material-symbols-outlined text-[16px] leading-none">grid_view</span>
+            </button>
+            <button data-view="grid" title="Compact grid" class="border-l border-neutral-800 px-2 py-1 leading-none text-neutral-500">
+              <span class="material-symbols-outlined text-[16px] leading-none">apps</span>
+            </button>
+            <button data-view="list" title="List" class="border-l border-neutral-800 px-2 py-1 leading-none text-neutral-500">
+              <span class="material-symbols-outlined text-[16px] leading-none">view_list</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="project-grid" class="mt-3"></div>
+      <p id="library-empty" class="mt-3 hidden rounded-xl border border-dashed border-neutral-800 p-8 text-center text-sm text-neutral-500">
+        Nothing saved yet — drafts and posted TikToks land here automatically as you work.
+      </p>
+      </div><!-- /tab-posts -->
+
+      <!-- ---- STATS ---- -->
+      <div id="tab-stats" class="hidden">
       <!-- Followers chart: current count from TikTok, history snapshotted per
            visit (TikTok has no history API, so the line grows from day one). -->
       <div id="stats-card" class="mt-10 hidden rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
@@ -194,29 +233,13 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
         </div>
       </div>
 
-      <div class="mt-10 flex flex-wrap items-center justify-between gap-3">
-        <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Open</h2>
-        <div class="flex items-center gap-3">
-          <!-- Counts double as filters: the number is the useful part, and once
-               it is on screen it may as well be clickable. -->
-          <div id="library-filters" class="flex items-center gap-1"></div>
-          <div id="library-views" class="inline-flex overflow-hidden rounded-lg border border-neutral-800">
-            <button data-view="large" title="Large grid" class="px-2 py-1 leading-none text-neutral-500">
-              <span class="material-symbols-outlined text-[16px] leading-none">grid_view</span>
-            </button>
-            <button data-view="grid" title="Compact grid" class="border-l border-neutral-800 px-2 py-1 leading-none text-neutral-500">
-              <span class="material-symbols-outlined text-[16px] leading-none">apps</span>
-            </button>
-            <button data-view="list" title="List" class="border-l border-neutral-800 px-2 py-1 leading-none text-neutral-500">
-              <span class="material-symbols-outlined text-[16px] leading-none">view_list</span>
-            </button>
-          </div>
-        </div>
-      </div>
-      <div id="project-grid" class="mt-3"></div>
-      <p id="library-empty" class="mt-3 hidden rounded-xl border border-dashed border-neutral-800 p-8 text-center text-sm text-neutral-500">
-        Nothing saved yet — drafts and posted TikToks land here automatically as you work.
-      </p>
+      </div><!-- /tab-stats -->
+
+      <!-- ---- MODELS ---- -->
+      <!-- A readme for every model call: which model, what for, what it costs.
+           Rendered from public/scripts/tik/modelmap.js, whose numbers are
+           asserted against the constants the code actually sends. -->
+      <div id="tab-models" class="hidden"></div>
     </section>
 
     <!-- ============ REPORTS ============

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   FORMATS, YEAR_LISTS, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, relativeTime, projectDisplayName,
-  YEAR_LIST_SIZE, numberWord, renumberYearEntries,
+  YEAR_LIST_SIZE, numberWord, renumberYearEntries, matchesSearch,
 } from '../../public/scripts/tik/project.js';
 import { houseSetByKey } from '../../public/scripts/tik/hashtags.js';
 
@@ -276,4 +276,53 @@ test('makeProject starts with empty post meta, not undefined', () => {
   const p = makeProject({ id: 'x', format: 'trivia', now: 0 });
   assert.equal(p.postMeta, null);
   assert.equal(p.hashtagSet, null);
+});
+
+// ---- library search ----
+
+const rec = (over = {}) => ({
+  format: 'trivia', name: 'Forrest Gump (1994)', status: 'draft',
+  movie: { title: 'Forrest Gump', year: '1994', query: 'Forrest Gump' },
+  postTitle: 'Forrest Gump (1994) — movie trivia & behind-the-scenes facts',
+  ...over,
+});
+
+test('matchesSearch finds a project by name, film, or year', () => {
+  for (const q of ['forrest', 'GUMP', '1994', 'forrest gump']) {
+    assert.equal(matchesSearch(rec(), q), true, `missed on "${q}"`);
+  }
+});
+
+test('every token must hit — more words narrow, not widen', () => {
+  // The OR bug would return this for any query containing one common word.
+  assert.equal(matchesSearch(rec(), 'forrest jaws'), false);
+  assert.equal(matchesSearch(rec(), 'forrest 1994'), true);
+});
+
+test('matchesSearch finds by format and by status', () => {
+  assert.equal(matchesSearch(rec(), 'tape trivia'), true);
+  assert.equal(matchesSearch(rec(), 'draft'), true);
+  assert.equal(matchesSearch(rec({ status: 'posted' }), 'posted'), true);
+  assert.equal(matchesSearch(rec({ status: 'posted' }), 'draft'), false);
+});
+
+test('matchesSearch reaches the other two formats', () => {
+  const guys = { format: 'guys', name: 'Dick Miller', actor: 'Dick Miller', status: 'draft' };
+  const year = { format: 'year', name: '1985', year: 1985, status: 'posted' };
+  assert.equal(matchesSearch(guys, 'miller'), true);
+  assert.equal(matchesSearch(guys, 'guys'), true, 'the format label should be searchable');
+  assert.equal(matchesSearch(year, '1985'), true);
+  assert.equal(matchesSearch(year, 'snapshot'), true);
+});
+
+test('an empty query matches everything rather than nothing', () => {
+  for (const q of ['', '   ', null, undefined]) {
+    assert.equal(matchesSearch(rec(), q), true, `hid everything on ${JSON.stringify(q)}`);
+  }
+});
+
+test('matchesSearch never throws on a half-built record', () => {
+  for (const r of [{}, { format: 'nope' }, null]) {
+    assert.equal(typeof matchesSearch(r, 'x'), 'boolean');
+  }
 });
