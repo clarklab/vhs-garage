@@ -186,6 +186,45 @@ export function pickOutro(format, r = Math.random()) {
   return OUTRO_TEMPLATES[Math.floor(n * OUTRO_TEMPLATES.length)](more);
 }
 
+// Is this slide the intro rather than a fact?
+//
+// Sets written from now on mark it (`kind: 'title'`). Sets already in the
+// library do not, and they are the ones the user is editing today, so fall
+// back to what the intro uniquely looks like: first in a trivia set, with a
+// two-line caption (the film name, then the opener). A fact caption is a
+// single statement and never carries a newline, which is what makes the
+// fallback safe; a slide that has any `kind` at all is trusted outright.
+export function isIntroSlide(slide, index, format = 'trivia') {
+  if (!slide) return false;
+  if (slide.kind) return slide.kind === 'title';
+  return format === 'trivia' && index === 0 && /\n/.test(String(slide.caption || ''));
+}
+
+// Is this slide the branded sign-off? Same story as isIntroSlide: trust the
+// marker when there is one, and otherwise recognize the follow line, which
+// every template in the pool ends with and no caption ever contains.
+export function isOutroSlide(slide) {
+  if (!slide) return false;
+  if (slide.kind) return slide.kind === 'outro';
+  return /Follow VHS Garage/i.test(String(slide.caption || ''));
+}
+
+// A sign-off that is not the one already on the slide.
+//
+// The outro is canned copy, so "give me another one" is a pool pick, not a
+// model call — there is nothing for an LLM to know here. Excluding the current
+// line matters because a random pick out of ten silently returns the same line
+// about a tenth of the time, and a button that appears to do nothing reads as
+// broken. Falls back to a plain pick if the pool holds nothing else.
+export function nextOutro(format, current, r = Math.random()) {
+  const more = OUTRO_MORE[format] || OUTRO_MORE.trivia;
+  const lines = OUTRO_TEMPLATES.map((t) => t(more));
+  const others = lines.filter((l) => l !== String(current ?? '').trim());
+  const pool = others.length ? others : lines;
+  const n = Number.isFinite(r) ? Math.min(0.999999, Math.max(0, r)) : Math.random();
+  return pool[Math.floor(n * pool.length)];
+}
+
 // Does this project match a search box query?
 //
 // Every token has to hit something (AND, not OR): typing more words should

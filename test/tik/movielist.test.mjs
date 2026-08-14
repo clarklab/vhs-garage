@@ -199,6 +199,60 @@ test('pickOutro tails the follow line per format', () => {
   });
 });
 
+test('nextOutro never hands back the line already on the slide', async () => {
+  const { pickOutro, nextOutro, OUTRO_COUNT } = await import('../../public/scripts/tik/project.js');
+  // Walk the whole pool: from every line, every draw is a different line.
+  for (let i = 0; i < OUTRO_COUNT; i++) {
+    const current = pickOutro('trivia', i / OUTRO_COUNT);
+    for (let j = 0; j < OUTRO_COUNT; j++) {
+      const next = nextOutro('trivia', current, j / OUTRO_COUNT);
+      assert.notEqual(next, current, `repeated from #${i} at r=${j}`);
+      assert.match(next, /Follow VHS Garage/);
+    }
+  }
+});
+
+test('nextOutro follows the format and survives junk input', async () => {
+  const { nextOutro } = await import('../../public/scripts/tik/project.js');
+  assert.match(nextOutro('guys', '', 0), /more forgotten legends/);
+  for (const cur of [null, undefined, '', 'not from the pool']) {
+    assert.equal(typeof nextOutro('trivia', cur, 0.5), 'string', `broke on ${cur}`);
+  }
+  for (const r of [0, 0.999999, 1, 1.5, -3, NaN]) {
+    assert.equal(typeof nextOutro('trivia', '', r), 'string', `broke on r=${r}`);
+  }
+});
+
+// ---- which slide is this? ----
+
+test('a marked slide is taken at its word', async () => {
+  const { isIntroSlide, isOutroSlide } = await import('../../public/scripts/tik/project.js');
+  assert.ok(isIntroSlide({ kind: 'title', caption: 'Jaws (1975)\nOpener' }, 0));
+  assert.ok(isOutroSlide({ kind: 'outro', caption: 'Follow VHS Garage for more' }));
+  // A marked fact is neither, even sitting in position 0 with a two-line caption.
+  const fact = { kind: null, caption: 'x' };
+  assert.ok(!isIntroSlide({ ...fact, kind: 'outro' }, 0));
+  assert.ok(!isOutroSlide({ ...fact, kind: 'title' }));
+});
+
+test('an unmarked slide from an older project is still recognized', async () => {
+  const { isIntroSlide, isOutroSlide, pickOutro } = await import('../../public/scripts/tik/project.js');
+  // Sets built before the markers existed: the intro is first and two lines,
+  // the outro carries the follow line, a fact is one statement.
+  assert.ok(isIntroSlide({ caption: 'Jaws (1975)\nYou need a bigger boat.' }, 0));
+  assert.ok(isOutroSlide({ caption: pickOutro('trivia', 0) }));
+  assert.ok(!isIntroSlide({ caption: 'The shark was named Bruce.' }, 0));
+  assert.ok(!isOutroSlide({ caption: 'The shark was named Bruce.' }));
+});
+
+test('the intro fallback does not fire off the top of a trivia set', async () => {
+  const { isIntroSlide } = await import('../../public/scripts/tik/project.js');
+  const intro = { caption: 'Jaws (1975)\nYou need a bigger boat.' };
+  assert.ok(!isIntroSlide(intro, 1), 'only position 0 can be the intro');
+  assert.ok(!isIntroSlide(intro, 0, 'guys'), 'guys sets mark their own title slide');
+  assert.ok(!isIntroSlide(null, 0));
+});
+
 test('pickOutro clamps a junk r instead of returning undefined', () => {
   return import('../../public/scripts/tik/project.js').then(({ pickOutro }) => {
     for (const r of [0, 0.999999, 1, 1.5, -3, NaN]) {

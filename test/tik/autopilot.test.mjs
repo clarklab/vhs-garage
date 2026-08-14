@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  AUTOPILOT_COUNT, buildAutopilotPrompt, normalizeSuggestions, normalizeMeta, META_HOOK_MAX,
+  AUTOPILOT_COUNT, buildAutopilotPrompt, buildTitleSlidePrompt, normalizeSuggestions, normalizeMeta, META_HOOK_MAX,
   clampText, CAPTION_TARGET, CAPTION_MAX, META_HOOK_TARGET,
 } from '../../netlify/functions/lib/autopilot.mjs';
 
@@ -52,17 +52,19 @@ test('buildAutopilotPrompt embeds source material when provided, omits when abse
   assert.doesNotMatch(p2, /<source_material>/);
 });
 
-test('title slide invites engagement (favorite scene/fact/quote), no challenge framing', () => {
+test('title slide asks for a reply, but not a generic or challenge one', () => {
   const p = buildAutopilotPrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440, includeTitleSlide: true });
-  assert.match(p, /favorite scene, fact, or quote/i);
-  assert.match(p, /Invite the viewer to comment/i);
+  assert.match(p, /THE ASK/);
+  assert.match(p, /invitation to reply/i);
   assert.match(p, /do not give away or reference any of the trivia facts/i);
+  // The generic ask is what made this beat feel like filler: name the thing
+  // being asked about, or don't ask.
+  assert.match(p, /the line they quote most/i);
+  assert.match(p, /Never a bare "what's your favorite scene"/i);
+  assert.match(p, /never the words "let's connect"/i);
   // Still not a "how many did you know" quiz/challenge, and doesn't tease a specific fact.
   assert.doesNotMatch(p, /TEASES the final fact/);
   assert.doesNotMatch(p, /how many of these/i);
-  // The title slide is exempt from the trivia "no questions" rule, and the ask
-  // is the ONLY beat allowed to use it.
-  assert.match(p, /the only place the title slide may ask a question/i);
 });
 
 test('buildAutopilotPrompt lists excluded trivia to avoid repeats', () => {
@@ -378,18 +380,65 @@ test('the prompt states the target and never the accept ceiling', () => {
   assert.doesNotMatch(p, new RegExp(`${CAPTION_MAX} characters`));
 });
 
-test('the title slide opens on the film, not on a generic compliment', () => {
-  // The order is the whole point: a recognizable quote or moment first, one
-  // knowing aside second, the ask last. A slide that opens with "this movie is
-  // beloved" reads like a stranger describing it.
+test('the title slide opens on something concrete from the film', () => {
   const p = buildAutopilotPrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440, includeTitleSlide: true });
-  assert.match(p, /OPEN WITH THE FILM ITSELF/);
-  assert.match(p, /THEN ONE KNOWING ASIDE/);
-  assert.match(p, /THEN THE ASK/);
+  assert.match(p, /ONE CONCRETE THING FROM THE FILM/);
+  assert.match(p, /THE ASK/);
   assert.match(p, /famous line of dialogue in quotation marks/i);
-  assert.match(p, /Never open with a generic line about the movie being great or beloved/i);
-  assert.match(p, /fan talking to other fans/i);
-  assert.match(p, /proves you have actually watched it/i);
-  // Still not a plot summary for someone who hasn't seen it.
-  assert.match(p, /never a plot summary/i);
+  assert.match(p, /State it flat, with no wind-up/i);
+  // Two sentences, not three beats: the middle "knowing aside" was where the
+  // verbosity and the try-hard voice lived.
+  assert.match(p, /TWO short sentences and nothing else/);
+  assert.match(p, /under about 140 characters/i);
+  // Still not a plot summary, and still not a review.
+  assert.match(p, /Plot summary, or explaining the film to somebody who has not seen it/i);
+  assert.match(p, /Praising the film/i);
+});
+
+test('the title slide bans the "everyone remembers X but nobody remembers Y" hinge', () => {
+  // This construction showed up on nearly every set and says nothing. It is
+  // banned by name, along with the variants the model reaches for next.
+  const p = buildAutopilotPrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440, includeTitleSlide: true });
+  assert.match(p, /everyone remembers X but nobody remembers Y/i);
+  for (const variant of ['we all remember', 'you forgot about', 'nobody talks about']) {
+    assert.ok(p.includes(variant), `banned-list is missing "${variant}"`);
+  }
+  assert.match(p, /you probably never noticed/i);
+});
+
+test('the intro prompt and the first-draft intro are written to the same rules', () => {
+  // Two copies of these rules would drift, and a rewrite that follows
+  // different rules than the draft is exactly what the user notices.
+  const draft = buildAutopilotPrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440, includeTitleSlide: true });
+  const rewrite = buildTitleSlidePrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440 });
+  const rules = rewrite.slice(rewrite.indexOf('Its caption is'), rewrite.indexOf('Its "timecode"'));
+  assert.ok(rules.length > 500, 'did not find the shared rules block');
+  assert.ok(draft.includes(rules.trim()), 'the two prompts carry different intro rules');
+});
+
+test('buildTitleSlidePrompt asks for the intro alone, not another fact', () => {
+  const p = buildTitleSlidePrompt({ title: 'Jaws', year: '1975', durationSeconds: 7440 });
+  assert.match(p, /OPENING slide/);
+  assert.match(p, /<film>Jaws \(1975\)<\/film>/);
+  assert.match(p, /TITLE CARD/);
+  // No trivia instructions leak in: this call must not produce a fact.
+  assert.doesNotMatch(p, /trivia item/i);
+  assert.doesNotMatch(p, /behind-the-scenes production facts/i);
+  assert.match(p, /Return ONLY valid JSON/);
+});
+
+test('buildTitleSlidePrompt feeds back the wording already on the post', () => {
+  const p = buildTitleSlidePrompt({
+    title: 'Jaws', durationSeconds: 7440,
+    exclude: ['Jaws (1975)\nYou need a bigger boat.', '', 'The shark was named Bruce'],
+  });
+  assert.match(p, /Already used on this post/i);
+  assert.match(p, /You need a bigger boat/);
+  assert.match(p, /The shark was named Bruce/);   // also blocks spoiling a slide
+  assert.doesNotMatch(p, /- \n/);                 // the empty entry is dropped
+});
+
+test('buildTitleSlidePrompt without exclusions has no dangling block', () => {
+  const p = buildTitleSlidePrompt({ title: 'Jaws', durationSeconds: 7440 });
+  assert.doesNotMatch(p, /Already used on this post/i);
 });

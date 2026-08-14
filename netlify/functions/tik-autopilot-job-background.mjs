@@ -12,7 +12,7 @@
 // - 'blurbs': slide blurbs for picked roles       → { intro, blurbs }
 // - 'year': one year's two ranked lists           → { intro, rated, boxoffice }
 import { getStore } from '@netlify/blobs';
-import { buildAutopilotPrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
+import { buildAutopilotPrompt, buildTitleSlidePrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
@@ -53,7 +53,7 @@ export default async (req) => {
 
   const {
     jobId, kind = 'trivia',
-    title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta,
+    title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta, titleOnly,
     actor, roles,
     minVotes, ratedGiven, boxofficeGiven,
     model: requested,
@@ -79,7 +79,9 @@ export default async (req) => {
     await sweepOldJobs(store);
 
     // Blurbs run on already-picked roles; no grounding needed there.
-    const source = kind === 'blurbs' ? null : await fetchSource(kind, { title, year, actor }, jobId);
+    // Blurbs need no grounding; an intro rewrite needs none either (it is
+    // written from the film itself, not from production research).
+    const source = (kind === 'blurbs' || titleOnly) ? null : await fetchSource(kind, { title, year, actor }, jobId);
 
     let prompt;
     if (kind === 'roles') {
@@ -94,6 +96,8 @@ export default async (req) => {
         year, count: Number(count) || LIST_COUNT, minVotes, ratedGiven, boxofficeGiven,
         sourceMaterial: source?.text || '', sourceName: source?.pageTitle || '',
       });
+    } else if (titleOnly) {
+      prompt = buildTitleSlidePrompt({ title, year, durationSeconds, exclude });
     } else {
       prompt = buildAutopilotPrompt({
         title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta,
@@ -128,7 +132,7 @@ export default async (req) => {
         ? { ok: true, model, year: normalizeYearInput(year), ...snapshot }
         : { ok: false, model, error: yearFailureReason(raw, parsed) };
     } else {
-      const base = Number(count) || AUTOPILOT_COUNT;
+      const base = titleOnly ? 1 : (Number(count) || AUTOPILOT_COUNT);
       const max = includeTitleSlide ? base + 1 : base;
       const parsed = parseModelJson(raw);
       const suggestions = normalizeSuggestions(parsed, durationSeconds, max);
