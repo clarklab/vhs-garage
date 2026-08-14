@@ -15,7 +15,7 @@ import { composeToCanvas, composeSlide, captionFontReady } from './compose.js';
 import {
   FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, renumberYearEntries,
-  relativeTime, projectDisplayName, pickOutro,
+  relativeTime, projectDisplayName, pickOutro, matchesSearch,
 } from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
@@ -26,6 +26,7 @@ import {
 } from './charts.js';
 import { fetchFollowerStats, renderFollowerChart, fmtCount } from './stats.js';
 import { forecastHtml } from './forecast.js';
+import { modelMapHtml } from './modelmap.js';
 import { tagReport, tagReportHtml } from './tagreport.js';
 // Batch mode (beta) owns its own screen end to end; this file only shows it.
 import { initBatch, refreshBatch } from './batch.js';
@@ -88,6 +89,8 @@ const els = {
   statsModes: $('stats-modes'), statsStyles: $('stats-styles'), statsForecast: $('stats-forecast'),
   statsLegend: $('stats-legend'),
   libraryFilters: $('library-filters'), libraryViews: $('library-views'),
+  librarySearch: $('library-search'),
+  homeNav: $('home-nav'), tabPosts: $('tab-posts'), tabStats: $('tab-stats'), tabModels: $('tab-models'),
   // slides pane
   count: $('slide-count'), list: $('slide-list'), addScene: $('add-scene'), slidesHint: $('slides-hint'),
   imgFile: $('img-file-input'),
@@ -331,6 +334,7 @@ async function goHome() {
   await teardownProject();
   history.replaceState({}, '', location.pathname + location.search);
   showScreen('home');
+  showHomeTab(homeTab);
   refreshStatsCard(); // non-blocking; errors handled inside
   await renderLibrary();
 }
@@ -504,6 +508,41 @@ function formatBadge(rec) {
   return `<span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${f.chip}">${f.label}</span>`;
 }
 
+// ---- home tabs ----
+//
+// Posts, Stats and Models are three views of the same screen rather than three
+// screens, so the editor's back button still has one place to return to.
+const LS_HOME_TAB = 'tik_home_tab';
+const HOME_TABS = ['posts', 'stats', 'models'];
+let homeTab = HOME_TABS.includes(localStorage.getItem(LS_HOME_TAB))
+  ? localStorage.getItem(LS_HOME_TAB) : 'posts';
+let modelsRendered = false;
+
+function showHomeTab(tab) {
+  homeTab = HOME_TABS.includes(tab) ? tab : 'posts';
+  localStorage.setItem(LS_HOME_TAB, homeTab);
+  els.tabPosts.classList.toggle('hidden', homeTab !== 'posts');
+  els.tabStats.classList.toggle('hidden', homeTab !== 'stats');
+  els.tabModels.classList.toggle('hidden', homeTab !== 'models');
+  for (const btn of els.homeNav.querySelectorAll('button')) {
+    const on = btn.dataset.tab === homeTab;
+    btn.classList.toggle('bg-neutral-800', on);
+    btn.classList.toggle('text-neutral-100', on);
+    btn.classList.toggle('text-neutral-500', !on);
+  }
+  // The chart measures 0 wide while its panel is hidden, so it can only be
+  // drawn once Stats is actually on screen.
+  if (homeTab === 'stats' && lastStatsSeries) drawStats(lastStatsSeries, { animate: true });
+  if (homeTab === 'models' && !modelsRendered) {
+    els.tabModels.innerHTML = modelMapHtml();
+    modelsRendered = true;
+  }
+}
+els.homeNav.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-tab]');
+  if (btn) showHomeTab(btn.dataset.tab);
+});
+
 // Library view state. Persisted because a view preference you have to re-pick
 // every visit is not a preference.
 const LS_LIB_VIEW = 'tik_library_view';
@@ -512,6 +551,15 @@ const LIB_VIEWS = ['large', 'grid', 'list'];
 let libView = LIB_VIEWS.includes(localStorage.getItem(LS_LIB_VIEW)) ? localStorage.getItem(LS_LIB_VIEW) : 'grid';
 let libFilter = ['all', 'draft', 'posted'].includes(localStorage.getItem(LS_LIB_FILTER))
   ? localStorage.getItem(LS_LIB_FILTER) : 'all';
+
+// Live search over the library. Deliberately not persisted: a filter that
+// survives a reload leaves you staring at three of your forty drafts with no
+// memory of why.
+let librarySearch = '';
+els.librarySearch.addEventListener('input', () => {
+  librarySearch = els.librarySearch.value;
+  renderLibrary();
+});
 
 const GRID_CLASS = {
   large: 'mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3',
@@ -573,6 +621,11 @@ async function renderLibrary() {
     els.libraryEmpty.classList.remove('hidden');
     return;
   }
+  // Search first, so the pills count what you can actually see. A search that
+  // says "12 drafts" while showing two is worse than no counts at all.
+  const q = librarySearch.trim().toLowerCase();
+  if (q) list = list.filter((r) => matchesSearch(r, q));
+
   const counts = {
     all: list.length,
     draft: list.filter((r) => r.status !== 'posted').length,
@@ -587,6 +640,11 @@ async function renderLibrary() {
     : list.filter((r) => (libFilter === 'posted') === (r.status === 'posted'));
   els.grid.className = GRID_CLASS[libView] || GRID_CLASS.grid;
   els.libraryEmpty.classList.toggle('hidden', shown.length > 0);
+  if (!shown.length) {
+    els.libraryEmpty.textContent = q
+      ? `Nothing matches “${librarySearch.trim()}”.`
+      : 'Nothing saved yet — drafts and posted TikToks land here automatically as you work.';
+  }
 
   const listView = libView === 'list';
   for (const rec of shown) {

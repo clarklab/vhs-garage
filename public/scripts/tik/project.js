@@ -186,6 +186,34 @@ export function pickOutro(format, r = Math.random()) {
   return OUTRO_TEMPLATES[Math.floor(n * OUTRO_TEMPLATES.length)](more);
 }
 
+// Does this project match a search box query?
+//
+// Every token has to hit something (AND, not OR): typing more words should
+// narrow the list, which is what a search box is for. Matching is on the things
+// a person would actually type — the name, the film, the actor, the year, the
+// post title — plus the format label, so "guys" finds the Some Guys sets.
+//
+// Substring rather than fuzzy: with a library of tens of items, a fuzzy match
+// that surfaces "The Thing" for "gump" is noise, not help.
+export function projectSearchText(rec) {
+  const fmt = FORMATS[rec?.format] || FORMATS.trivia;
+  return [
+    rec?.name,
+    rec?.movie?.title, rec?.movie?.year, rec?.movie?.query,
+    rec?.actor, rec?.year,
+    rec?.postTitle,
+    fmt.label, fmt.key,
+    rec?.status === 'posted' ? 'posted' : 'draft',
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+export function matchesSearch(rec, query) {
+  const tokens = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return true;
+  const hay = projectSearchText(rec);
+  return tokens.every((t) => hay.includes(t));
+}
+
 // Slide caption for a picked role: "Movie (Year)" heading line + the blurb
 // (falling back to the picker hook when the model dropped one).
 export function captionForRole(role, blurb = '') {
