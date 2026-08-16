@@ -702,15 +702,16 @@ import { BUILD_ID } from '../utils/build-id.js';
                  the player. Clicking it grabs the CURRENT frame at full
                  video resolution and makes it the picked thumbnail, so
                  the picker in column 2 highlights it immediately.
-                 bottom-14 clears the native controls bar; it's suppressed
-                 in Trim/Shorts mode so it never fights the Full frame
-                 toggle that lives in the same corner. -->
+                 bottom-[76px] clears the native controls bar with room to
+                 spare; it's suppressed in Trim/Shorts mode so it never
+                 fights the Full frame toggle that lives in the same
+                 corner. -->
             <button id="grab-thumb-btn" type="button"
-                    class="hidden absolute bottom-14 right-3 z-20 items-center gap-1.5 px-2.5 py-1.5 bg-black/85 border border-white/40 hover:border-red-500 text-white text-[10px] uppercase tracking-widest transition-opacity duration-150"
+                    class="hidden absolute bottom-[76px] right-3 z-20 items-center gap-2 px-3.5 py-2.5 bg-black/85 border border-white/40 hover:border-red-500 text-white text-xs uppercase tracking-widest transition-opacity duration-150"
                     style="font-family: 'VCR', monospace;"
                     title="Use this exact frame as the thumbnail">
               <!-- Camera/frame pixel glyph -->
-              <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+              <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="m22,6v-1h-6v-1h-1v-1h-6v1h-1v1h-6v1h-1v13h1v1h20v-1h1V6h-1Zm-1,12H3V7h6v-1h1v-1h4v1h1v1h6v11Z"/>
                 <path d="m16,11v-1h-1v-1h-1v-1h-4v1h-1v1h-1v1h-1v4h1v1h1v1h1v1h4v-1h1v-1h1v-1h1v-4h-1Zm-1,4h-1v1h-4v-1h-1v-4h1v-1h4v1h1v4Z"/>
               </svg>
