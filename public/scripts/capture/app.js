@@ -210,6 +210,7 @@ async function startApp() {
   updateUploadCountUI();
   wireMainEditorAutosave();
   wireThumbnailPicker();
+  wireGrabThumb();
   wireLibraryDrag();
   wireLibraryBatchUpload();
   wireLibraryFilter();
@@ -895,6 +896,10 @@ async function analyzeSleevePhotos(frontData, backData) {
       if (info.recordingSpeed) document.getElementById('clip-speed').value = info.recordingSpeed;
       if (info.condition) document.getElementById('clip-condition').value = info.condition;
       if (info.cassetteNotes) document.getElementById('clip-notes').value = info.cassetteNotes;
+      // The AI just filled tape length / speed / condition / notes, which
+      // live behind the collapsed expander — open it so the user sees what
+      // it wrote instead of silently-populated hidden fields.
+      syncTapeDetails();
     }
   } catch (e) {
     console.warn('Sleeve AI analysis failed:', e);
@@ -2140,8 +2145,13 @@ function resetForDemo() {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+  syncTapeDetails();
 
-  // 6. Thumbnail panel: collapse to first-paint placeholder grid.
+  // 6. Thumbnail panel: collapse to first-paint placeholder grid. The demo
+  // seeks the playback element itself, so disarm Grab Thumb too — otherwise
+  // it's armed and waiting the moment the demo hands control back.
+  grabThumbArmed = false;
+  syncGrabThumbBtn();
   document.getElementById('cap-thumb-fieldset')?.classList.add('hidden');
   document.getElementById('player-thumb-empty')?.classList.remove('hidden');
   document.getElementById('player-thumb-loading')?.classList.add('hidden');
@@ -2480,6 +2490,9 @@ async function runDemo() {
     document.getElementById('clip-tape-length').value = 'T-120';
     document.getElementById('clip-speed').value = 'SP';
     document.getElementById('clip-condition').value = 'Good';
+    // Pop the tape-details expander so the demo shows those fields filled
+    // rather than writing into a collapsed block nobody can see.
+    syncTapeDetails();
     document.getElementById('yt-pub-suggestion')?.classList.add('hidden');
     document.getElementById('yt-pub-form')?.classList.remove('hidden');
 
@@ -3553,6 +3566,24 @@ function wireCharCounters() {
   });
 }
 
+// --- Tape details expander ---
+//
+// Tape length / speed / condition / cassette notes sit inside a collapsed
+// <details> so Clip Info stays short and the Publish section below gets the
+// height back. The fields are always in the DOM (collapsed ≠ absent), so
+// every read/write path — autosave, sidecar JSON, AI fill, reset — keeps
+// working untouched. This only manages the open/closed state:
+//   · open it whenever any of the four fields actually has a value, so a
+//     clip with saved tape data never hides it behind a click
+//   · collapse it when they're all empty (clip swap, reset, demo reset)
+function syncTapeDetails() {
+  const details = document.getElementById('clip-tape-details');
+  if (!details) return;
+  const hasValue = ['clip-tape-length', 'clip-speed', 'clip-condition', 'clip-notes']
+    .some((id) => (document.getElementById(id)?.value || '').trim() !== '');
+  details.open = hasValue;
+}
+
 // Read a saved sleeve image from disk and return it as a data URL. Returns
 // null if the file isn't present or can't be read. Used as a fallback for
 // clips whose catalog entry doesn't carry the sleeve data URLs (older
@@ -3739,6 +3770,8 @@ async function loadClipIntoEditor(clipId) {
   // Programmatic .value writes don't fire 'input', so the counters
   // attached via wireCharCounters never recompute. Force a refresh.
   if (typeof refreshAllCharCounters === 'function') refreshAllCharCounters();
+  // Expand the tape-details block if this clip carries any of those fields.
+  syncTapeDetails();
 
   // 4. Restore sleeve previews. Sleeves now live on disk only (storing the
   // full data URLs in the catalog blew localStorage quota and broke the
@@ -4041,8 +4074,155 @@ function wireThumbnailPicker() {
   // so updateClipDependentPanels can fire it whenever a new clip becomes
   // active without the user clicking anything.
   autoGenerateThumbnails = generate;
+  // Lets the Grab Thumb button in the player hand a hand-scrubbed frame
+  // into the picker through the exact same path as clicking a cell —
+  // catalog write, disk mirror, highlight, library refresh.
+  adoptGrabbedThumbnail = selectThumbnail;
 
   refreshBtn.addEventListener('click', generate);
+}
+
+// --- Grab Thumb (scrub → thumbnail) ---
+//
+// Six random frames are a decent starting point, but the frame you actually
+// want is usually one you found by hand. Scrubbing the playback arms a small
+// "Grab Thumb" button in the player's bottom-right; clicking it makes the
+// frame currently on screen the picked thumbnail, at full video resolution.
+// It routes through the picker's selectThumbnail, so the pick persists to
+// the catalog + disk, shows up highlighted as the first cell in column 2,
+// and is what the upload sends to YouTube.
+//
+// The arming rules exist because 'seeked' fires for plenty of things the
+// user didn't do:
+//   · seeks within SEEK_GRACE_MS of a load event don't count (opening a
+//     clip and the blob re-bind after a title rename both seek on load)
+//   · Trim and Shorts mode suppress it — the Shorts "Full frame" toggle
+//     lives in that same corner, and both modes strip native controls
+//   · the demo suppresses it (the demo seeks the playback itself to build
+//     its fake thumbnail strip)
+let adoptGrabbedThumbnail = null;
+let grabThumbArmed = false;
+let syncGrabThumbBtn = () => {};
+
+function wireGrabThumb() {
+  const btn = document.getElementById('grab-thumb-btn');
+  const label = document.getElementById('grab-thumb-label');
+  const playback = document.getElementById('playback');
+  const container = document.getElementById('preview-container');
+  if (!btn || !playback || !container) return;
+
+  const SEEK_GRACE_MS = 600;
+  let lastLoadAt = 0;
+  let hovering = false;
+  let flashTimer = null;
+
+  function canShow() {
+    if (!grabThumbArmed || !hovering) return false;
+    if (previewMode !== 'playback' || !lastClipId) return false;
+    if (demoActive) return false;
+    const trimOpen = document.getElementById('trim-panel')
+      && !document.getElementById('trim-panel').classList.contains('hidden');
+    const shortsOpen = document.getElementById('shorts-panel')
+      && !document.getElementById('shorts-panel').classList.contains('hidden');
+    return !trimOpen && !shortsOpen;
+  }
+
+  function sync() {
+    const show = canShow();
+    if (show) {
+      btn.classList.remove('hidden');
+      btn.classList.add('flex');
+      // Fade in on the frame after display flips, otherwise the browser
+      // has nothing to transition from.
+      btn.style.opacity = '0';
+      requestAnimationFrame(() => { btn.style.opacity = '1'; });
+    } else {
+      btn.classList.add('hidden');
+      btn.classList.remove('flex');
+      btn.style.opacity = '0';
+    }
+  }
+  syncGrabThumbBtn = sync;
+
+  // A fresh source means a fresh clip — make the user scrub again before
+  // the button comes back, so it never carries over from the last clip.
+  ['loadstart', 'emptied'].forEach((ev) => {
+    playback.addEventListener(ev, () => {
+      lastLoadAt = performance.now();
+      grabThumbArmed = false;
+      sync();
+    });
+  });
+  ['loadedmetadata', 'loadeddata'].forEach((ev) => {
+    playback.addEventListener(ev, () => { lastLoadAt = performance.now(); });
+  });
+
+  playback.addEventListener('seeked', () => {
+    if (performance.now() - lastLoadAt < SEEK_GRACE_MS) return;
+    grabThumbArmed = true;
+    sync();
+  });
+
+  container.addEventListener('mouseenter', () => { hovering = true; sync(); });
+  container.addEventListener('mouseleave', () => { hovering = false; sync(); });
+
+  btn.addEventListener('click', async (e) => {
+    // #preview-container's own click handler opens the device selector.
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!lastClipId) {
+      console.warn('[thumb] Grab Thumb ignored — no clip is loaded in the editor.');
+      return;
+    }
+    if (playback.readyState < 2 || !playback.videoWidth) {
+      console.warn('[thumb] Grab Thumb ignored — playback has no decoded frame yet.');
+      showErrorToast('Nothing to grab yet', 'Give the video a moment to load, then scrub and try again.');
+      return;
+    }
+
+    let dataUrl;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = playback.videoWidth;
+      canvas.height = playback.videoHeight;
+      canvas.getContext('2d').drawImage(playback, 0, 0, canvas.width, canvas.height);
+      dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    } catch (err) {
+      console.error('[thumb] Grab Thumb failed to read the frame:', err);
+      showErrorToast('Could not grab that frame', err.message);
+      return;
+    }
+
+    if (typeof adoptGrabbedThumbnail !== 'function') {
+      console.error('[thumb] Grab Thumb has no picker to hand the frame to (wireThumbnailPicker did not run).');
+      return;
+    }
+
+    try {
+      await adoptGrabbedThumbnail(dataUrl);
+    } catch (err) {
+      console.error('[thumb] Saving the grabbed frame failed:', err);
+      showErrorToast('Could not save that thumbnail', err.message);
+      return;
+    }
+
+    // Confirm in place — the picker is in another column and may be
+    // scrolled out of view, so the button says what happened itself.
+    if (label) {
+      label.textContent = 'Set as thumb ✓';
+      btn.classList.add('border-red-500');
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => {
+        label.textContent = 'Grab Thumb';
+        btn.classList.remove('border-red-500');
+      }, 1600);
+    }
+    // Nudge the picker into view so the newly-highlighted cell is visible
+    // ('nearest' keeps this to the minimum scroll, no jarring jump).
+    document.getElementById('cap-thumb-fieldset')
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
 }
 
 // Wire live auto-save on the editable Clip Info fields. Every keystroke
@@ -4543,6 +4723,7 @@ function wireResetButtons() {
     document.getElementById('clip-condition').value = '';
     document.getElementById('clip-notes').value = '';
     refreshAllCharCounters();
+    syncTapeDetails();
   });
 }
 
@@ -4844,10 +5025,12 @@ async function fetchUserPlaylists() {
         return { status: 'error', playlists: [], error: `HTTP ${res.status}` };
       }
       const data = await res.json();
-      // Sort by creation date DESC and take the 3 most recent — same
-      // cap the bridge used to enforce server-side. Plenty for a
-      // checkbox list; if we want more later it's a one-line bump.
-      const PLAYLIST_LIMIT = 3;
+      // Sort by creation date DESC and keep the 25 most recent. The old
+      // cap was 3 (inherited from what the bridge enforced server-side),
+      // which hid most of the channel's playlists behind nothing at all —
+      // the publish list is scrollable, so the only reason to cap here is
+      // to keep the checkbox list from becoming a phone book.
+      const PLAYLIST_LIMIT = 25;
       const items = (data.items || [])
         .map((p) => ({
           id: p.id,
@@ -5736,6 +5919,7 @@ function clearClipForNewCapture({ keepTapeInfo = true } = {}) {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
+    syncTapeDetails();
     // Sleeves reset back to empty placeholders.
     const sleeveFront = document.getElementById('sleeve-front-preview');
     if (sleeveFront) {
@@ -6535,6 +6719,8 @@ function exitTrimMode() {
   document.getElementById('trim-pause-icon')?.classList.add('hidden');
   const playLabel = document.getElementById('trim-play-label');
   if (playLabel) playLabel.textContent = 'Play';
+  // Native controls are back — let Grab Thumb return if it was armed.
+  syncGrabThumbBtn();
 }
 
 // Format seconds as h:mm:ss.s — chosen as the sweet spot between consumer-
@@ -6606,6 +6792,8 @@ function enterTrimMode() {
     playback.currentTime = 0;
 
     document.getElementById('trim-panel').classList.remove('hidden');
+    // Trim drives its own scrubbing; Grab Thumb steps aside until we're out.
+    syncGrabThumbBtn();
     updateTrimUI();
     updateTrimPlayhead();
 
@@ -7767,6 +7955,8 @@ function exitShortsMode() {
   document.getElementById('shorts-pause-icon')?.classList.add('hidden');
   const playLabel = document.getElementById('shorts-play-label');
   if (playLabel) playLabel.textContent = 'Play';
+  // The corner is free again — let Grab Thumb return if it was armed.
+  syncGrabThumbBtn();
 }
 
 function wireShorts() {
@@ -7812,6 +8002,8 @@ function enterShortsMode() {
 
     document.getElementById('shorts-panel').classList.remove('hidden');
     document.getElementById('shorts-overlay').classList.remove('hidden');
+    // Shorts owns the player's bottom-right corner (Full frame toggle).
+    syncGrabThumbBtn();
     updateShortsUI();
     updateShortsOverlay();
     updateShortsPlayhead();
@@ -8534,6 +8726,10 @@ function showLiveTab() {
   deleteBtn.classList.add('hidden');
   trimBtn?.classList.add('hidden');
   shortsBtn?.classList.add('hidden');
+  // Grab Thumb belongs to the playback view only — disarm it so switching
+  // back to Last Recording requires a fresh scrub.
+  grabThumbArmed = false;
+  syncGrabThumbBtn();
   document.getElementById('save-data-btn')?.classList.add('hidden');
   document.getElementById('publish-yt-btn')?.classList.add('hidden');
 
