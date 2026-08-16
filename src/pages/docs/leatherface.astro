@@ -7,6 +7,15 @@ const spec = getSpec('leatherface');
 const totalUnits = spec.sizes.reduce((n, s) => n + s.qty, 0);
 const total = spec.sizes.reduce((n, s) => n + s.qty * s.unit, 0);
 const usd = (n) => `$${n.toFixed(2)}`;
+
+// Money, all derived — change a quantity or the fee and every figure below
+// follows. Nothing here is typed in twice.
+const { printingFee, printer, sellPrice } = spec.money;
+const totalCost = total + printingFee;
+const costPerShirt = totalCost / totalUnits;
+const revenue = sellPrice * totalUnits;
+const profit = revenue - totalCost;
+const profitPerShirt = profit / totalUnits;
 ---
 
 <Base
@@ -78,6 +87,15 @@ const usd = (n) => `$${n.toFixed(2)}`;
       flex-direction: column;
     }
     .fig img { margin-block: auto; }
+    /* The separation is white ink on transparent — invisible on white paper,
+       so it sits on a black plate that stands in for the shirt. */
+    .fig img.on-dark {
+      background: #111;
+      border-color: #111;
+      padding: 10px;
+      print-color-adjust: exact;
+      -webkit-print-color-adjust: exact;
+    }
     .fig + .fig { border-left: 0; }
     @media (min-width: 620px) { .fig + .fig { border-left: 1px solid var(--rule); } }
     .fig img {
@@ -127,11 +145,29 @@ const usd = (n) => `$${n.toFixed(2)}`;
       white-space: nowrap;
     }
     .big { font-size: 15px; }
+    .num { text-align: right; white-space: nowrap; }
+    tr.rule td { border-top: 1px solid var(--rule); border-bottom: 0; padding-top: 8px; }
     tr.total td {
       border-top: 1px solid var(--ink);
       border-bottom: 0;
       padding-top: 9px;
       font-size: 15px;
+    }
+    /* Beats `tr.total td`, which would otherwise bump this to 15px and
+       flatten the hierarchy of the profit line. */
+    tr.total td.sub-note {
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--dim);
+    }
+    .note {
+      margin-top: 10px;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--dim);
+      line-height: 1.6;
     }
 
     .foot {
@@ -177,7 +213,7 @@ const usd = (n) => `$${n.toFixed(2)}`;
 
         <div class="figs">
           <figure class="fig">
-            <img src={spec.art.href} alt="Leatherface art file" />
+            <img class={spec.art.dark ? 'on-dark' : ''} src={spec.art.href} alt="Leatherface art file" />
             <figcaption class="cap"><b>{spec.art.label}</b><span>{spec.art.note}</span></figcaption>
           </figure>
           <figure class="fig">
@@ -197,6 +233,7 @@ const usd = (n) => `$${n.toFixed(2)}`;
               ))}
             </tbody>
           </table>
+          <p class="note">{spec.inkNote}</p>
         </div>
 
         <div class="pad">
@@ -221,9 +258,44 @@ const usd = (n) => `$${n.toFixed(2)}`;
               </tr>
             </tbody>
           </table>
-          <p style="margin-top:10px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);">
-            Shirts only — printing not included
-          </p>
+          <p class="note">Shirts only — printing not included</p>
+        </div>
+
+        <div class="pad">
+          <table>
+            <tbody>
+              <tr>
+                <td class="k">Shirts</td>
+                <td>{totalUnits} blanks</td>
+                <td class="num">{usd(total)}</td>
+              </tr>
+              <tr>
+                <td class="k">Printing</td>
+                <td>{printer}</td>
+                <td class="num">{usd(printingFee)}</td>
+              </tr>
+              <tr class="rule">
+                <td class="k">Total cost</td>
+                <td></td>
+                <td class="num">{usd(totalCost)}</td>
+              </tr>
+              <tr>
+                <td class="k">Cost each</td>
+                <td></td>
+                <td class="num">{usd(costPerShirt)}</td>
+              </tr>
+              <tr>
+                <td class="k">Sell at</td>
+                <td></td>
+                <td class="num">{usd(sellPrice)}</td>
+              </tr>
+              <tr class="total">
+                <td class="k">Profit</td>
+                <td class="sub-note">{usd(profitPerShirt)} each &nbsp;·&nbsp; all {totalUnits} sold</td>
+                <td class="num">{usd(profit)}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         <div class="foot">

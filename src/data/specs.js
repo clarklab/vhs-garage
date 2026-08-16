@@ -14,13 +14,16 @@ export const SPECS = [
     subtitle: 'Screenprint Spec',
     issued: '2026-08-16',
 
+    // The art is white on transparent, so it needs a dark plate behind it
+    // on this white sheet — see `dark` below.
     art: {
-      href: '/images/docs/leatherface/leatherface-print-file-large.png',
+      href: '/images/docs/leatherface/leatherface-print-file-white.png',
       label: 'Art file',
-      note: 'White = ink',
+      note: 'One screen, one pull',
+      dark: true,
     },
     preview: {
-      href: '/images/docs/leatherface/leatherface-preview-tee.png',
+      href: '/images/docs/leatherface/leatherface-preview-tee-gradient.png',
       label: 'On the shirt',
       note: 'Mockup, not to scale',
     },
@@ -28,8 +31,13 @@ export const SPECS = [
     facts: [
       ['Print', '5 in wide — center chest'],
       ['Shirt', 'Comfort Colors 1717 — Black'],
-      ['Ink', '1 color — white'],
+      ['Ink', 'Split fountain — neon orange into neon pink'],
     ],
+
+    // Split fountain (a.k.a. rainbow roll): both inks are loaded side by
+    // side in the same screen and blend under a single pull.
+    inkNote:
+      'Two inks, one screen, one pull. The blend shifts a little every pull, so no two shirts come out identical — that is the point.',
 
     // qty/unit are numbers so the page computes the totals — no hand-math
     // that can drift out of sync with the line items.
@@ -40,6 +48,14 @@ export const SPECS = [
       { size: 'XL', qty: 5, unit: 6.87 },
       { size: '2XL', qty: 3, unit: 10.44 },
     ],
+
+    // Everything downstream of this (cost per shirt, profit) is computed on
+    // the page from these three numbers plus the size run.
+    money: {
+      printingFee: 150,
+      printer: 'Julia',
+      sellPrice: 30,
+    },
   },
 ];
 
