@@ -9,35 +9,57 @@ export const SPECS = [
   {
     id: 'leatherface',
     docNo: 'VHSG-APP-001',
-    rev: 'D',
+    rev: 'E',
     title: 'Leatherface',
     subtitle: 'Screenprint Spec',
     issued: '2026-08-16',
 
-    // The art is white on transparent, so it needs a dark plate behind it
-    // on this white sheet — see `dark` below.
+    // The art itself. `display` is white on transparent so it needs a dark
+    // plate behind it on this white sheet; `files` are the real downloads
+    // for anyone who wants to open the actual separation.
     art: {
-      href: '/images/docs/leatherface/leatherface-print-file-white.png',
-      label: 'Art file',
-      note: 'One screen, one pull',
-      dark: true,
+      display: '/images/docs/leatherface/leatherface-print-file-white.png',
+      files: [
+        {
+          name: 'leatherface-print-file-large.png',
+          href: '/images/docs/leatherface/leatherface-print-file-large.png',
+          size: '1600 × 868',
+          what: 'Full-size dither',
+        },
+        {
+          name: 'leatherface-print-file-white.png',
+          href: '/images/docs/leatherface/leatherface-print-file-white.png',
+          size: '400 × 217',
+          what: 'White on transparent',
+        },
+      ],
     },
-    preview: {
-      href: '/images/docs/leatherface/leatherface-preview-tee-gradient.png',
-      label: 'On the shirt',
-      note: 'Mockup, not to scale',
-    },
+
+    // The two ways we can run it. Same screen, same art — the difference is
+    // what goes in the ink well.
+    options: [
+      {
+        key: 'A',
+        title: 'Gradient pull',
+        href: '/images/docs/leatherface/leatherface-preview-tee-gradient.png',
+        ink: 'Neon orange into neon pink',
+        note:
+          'Split fountain — both inks sit side by side in one screen and blend under a single pull. The fade runs down the image, so the ink gets pulled across the screen horizontally. Blend shifts a little every pull, so no two shirts come out identical.',
+      },
+      {
+        key: 'B',
+        title: 'Normal pull',
+        href: '/images/docs/leatherface/leatherface-preview-tee.png',
+        ink: 'White, one color',
+        note: 'Single ink, straight pull. Every shirt comes out the same.',
+      },
+    ],
 
     facts: [
       ['Print', '5 in wide — center chest'],
       ['Shirt', 'Comfort Colors 1717 — Black'],
-      ['Ink', 'Split fountain — neon orange into neon pink'],
+      ['Screens', 'One either way — same art, same pull'],
     ],
-
-    // Split fountain (a.k.a. rainbow roll): both inks are loaded side by
-    // side in the same screen and blend under a single pull.
-    inkNote:
-      'Two inks, one screen, one pull. The blend shifts a little every pull, so no two shirts come out identical — that is the point.',
 
     // qty/unit are numbers so the page computes the totals — no hand-math
     // that can drift out of sync with the line items.
