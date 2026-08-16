@@ -525,6 +525,35 @@ import { BUILD_ID } from '../utils/build-id.js';
     }
     .char-counter.is-warn { color: #fbbf24; }
     .char-counter.is-max  { color: #f87171; }
+
+    /* "Tape details" expander in Clip Info. Summary reads like the other
+       field labels so the collapsed row costs about as much height as one
+       label, and the caret rotates on open. */
+    .tape-details > summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 0;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.4);
+      transition: color 0.15s;
+    }
+    .tape-details > summary::-webkit-details-marker { display: none; }
+    .tape-details > summary:hover { color: rgba(255, 255, 255, 0.75); }
+    .tape-details-caret {
+      display: inline-block;
+      transition: transform 0.15s;
+    }
+    .tape-details[open] > summary > .tape-details-caret { transform: rotate(90deg); }
+    .tape-details-hint {
+      color: rgba(255, 255, 255, 0.2);
+      letter-spacing: 0.04em;
+      text-transform: none;
+    }
   </style>
 
   <!-- Browser check -->
@@ -666,6 +695,27 @@ import { BUILD_ID } from '../utils/build-id.js';
                 <span class="text-white text-[10px] uppercase tracking-widest">Full frame</span>
               </label>
             </div>
+            <!-- Grab Thumb — the "I scrubbed to the exact frame I want"
+                 shortcut. Stays out of the way until the user actually
+                 scrubs the playback (wireGrabThumb in app.js arms it on
+                 a user seek), then fades in whenever the pointer is over
+                 the player. Clicking it grabs the CURRENT frame at full
+                 video resolution and makes it the picked thumbnail, so
+                 the picker in column 2 highlights it immediately.
+                 bottom-14 clears the native controls bar; it's suppressed
+                 in Trim/Shorts mode so it never fights the Full frame
+                 toggle that lives in the same corner. -->
+            <button id="grab-thumb-btn" type="button"
+                    class="hidden absolute bottom-14 right-3 z-20 items-center gap-1.5 px-2.5 py-1.5 bg-black/85 border border-white/40 hover:border-red-500 text-white text-[10px] uppercase tracking-widest transition-opacity duration-150"
+                    style="font-family: 'VCR', monospace;"
+                    title="Use this exact frame as the thumbnail">
+              <!-- Camera/frame pixel glyph -->
+              <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m22,6v-1h-6v-1h-1v-1h-6v1h-1v1h-6v1h-1v13h1v1h20v-1h1V6h-1Zm-1,12H3V7h6v-1h1v-1h4v1h1v1h6v11Z"/>
+                <path d="m16,11v-1h-1v-1h-1v-1h-4v1h-1v1h-1v1h-1v4h1v1h1v1h1v1h4v-1h1v-1h1v-1h1v-4h-1Zm-1,4h-1v1h-4v-1h-1v-4h1v-1h4v1h1v4Z"/>
+              </svg>
+              <span id="grab-thumb-label">Grab Thumb</span>
+            </button>
             <div id="rec-overlay-timer" class="hidden absolute top-3 right-4 text-red-500 tabular-nums z-10" style="text-shadow: 0 0 10px rgba(229,57,53,0.7), 0 0 20px rgba(229,57,53,0.4);">
               00:00:00
             </div>
@@ -1124,7 +1174,6 @@ import { BUILD_ID } from '../utils/build-id.js';
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Clip Title</label>
                 <div class="relative">
                   <input id="clip-title" type="text" placeholder="My Home Videos 1994" maxlength="100"
-                    data-char-counter="counter-clip-title" data-char-max="100"
                     class="w-full pl-2 pr-8 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
                   <button id="yt-pub-ai-title" type="button"
                           class="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-red-400 transition-colors leading-none"
@@ -1135,13 +1184,11 @@ import { BUILD_ID } from '../utils/build-id.js';
                     </svg>
                   </button>
                 </div>
-                <p id="counter-clip-title" class="char-counter">0 / 100</p>
               </div>
               <div>
                 <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Description</label>
                 <div class="relative">
                   <textarea id="clip-description" rows="2" placeholder="What's on this clip..." maxlength="5000"
-                    data-char-counter="counter-clip-description" data-char-max="5000"
                     class="w-full pl-2 pr-8 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
                   <button id="yt-pub-ai-desc" type="button"
                           class="absolute right-2 top-2 text-white/30 hover:text-red-400 transition-colors leading-none"
@@ -1152,7 +1199,6 @@ import { BUILD_ID } from '../utils/build-id.js';
                     </svg>
                   </button>
                 </div>
-                <p id="counter-clip-description" class="char-counter">0 / 5000</p>
               </div>
               <div id="ai-fields" class="space-y-2">
                 <!-- Year + Distributor share a row to save vertical space in
@@ -1174,37 +1220,50 @@ import { BUILD_ID } from '../utils/build-id.js';
                 <div>
                   <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tags</label>
                   <input id="clip-tags" type="text" placeholder="home video, 90s, family" maxlength="500"
-                    data-char-counter="counter-clip-tags" data-char-max="500"
                     class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
-                  <p id="counter-clip-tags" class="char-counter">0 / 500</p>
                 </div>
                 <div>
                   <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">VHS Tape</label>
                   <input id="clip-tape" type="text" placeholder="Which tape is this from?"
                     class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
                 </div>
-                <div class="grid grid-cols-3 gap-2">
-                  <div>
-                    <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tape</label>
-                    <input id="clip-tape-length" type="text" placeholder="T-120"
-                      class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                <!-- Tape length / speed / condition / notes collapse behind a
+                     summary row. Most sittings never fill these in, and the
+                     four fields cost ~130px of column height that the Publish
+                     section below needs for its playlist list. syncTapeDetails
+                     in app.js springs it open whenever a loaded clip actually
+                     has any of them, so saved values are never hidden. -->
+                <details id="clip-tape-details" class="tape-details">
+                  <summary>
+                    <span class="tape-details-caret" aria-hidden="true">▸</span>
+                    Tape details
+                    <span class="tape-details-hint">speed · condition · notes</span>
+                  </summary>
+                  <div class="space-y-2 pt-2">
+                    <div class="grid grid-cols-3 gap-2">
+                      <div>
+                        <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Tape</label>
+                        <input id="clip-tape-length" type="text" placeholder="T-120"
+                          class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                      </div>
+                      <div>
+                        <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Speed</label>
+                        <input id="clip-speed" type="text" placeholder="SP"
+                          class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                      </div>
+                      <div>
+                        <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Condition</label>
+                        <input id="clip-condition" type="text" placeholder="Good"
+                          class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
+                      </div>
+                    </div>
+                    <div>
+                      <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Cassette Notes</label>
+                      <textarea id="clip-notes" rows="2" placeholder="Special edition, director's cut, other details..."
+                        class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
+                    </div>
                   </div>
-                  <div>
-                    <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Speed</label>
-                    <input id="clip-speed" type="text" placeholder="SP"
-                      class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
-                  </div>
-                  <div>
-                    <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Condition</label>
-                    <input id="clip-condition" type="text" placeholder="Good"
-                      class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40" />
-                  </div>
-                </div>
-                <div>
-                  <label class="text-white/40 text-[10px] uppercase tracking-widest block mb-1">Cassette Notes</label>
-                  <textarea id="clip-notes" rows="2" placeholder="Special edition, director's cut, other details..."
-                    class="w-full px-2 py-1.5 bg-black border border-white/20 text-white text-xs placeholder-white/25 focus:outline-none focus:border-white/40 resize-none"></textarea>
-                </div>
+                </details>
               </div>
             </div>
             <button id="reset-info-btn" class="shrink-0 flex items-center gap-1.5 mt-3 pt-2 border-t border-white/10 text-white/30 hover:text-white/70 text-[10px] text-left transition-colors">
@@ -1296,7 +1355,7 @@ import { BUILD_ID } from '../utils/build-id.js';
                 </select>
               </div>
 
-              <!-- Add to playlists. Bridge-only feature for now. The 3
+              <!-- Add to playlists. Bridge-only feature for now. The 25
                    most recent playlists on the bridge channel are
                    fetched at panel mount; the section auto-hides
                    when there are none (e.g., bridge token still has
@@ -1314,7 +1373,8 @@ import { BUILD_ID } from '../utils/build-id.js';
                      as #col3-content > #library-grid. With 5/10/100 playlists
                      the list would otherwise push the Upload button off-screen;
                      max-h caps it and .vhs-scroll (wired at init) makes it
-                     scroll. pr-1 keeps the bar off the per-row item counts;
+                     scroll. At ~20px a row, max-h-48 shows 8-9 playlists before
+                     scrolling. pr-1 keeps the bar off the per-row item counts;
                      populatePlaylistsUI() still targets the inner list. -->
                 <div class="max-h-48 overflow-y-auto vhs-scroll pr-1">
                   <div id="yt-pub-playlists-list" class="space-y-1"></div>
