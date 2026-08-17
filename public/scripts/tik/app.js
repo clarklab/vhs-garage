@@ -57,7 +57,8 @@ const els = {
   back: $('back-btn'), formatChip: $('format-chip'), projectName: $('project-name'),
   download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
   statusChip: $('status-chip'), toast: $('toast'), toastBody: $('toast-body'),
-  cadenceCard: $('cadence-card'), cadenceIcon: $('cadence-icon'), cadenceHeadline: $('cadence-headline'),
+  cadenceCard: $('cadence-card'), cadenceGhost: $('cadence-ghost'), cadenceLive: $('cadence-live'),
+  cadenceIcon: $('cadence-icon'), cadenceHeadline: $('cadence-headline'),
   cadenceLabel: $('cadence-label'), cadenceDetail: $('cadence-detail'), cadenceQueue: $('cadence-queue'),
   // trivia pane
   paneTrivia: $('pane-trivia'), file: $('file-input'), videoNote: $('video-note'),
@@ -1052,6 +1053,7 @@ let tagReportScopeMissing = false;
 // account's posts are not reported as this one's.
 function resetTagReport() {
   tagReportScopeMissing = false;
+  cadenceReady = false;   // a different account's cadence is not this one's
   resetPostsCache();
 }
 
@@ -1078,30 +1080,63 @@ const CADENCE_TONE = {
   grey: { wrap: 'border-neutral-800 bg-neutral-900', icon: 'text-neutral-500', label: 'text-neutral-500' },
 };
 
+const CADENCE_CARD = 'flex items-center gap-3 rounded-xl border px-4 py-3';
+
+// Has a real answer ever been painted? renderLibrary re-runs on every search
+// keystroke, and loadPosts serves those from cache, so ghosting each time
+// would strobe a row that is not actually reloading. The ghost is for the
+// first paint only; after that the last answer stays up while a new one is
+// fetched, which is at most one TTL stale and never blank.
+let cadenceReady = false;
+
+// The queue count is local, so it lands immediately — no reason to make it
+// wait behind a network call it has nothing to do with.
+function renderCadenceQueue(readyCount) {
+  const queued = readyCount > 0;
+  els.cadenceQueue.classList.toggle('hidden', !queued);
+  if (queued) els.cadenceQueue.textContent = `${readyCount} ready`;
+}
+
+// Shown while TikTok is being asked. The card holds its own space from the
+// first paint: a row that appears only once the answer lands reads as a
+// finished page that then shoves everything down.
+function showCadenceLoading(readyCount) {
+  els.cadenceCard.className = `${CADENCE_CARD} ${CADENCE_TONE.grey.wrap}`;
+  els.cadenceCard.setAttribute('aria-busy', 'true');
+  els.cadenceGhost.classList.remove('hidden');
+  els.cadenceLive.classList.add('hidden');
+  els.cadenceLive.classList.remove('flex');
+  renderCadenceQueue(readyCount);
+}
+
 function renderCadence(state, readyCount) {
+  cadenceReady = true;
   const tone = CADENCE_TONE[state.tone] || CADENCE_TONE.grey;
-  els.cadenceCard.className = `mt-3 flex items-center gap-3 rounded-xl border px-4 py-3 ${tone.wrap}`;
+  els.cadenceCard.className = `${CADENCE_CARD} ${tone.wrap}`;
+  els.cadenceCard.setAttribute('aria-busy', 'false');
+  els.cadenceGhost.classList.add('hidden');
+  els.cadenceLive.classList.remove('hidden');
+  els.cadenceLive.classList.add('flex');
   els.cadenceIcon.textContent = state.icon;
   els.cadenceIcon.className = `material-symbols-outlined text-[22px] leading-none ${tone.icon}`;
   els.cadenceHeadline.textContent = state.headline;
   els.cadenceLabel.textContent = state.label;
   els.cadenceLabel.className = `text-[11px] font-bold uppercase tracking-wider ${tone.label}`;
   els.cadenceDetail.textContent = state.detail;
-  // The queue only earns its space when there is something in it.
-  const queued = readyCount > 0;
-  els.cadenceQueue.classList.toggle('hidden', !queued);
-  if (queued) els.cadenceQueue.textContent = `${readyCount} ready`;
+  renderCadenceQueue(readyCount);
 }
 
 async function refreshCadence(all) {
   const readyCount = all.filter((r) => statusOf(r) === 'ready').length;
+  // The queue count is local either way, so it updates on every render.
+  if (cadenceReady) renderCadenceQueue(readyCount);
+  else showCadenceLoading(readyCount);
   if (!isSignedIn() || tagReportScopeMissing) {
     // Without TikTok's history the studio only knows about sets posted through
     // the API from here, and most are finished by hand in the app. Guessing
     // from that partial record would show red on a day of manual posting,
     // which is precisely the wrong answer, so say nothing instead.
     renderCadence(cadence(null), readyCount);
-    els.cadenceCard.classList.remove('hidden');
     return;
   }
   try {
@@ -1114,8 +1149,6 @@ async function refreshCadence(all) {
   } catch (e) {
     console.error('[tik] cadence check failed:', e);
     renderCadence(cadence(null), readyCount);
-  } finally {
-    els.cadenceCard.classList.remove('hidden');
   }
 }
 
