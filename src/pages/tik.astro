@@ -74,11 +74,36 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
     <section id="screen-home" class="mx-auto w-full max-w-5xl px-4 py-8">
       <!-- ---- POSTS ---- -->
       <div id="tab-posts">
-      <label class="relative block">
-        <span class="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] leading-none text-neutral-600">search</span>
-        <input id="library-search" type="search" autocomplete="off" placeholder="Search your posts and drafts…"
-               class="w-full rounded-xl border border-neutral-800 bg-neutral-900 py-2.5 pl-10 pr-3 text-sm text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none" />
-      </label>
+      <!-- Posting cadence, first thing on the page: spacing posts matters more
+           than how many are ready, so the clock and the queue share a row.
+           The ghost is here rather than a hidden card because a row that only
+           appears once TikTok answers reads as a finished page that then
+           shifts under you. -->
+      <div id="cadence-card" class="flex items-center gap-3 rounded-xl border border-neutral-800 bg-neutral-900 px-4 py-3" aria-busy="true">
+        <div id="cadence-ghost" class="flex min-w-0 flex-1 items-center gap-3" aria-hidden="true">
+          <span class="h-[22px] w-[22px] flex-none animate-pulse rounded-full bg-neutral-800"></span>
+          <div class="min-w-0 flex-1">
+            <div class="h-3.5 w-40 max-w-full animate-pulse rounded bg-neutral-800"></div>
+            <div class="mt-1.5 h-2.5 w-64 max-w-full animate-pulse rounded bg-neutral-800/60"></div>
+          </div>
+        </div>
+        <div id="cadence-live" class="hidden min-w-0 flex-1 items-center gap-3" aria-live="polite">
+          <span id="cadence-icon" class="material-symbols-outlined text-[22px] leading-none"></span>
+          <div class="min-w-0 flex-1">
+            <p class="flex flex-wrap items-baseline gap-x-2">
+              <span id="cadence-headline" class="text-sm font-bold tracking-tight"></span>
+              <span id="cadence-label" class="text-[11px] font-bold uppercase tracking-wider"></span>
+            </p>
+            <p id="cadence-detail" class="mt-0.5 text-xs text-neutral-400"></p>
+          </div>
+        </div>
+        <!-- The shelf: finished work and unfinished work are separate numbers
+             because they are separate assets. -->
+        <div class="flex flex-none flex-col items-end gap-1">
+          <span id="cadence-ready" class="hidden rounded-full bg-violet-500/15 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-violet-300"></span>
+          <span id="cadence-drafts" class="hidden rounded-full bg-neutral-800 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-neutral-400"></span>
+        </div>
+      </div>
 
       <h2 class="mt-8 text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">New TikTok</h2>
       <div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -158,6 +183,13 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
           </div>
         </div>
       </div>
+      <!-- Directly above the grid: a search box is easier to reach for when
+           it sits on the thing it narrows, not at the top of the page. -->
+      <label class="relative mt-4 block">
+        <span class="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] leading-none text-neutral-600">search</span>
+        <input id="library-search" type="search" autocomplete="off" placeholder="Search your posts and drafts…"
+               class="w-full rounded-xl border border-neutral-800 bg-neutral-900 py-2.5 pl-10 pr-3 text-sm text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none" />
+      </label>
       <div id="project-grid" class="mt-3"></div>
       <p id="library-empty" class="mt-3 hidden rounded-xl border border-dashed border-neutral-800 p-8 text-center text-sm text-neutral-500">
         Nothing saved yet — drafts and posted TikToks land here automatically as you work.
@@ -516,6 +548,12 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
     <!-- ============ EDITOR ============ -->
     <!-- Full-slide preview. Composed by the same code path as the upload, so a
          line break judged here is the one that ships. -->
+    {/* Transient confirmation for things that happen without a click on them,
+        like a set promoting itself to Ready. Sits above the preview modal. */}
+    <div id="toast" class="pointer-events-none fixed inset-x-0 top-4 z-[60] flex hidden justify-center px-4">
+      <div id="toast-body" class="flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-bold shadow-lg"></div>
+    </div>
+
     <div id="slide-preview" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
       <div class="flex max-h-full flex-col items-center gap-2">
         <div class="flex w-full items-center justify-between gap-4">
@@ -535,6 +573,7 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
           <span class="material-symbols-outlined text-[16px] leading-none">arrow_back</span> Library
         </button>
         <span id="format-chip" class="rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide"></span>
+        <button id="status-chip" class="rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide transition"></button>
         <input id="project-name" class="min-w-0 flex-1 basis-40 bg-transparent text-base font-bold tracking-tight text-neutral-100 outline-none placeholder:text-neutral-600" placeholder="Untitled" maxlength="80" />
         <button id="download-btn" disabled
                 class="flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"

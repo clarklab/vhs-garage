@@ -48,13 +48,58 @@ export function formatOf(project) {
   return FORMATS[project?.format] || FORMATS.trivia;
 }
 
+// The three states a post moves through, in order.
+//
+// 'ready' is the one that earns its keep: a set that is finished and reviewed
+// but deliberately not posted yet. Publishing five sets in one afternoon buries
+// four of them, so the point of the studio is to build a queue of Ready posts
+// and release them on a schedule.
+export const STATUSES = [
+  { key: 'draft', label: 'Draft', plural: 'Drafts' },
+  { key: 'ready', label: 'Ready', plural: 'Ready' },
+  { key: 'posted', label: 'Posted', plural: 'Posted' },
+];
+const STATUS_KEYS = new Set(STATUSES.map((s) => s.key));
+
+// Every record in the library predates 'ready', and a few may carry junk from a
+// hand-edited blob, so anything unrecognized reads as a draft rather than
+// disappearing from all three filters.
+export function statusOf(rec) {
+  const s = rec?.status;
+  return STATUS_KEYS.has(s) ? s : 'draft';
+}
+
+export function statusLabel(rec) {
+  const key = statusOf(rec);
+  return (STATUSES.find((s) => s.key === key) || STATUSES[0]).label;
+}
+
+// Touching the sign-off slide is the last thing that happens in a review — it
+// is the bottom of the set — so it is the signal that the whole thing has been
+// looked at. One-way on purpose: a draft is promoted, and anything already
+// ready or posted stays put, because editing a posted set's outro must not walk
+// it backwards into the queue.
+export function statusAfterOutroEdit(status) {
+  const cur = statusOf({ status });
+  return cur === 'draft' ? 'ready' : cur;
+}
+
+// The by-hand override, for when the auto-promotion is wrong. Posted is
+// terminal: it records something that happened on TikTok, not a label, so a
+// click cannot undo it.
+export function toggleReady(status) {
+  const cur = statusOf({ status });
+  if (cur === 'posted') return 'posted';
+  return cur === 'ready' ? 'draft' : 'ready';
+}
+
 // A fresh project record. Caller supplies id + now so this stays pure.
 export function makeProject({ id, format, now }) {
   return {
     id,
     format: FORMATS[format] ? format : 'trivia',
     name: '',
-    status: 'draft',           // 'draft' | 'posted'
+    status: 'draft',           // see STATUSES: 'draft' | 'ready' | 'posted'
     createdAt: now,
     updatedAt: now,
     postedAt: null,
@@ -242,7 +287,7 @@ export function projectSearchText(rec) {
     rec?.actor, rec?.year,
     rec?.postTitle,
     fmt.label, fmt.key,
-    rec?.status === 'posted' ? 'posted' : 'draft',
+    statusOf(rec),
   ].filter(Boolean).join(' ').toLowerCase();
 }
 
