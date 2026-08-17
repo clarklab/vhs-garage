@@ -139,6 +139,20 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
         </button>
       </div>
 
+      <!-- Posting cadence. Spacing posts matters more than how many you have
+           ready, so the queue size and the clock sit on the same row. -->
+      <div id="cadence-card" class="mt-3 hidden items-center gap-3 rounded-xl border px-4 py-3">
+        <span id="cadence-icon" class="material-symbols-outlined text-[22px] leading-none"></span>
+        <div class="min-w-0 flex-1">
+          <p class="flex flex-wrap items-baseline gap-x-2">
+            <span id="cadence-headline" class="text-sm font-bold tracking-tight"></span>
+            <span id="cadence-label" class="text-[11px] font-bold uppercase tracking-wider"></span>
+          </p>
+          <p id="cadence-detail" class="mt-0.5 text-xs text-neutral-400"></p>
+        </div>
+        <span id="cadence-queue" class="hidden flex-none rounded-full bg-violet-500/15 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-violet-300"></span>
+      </div>
+
       <div class="mt-10 flex flex-wrap items-center justify-between gap-3">
         <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Open</h2>
         <div class="flex items-center gap-3">

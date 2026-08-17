@@ -34,6 +34,7 @@ import { initBatch, refreshBatch } from './batch.js';
 // Same deal for the Reports screen. loadPosts is shared with the hashtag panel
 // below so a single home render does not page video/list twice.
 import { initReports, showReports, loadPosts, resetPostsCache } from './reports.js';
+import { cadence, lastPostAt } from './cadence.js';
 // Remembered movie-file handles (batch mode's folder grant). Read-only here:
 // the editor offers a one-click reload when a reopened project's file is known.
 import { fsSupported, resolveMovie, armHandle } from './filestore.js';
@@ -56,6 +57,8 @@ const els = {
   back: $('back-btn'), formatChip: $('format-chip'), projectName: $('project-name'),
   download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
   statusChip: $('status-chip'), toast: $('toast'), toastBody: $('toast-body'),
+  cadenceCard: $('cadence-card'), cadenceIcon: $('cadence-icon'), cadenceHeadline: $('cadence-headline'),
+  cadenceLabel: $('cadence-label'), cadenceDetail: $('cadence-detail'), cadenceQueue: $('cadence-queue'),
   // trivia pane
   paneTrivia: $('pane-trivia'), file: $('file-input'), videoNote: $('video-note'),
   triviaSeed: $('trivia-seed'), triviaSeedShow: $('trivia-seed-show'),
@@ -716,6 +719,11 @@ async function renderLibrary() {
   }
   // Search first, so the pills count what you can actually see. A search that
   // says "12 drafts" while showing two is worse than no counts at all.
+  // Before the search box narrows anything: the cadence row reports on the
+  // whole library, since a search for "jaws" does not change when you last
+  // posted or how many sets are queued.
+  refreshCadence(list).catch((e) => console.error('[tik] cadence render failed:', e));
+
   const q = librarySearch.trim().toLowerCase();
   if (q) list = list.filter((r) => matchesSearch(r, q));
 
@@ -1057,6 +1065,58 @@ function setHistoryPrompt(scope) {
   els.reportsHint.textContent = needed
     ? 'Post-level stats need TikTok’s video.list permission, which is a separate approval from sign-in.'
     : '';
+}
+
+// ---- posting cadence ----
+//
+// Tones live here rather than in cadence.js so the pure module stays free of
+// Tailwind: it decides WHICH state, this decides what that state looks like.
+const CADENCE_TONE = {
+  green: { wrap: 'border-green-500/30 bg-green-500/5', icon: 'text-green-400', label: 'text-green-400' },
+  amber: { wrap: 'border-amber-400/30 bg-amber-400/5', icon: 'text-amber-300', label: 'text-amber-300' },
+  red: { wrap: 'border-red-500/40 bg-red-500/10', icon: 'text-red-400', label: 'text-red-400' },
+  grey: { wrap: 'border-neutral-800 bg-neutral-900', icon: 'text-neutral-500', label: 'text-neutral-500' },
+};
+
+function renderCadence(state, readyCount) {
+  const tone = CADENCE_TONE[state.tone] || CADENCE_TONE.grey;
+  els.cadenceCard.className = `mt-3 flex items-center gap-3 rounded-xl border px-4 py-3 ${tone.wrap}`;
+  els.cadenceIcon.textContent = state.icon;
+  els.cadenceIcon.className = `material-symbols-outlined text-[22px] leading-none ${tone.icon}`;
+  els.cadenceHeadline.textContent = state.headline;
+  els.cadenceLabel.textContent = state.label;
+  els.cadenceLabel.className = `text-[11px] font-bold uppercase tracking-wider ${tone.label}`;
+  els.cadenceDetail.textContent = state.detail;
+  // The queue only earns its space when there is something in it.
+  const queued = readyCount > 0;
+  els.cadenceQueue.classList.toggle('hidden', !queued);
+  if (queued) els.cadenceQueue.textContent = `${readyCount} ready`;
+}
+
+async function refreshCadence(all) {
+  const readyCount = all.filter((r) => statusOf(r) === 'ready').length;
+  if (!isSignedIn() || tagReportScopeMissing) {
+    // Without TikTok's history the studio only knows about sets posted through
+    // the API from here, and most are finished by hand in the app. Guessing
+    // from that partial record would show red on a day of manual posting,
+    // which is precisely the wrong answer, so say nothing instead.
+    renderCadence(cadence(null), readyCount);
+    els.cadenceCard.classList.remove('hidden');
+    return;
+  }
+  try {
+    // Shares loadPosts()'s cache and in-flight de-duplication with the tag
+    // report, so opening the Posts view is still one TikTok call, not two.
+    const data = await loadPosts();
+    if (data.scope === 'missing') { renderCadence(cadence(null), readyCount); return; }
+    const at = lastPostAt({ posts: data.posts || [], projects: all });
+    renderCadence(cadence(at), readyCount);
+  } catch (e) {
+    console.error('[tik] cadence check failed:', e);
+    renderCadence(cadence(null), readyCount);
+  } finally {
+    els.cadenceCard.classList.remove('hidden');
+  }
 }
 
 async function refreshTagReport() {
