@@ -21,16 +21,16 @@ export const SPECS = [
       display: '/images/docs/leatherface/leatherface-print-file-white.png',
       files: [
         {
+          name: 'leatherface-print-file.png',
+          href: '/images/docs/leatherface/leatherface-print-file.png',
+          size: '400 × 217',
+          what: 'Standard',
+        },
+        {
           name: 'leatherface-print-file-large.png',
           href: '/images/docs/leatherface/leatherface-print-file-large.png',
           size: '1600 × 868',
-          what: 'Full-size dither',
-        },
-        {
-          name: 'leatherface-print-file-white.png',
-          href: '/images/docs/leatherface/leatherface-print-file-white.png',
-          size: '400 × 217',
-          what: 'White on transparent',
+          what: 'Full size',
         },
       ],
     },
