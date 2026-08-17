@@ -43,8 +43,7 @@ export const SPECS = [
         title: 'Gradient pull',
         href: '/images/docs/leatherface/leatherface-preview-tee-gradient.png',
         ink: 'Neon orange into neon pink',
-        note:
-          'Split fountain — both inks sit side by side in one screen and blend under a single pull. The fade runs down the image, so the ink gets pulled across the screen horizontally. Blend shifts a little every pull, so no two shirts come out identical.',
+        note: 'Split fountain. Orange up top, pink down low. Every one comes out a little different.',
       },
       {
         key: 'B',
