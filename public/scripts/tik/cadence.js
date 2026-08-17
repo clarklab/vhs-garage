@@ -6,13 +6,16 @@
 // a US audience is not a post, it is a post that gets seen at 9am with eight
 // hours of the feed stacked on top of it, so the hours outside the window do
 // not count against you and never turn the row red. Inside the window, four
-// posts across twelve hours is one every four hours: 9am, 1pm, 5pm, 9pm.
+// posts across fourteen hours is one roughly every four and a half hours:
+// 9am, 1:40pm, 6:20pm, 11pm.
 
 export const WINDOW_START_HOUR = 9;   // local time — 9am
-export const WINDOW_END_HOUR = 21;    // local time — 9pm
+export const WINDOW_END_HOUR = 23;    // local time — 11pm
 export const POSTS_PER_DAY = 4;
 
-// Four posts with three gaps between them across a twelve-hour window.
+// Four posts with three gaps between them across the window. Widening the
+// window without changing the count spreads the posts further apart rather
+// than adding one, which is the point: the same four posts get more room.
 export const SPACING_HOURS = (WINDOW_END_HOUR - WINDOW_START_HOUR) / (POSTS_PER_DAY - 1);
 
 // How far off the ideal slot still counts as "now". Asymmetric on purpose:
