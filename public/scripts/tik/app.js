@@ -34,7 +34,7 @@ import { initBatch, refreshBatch } from './batch.js';
 // Same deal for the Reports screen. loadPosts is shared with the hashtag panel
 // below so a single home render does not page video/list twice.
 import { initReports, showReports, loadPosts, resetPostsCache } from './reports.js';
-import { cadence, lastPostAt } from './cadence.js';
+import { cadence, lastPostAt, runway, dayLabel } from './cadence.js';
 // Remembered movie-file handles (batch mode's folder grant). Read-only here:
 // the editor offers a one-click reload when a reopened project's file is known.
 import { fsSupported, resolveMovie, armHandle } from './filestore.js';
@@ -59,7 +59,8 @@ const els = {
   statusChip: $('status-chip'), toast: $('toast'), toastBody: $('toast-body'),
   cadenceCard: $('cadence-card'), cadenceGhost: $('cadence-ghost'), cadenceLive: $('cadence-live'),
   cadenceIcon: $('cadence-icon'), cadenceHeadline: $('cadence-headline'),
-  cadenceLabel: $('cadence-label'), cadenceDetail: $('cadence-detail'), cadenceQueue: $('cadence-queue'),
+  cadenceLabel: $('cadence-label'), cadenceDetail: $('cadence-detail'),
+  cadenceReadyPill: $('cadence-ready'), cadenceDraftsPill: $('cadence-drafts'),
   // trivia pane
   paneTrivia: $('pane-trivia'), file: $('file-input'), videoNote: $('video-note'),
   triviaSeed: $('trivia-seed'), triviaSeedShow: $('trivia-seed-show'),
@@ -1077,6 +1078,7 @@ const CADENCE_TONE = {
   green: { wrap: 'border-green-500/30 bg-green-500/5', icon: 'text-green-400', label: 'text-green-400' },
   amber: { wrap: 'border-amber-400/30 bg-amber-400/5', icon: 'text-amber-300', label: 'text-amber-300' },
   red: { wrap: 'border-red-500/40 bg-red-500/10', icon: 'text-red-400', label: 'text-red-400' },
+  blue: { wrap: 'border-sky-500/25 bg-sky-500/5', icon: 'text-sky-300', label: 'text-sky-300' },
   grey: { wrap: 'border-neutral-800 bg-neutral-900', icon: 'text-neutral-500', label: 'text-neutral-500' },
 };
 
@@ -1089,27 +1091,31 @@ const CADENCE_CARD = 'flex items-center gap-3 rounded-xl border px-4 py-3';
 // fetched, which is at most one TTL stale and never blank.
 let cadenceReady = false;
 
-// The queue count is local, so it lands immediately — no reason to make it
-// wait behind a network call it has nothing to do with.
-function renderCadenceQueue(readyCount) {
-  const queued = readyCount > 0;
-  els.cadenceQueue.classList.toggle('hidden', !queued);
-  if (queued) els.cadenceQueue.textContent = `${readyCount} ready`;
+// The shelf. Both counts are local, so they land immediately — no reason to
+// make them wait behind a network call they have nothing to do with.
+function renderCadenceShelf(counts) {
+  const shelf = runway(counts);
+  const pill = (el, n, word, days) => {
+    el.classList.toggle('hidden', n === 0);
+    if (n > 0) el.textContent = `${n} ${word} · ${dayLabel(days)}`;
+  };
+  pill(els.cadenceReadyPill, shelf.ready, 'ready', shelf.readyDays);
+  pill(els.cadenceDraftsPill, shelf.drafts, shelf.drafts === 1 ? 'draft' : 'drafts', shelf.draftDays);
 }
 
 // Shown while TikTok is being asked. The card holds its own space from the
 // first paint: a row that appears only once the answer lands reads as a
 // finished page that then shoves everything down.
-function showCadenceLoading(readyCount) {
+function showCadenceLoading(counts) {
   els.cadenceCard.className = `${CADENCE_CARD} ${CADENCE_TONE.grey.wrap}`;
   els.cadenceCard.setAttribute('aria-busy', 'true');
   els.cadenceGhost.classList.remove('hidden');
   els.cadenceLive.classList.add('hidden');
   els.cadenceLive.classList.remove('flex');
-  renderCadenceQueue(readyCount);
+  renderCadenceShelf(counts);
 }
 
-function renderCadence(state, readyCount) {
+function renderCadence(state, counts) {
   cadenceReady = true;
   const tone = CADENCE_TONE[state.tone] || CADENCE_TONE.grey;
   els.cadenceCard.className = `${CADENCE_CARD} ${tone.wrap}`;
@@ -1123,32 +1129,35 @@ function renderCadence(state, readyCount) {
   els.cadenceLabel.textContent = state.label;
   els.cadenceLabel.className = `text-[11px] font-bold uppercase tracking-wider ${tone.label}`;
   els.cadenceDetail.textContent = state.detail;
-  renderCadenceQueue(readyCount);
+  renderCadenceShelf(counts);
 }
 
 async function refreshCadence(all) {
-  const readyCount = all.filter((r) => statusOf(r) === 'ready').length;
-  // The queue count is local either way, so it updates on every render.
-  if (cadenceReady) renderCadenceQueue(readyCount);
-  else showCadenceLoading(readyCount);
+  const counts = {
+    ready: all.filter((r) => statusOf(r) === 'ready').length,
+    drafts: all.filter((r) => statusOf(r) === 'draft').length,
+  };
+  // The shelf is local either way, so it updates on every render.
+  if (cadenceReady) renderCadenceShelf(counts);
+  else showCadenceLoading(counts);
   if (!isSignedIn() || tagReportScopeMissing) {
     // Without TikTok's history the studio only knows about sets posted through
     // the API from here, and most are finished by hand in the app. Guessing
     // from that partial record would show red on a day of manual posting,
     // which is precisely the wrong answer, so say nothing instead.
-    renderCadence(cadence(null), readyCount);
+    renderCadence(cadence(null), counts);
     return;
   }
   try {
     // Shares loadPosts()'s cache and in-flight de-duplication with the tag
     // report, so opening the Posts view is still one TikTok call, not two.
     const data = await loadPosts();
-    if (data.scope === 'missing') { renderCadence(cadence(null), readyCount); return; }
+    if (data.scope === 'missing') { renderCadence(cadence(null), counts); return; }
     const at = lastPostAt({ posts: data.posts || [], projects: all });
-    renderCadence(cadence(at), readyCount);
+    renderCadence(cadence(at), counts);
   } catch (e) {
     console.error('[tik] cadence check failed:', e);
-    renderCadence(cadence(null), readyCount);
+    renderCadence(cadence(null), counts);
   }
 }
 
