@@ -70,9 +70,17 @@ test('after an overnight gap the next slot is when the window opens', () => {
 test('nothing is overdue outside the window, however long it has been', () => {
   // This is the reason the window exists. An overnight gap is the plan
   // working, not the plan slipping, and 3am is never a reason to post.
-  for (const [day, hour] of [[17, 2], [17, 6], [17, 23], [18, 0]]) {
-    const c = cadence(on(16, 12), on(day, hour));
-    assert.equal(c.key, 'closed', `${day}@${hour}h said ${c.key}`);
+  // Derived from the constants, not hardcoded hours: widening the window is a
+  // one-line change and this test has to keep testing the right side of it.
+  const shut = [
+    [17, 1, 0], [17, 4, 0],                       // the small hours
+    [17, WINDOW_START_HOUR - 1, 0],               // just before it opens
+    [17, WINDOW_END_HOUR, 1],                     // one minute past the last slot
+    [18, 0, 0],                                   // over midnight
+  ];
+  for (const [day, hour, min] of shut) {
+    const c = cadence(on(16, 12), on(day, hour, min));
+    assert.equal(c.key, 'closed', `${day}@${hour}:${String(min).padStart(2, '0')} said ${c.key}`);
     assert.match(c.detail, /resting until/i);
   }
 });
