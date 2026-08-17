@@ -16,6 +16,7 @@ import {
   FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, renumberYearEntries,
   relativeTime, projectDisplayName, pickOutro, nextOutro, isIntroSlide, isOutroSlide, matchesSearch,
+  STATUSES, statusOf, statusLabel, statusAfterOutroEdit, toggleReady,
 } from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
@@ -54,6 +55,7 @@ const els = {
   // editor bar
   back: $('back-btn'), formatChip: $('format-chip'), projectName: $('project-name'),
   download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
+  statusChip: $('status-chip'), toast: $('toast'), toastBody: $('toast-body'),
   // trivia pane
   paneTrivia: $('pane-trivia'), file: $('file-input'), videoNote: $('video-note'),
   triviaSeed: $('trivia-seed'), triviaSeedShow: $('trivia-seed-show'),
@@ -375,6 +377,7 @@ function enterEditor() {
   showScreen('editor');
   history.replaceState({}, '', `${location.pathname}${location.search}#p/${project.id}`);
   applyFormatUI();
+  renderStatusChip();
   els.projectName.value = project.name || '';
   els.postTitleInput.value = project.postTitle || '';
   els.postDescInput.value = project.postDesc || '';
@@ -524,6 +527,67 @@ function syncPostDefaults() {
 }
 
 // ================= Library =================
+// ---- status: draft → ready → posted ----
+//
+// One place decides what each state looks like, because the same three colors
+// appear on the editor chip, the grid card and the list row. Ready is violet
+// (the app's accent) so a queue of finished sets reads at a glance against the
+// amber drafts and green posted.
+const STATUS_STYLE = {
+  draft: { chip: 'bg-neutral-800 text-amber-300', onImage: 'bg-neutral-950/80 text-amber-300' },
+  ready: { chip: 'bg-violet-500 text-neutral-950', onImage: 'bg-violet-500/90 text-neutral-950' },
+  posted: { chip: 'bg-green-500 text-neutral-950', onImage: 'bg-green-500/90 text-neutral-950' },
+};
+
+let toastTimer = null;
+// A short confirmation for something that happened without the user clicking
+// the thing it happened to — auto-promotion to Ready being the case that
+// prompted it. A silent status change is indistinguishable from a bug.
+function toast(message, tone = 'ready') {
+  const style = STATUS_STYLE[tone] || STATUS_STYLE.ready;
+  els.toastBody.textContent = message;
+  els.toastBody.className = `flex items-center gap-2 rounded-full border border-neutral-950/20 px-4 py-2 text-sm font-bold shadow-lg ${style.chip}`;
+  els.toast.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => els.toast.classList.add('hidden'), 2600);
+}
+
+function renderStatusChip() {
+  if (!project) return;
+  const key = statusOf(project);
+  els.statusChip.textContent = statusLabel(project);
+  els.statusChip.className = `rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide transition ${STATUS_STYLE[key].chip} ${
+    key === 'posted' ? 'cursor-default' : 'hover:opacity-80'}`;
+  els.statusChip.title = key === 'posted'
+    ? 'Posted to TikTok'
+    : key === 'ready'
+      ? 'Reviewed and queued — click to send it back to drafts'
+      : 'Still a draft — editing the sign-off marks it Ready, or click to mark it now';
+  els.statusChip.disabled = key === 'posted';
+}
+
+// Editing the sign-off means the review reached the bottom of the set, so the
+// set is done. Fires from every path that can change that slide (typing, the
+// font nudges, swapping the line), and is a no-op once the set has left draft.
+function noteOutroReviewed(slide) {
+  if (!project || !isOutroSlide(slide)) return;
+  const next = statusAfterOutroEdit(project.status);
+  if (next === statusOf(project)) return;
+  project.status = next;
+  renderStatusChip();
+  toast('Marked as READY');
+}
+
+els.statusChip.addEventListener('click', () => {
+  if (!project) return;
+  const next = toggleReady(project.status);
+  if (next === statusOf(project)) return;
+  project.status = next;
+  renderStatusChip();
+  markDirty();
+  toast(next === 'ready' ? 'Marked as READY' : 'Back to draft', next);
+});
+
 function formatBadge(rec) {
   const f = FORMATS[rec.format] || FORMATS.trivia;
   return `<span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${f.chip}">${f.label}</span>`;
@@ -594,13 +658,17 @@ const GRID_CLASS = {
 
 function renderLibraryChrome(counts) {
   els.libraryFilters.innerHTML = '';
-  for (const [key, label] of [['all', 'All'], ['draft', 'Drafts'], ['posted', 'Posted']]) {
+  const pills = [['all', 'All'], ...STATUSES.map((st) => [st.key, st.plural])];
+  for (const [key, label] of pills) {
     const n = counts[key] || 0;
     const on = libFilter === key;
     const pill = document.createElement('button');
     pill.className = `flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
       on ? 'border-neutral-600 bg-neutral-800 text-neutral-100' : 'border-neutral-800 text-neutral-500 hover:text-neutral-300'}`;
-    pill.innerHTML = `${label}<span class="tabular-nums ${on ? 'text-neutral-400' : 'text-neutral-600'}">${n}</span>`;
+    // Ready is the count that matters day to day — it is the size of the
+    // queue — so it keeps its accent even when the pill is not selected.
+    const tint = key === 'ready' && n ? 'text-violet-300' : on ? 'text-neutral-400' : 'text-neutral-600';
+    pill.innerHTML = `${label}<span class="tabular-nums ${tint}">${n}</span>`;
     // A filter that empties the screen is a dead end, so an empty bucket is
     // shown with its zero but cannot be selected.
     pill.disabled = n === 0 && key !== 'all';
@@ -651,24 +719,20 @@ async function renderLibrary() {
   const q = librarySearch.trim().toLowerCase();
   if (q) list = list.filter((r) => matchesSearch(r, q));
 
-  const counts = {
-    all: list.length,
-    draft: list.filter((r) => r.status !== 'posted').length,
-    posted: list.filter((r) => r.status === 'posted').length,
-  };
+  const counts = { all: list.length };
+  for (const st of STATUSES) counts[st.key] = list.filter((r) => statusOf(r) === st.key).length;
   // A filter whose bucket emptied (last draft posted) would otherwise strand
   // the screen on an empty list with no obvious way back.
   if (libFilter !== 'all' && !counts[libFilter]) libFilter = 'all';
   renderLibraryChrome(counts);
 
-  const shown = libFilter === 'all' ? list
-    : list.filter((r) => (libFilter === 'posted') === (r.status === 'posted'));
+  const shown = libFilter === 'all' ? list : list.filter((r) => statusOf(r) === libFilter);
   els.grid.className = GRID_CLASS[libView] || GRID_CLASS.grid;
   els.libraryEmpty.classList.toggle('hidden', shown.length > 0);
   if (!shown.length) {
     els.libraryEmpty.textContent = q
       ? `Nothing matches “${librarySearch.trim()}”.`
-      : 'Nothing saved yet — drafts and posted TikToks land here automatically as you work.';
+      : 'Nothing saved yet — drafts, ready-to-post sets and posted TikToks land here automatically as you work.';
   }
 
   const listView = libView === 'list';
@@ -697,12 +761,32 @@ async function renderLibrary() {
       ph.appendChild(iconSpan((FORMATS[rec.format] || FORMATS.trivia).icon, 'text-[40px]'));
       frame.appendChild(ph);
     }
-    const posted = rec.status === 'posted';
+    const key = statusOf(rec);
     const badge = document.createElement('span');
+    const badgeSkin = listView ? STATUS_STYLE[key].chip : STATUS_STYLE[key].onImage;
     badge.className = listView
-      ? `flex-none rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${posted ? 'bg-green-500/90 text-neutral-950' : 'bg-neutral-800 text-amber-300'}`
-      : `absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${posted ? 'bg-green-500/90 text-neutral-950' : 'bg-neutral-950/80 text-amber-300'}`;
-    badge.textContent = posted ? 'Posted' : 'Draft';
+      ? `flex-none rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${badgeSkin}`
+      : `absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${badgeSkin}`;
+    badge.textContent = statusLabel(rec);
+    // Flipping a set in or out of the queue without opening it: the whole point
+    // of Ready is bulk, and bulk means doing it from the grid.
+    if (key !== 'posted') {
+      badge.classList.add('cursor-pointer', 'hover:opacity-80');
+      badge.setAttribute('role', 'button');
+      badge.title = key === 'ready' ? 'Send back to drafts' : 'Mark Ready to post';
+      badge.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const next = toggleReady(rec.status);
+        try {
+          await putProject({ ...rec, status: next, updatedAt: Date.now() });
+          toast(next === 'ready' ? 'Marked as READY' : 'Back to draft', next);
+          await renderLibrary();
+        } catch (err) {
+          console.error('[tik] status change failed:', err);
+          alert('Couldn’t change that status — check the console.');
+        }
+      });
+    }
     if (!listView) frame.appendChild(badge);
 
     const del = document.createElement('span');
@@ -2011,6 +2095,7 @@ function renderSlide(slide, index) {
   ta.addEventListener('input', () => {
     slides = editCaption(slides, slide.id, ta.value);
     redrawThumb();
+    noteOutroReviewed(slide);
     markDirty();
   });
   mid.append(ta);
@@ -2052,6 +2137,7 @@ function renderSlide(slide, index) {
     slide.fontScale = next; // keep the closure current for redraws
     slides = slides.map((s) => (s.id === slide.id ? { ...s, fontScale: next } : s));
     redrawThumb();
+    noteOutroReviewed(slide);
     markDirty();
   };
   fontDown.addEventListener('click', () => nudgeFont(-0.1));
@@ -2096,6 +2182,7 @@ function renderSlide(slide, index) {
       slides = editCaption(slides, slide.id, line);
       ta.value = line;
       redrawThumb();
+      noteOutroReviewed(slide);
       markDirty();
       els.status.textContent = 'New sign-off.';
     });
@@ -2341,6 +2428,7 @@ els.post.addEventListener('click', async () => {
       // Mark it posted and save immediately, so the library reflects reality.
       project.status = 'posted';
       project.postedAt = Date.now();
+      renderStatusChip();
       let savedNote = 'Saved to your library as posted.';
       try {
         await saveNow();

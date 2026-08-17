@@ -516,6 +516,12 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
     <!-- ============ EDITOR ============ -->
     <!-- Full-slide preview. Composed by the same code path as the upload, so a
          line break judged here is the one that ships. -->
+    {/* Transient confirmation for things that happen without a click on them,
+        like a set promoting itself to Ready. Sits above the preview modal. */}
+    <div id="toast" class="pointer-events-none fixed inset-x-0 top-4 z-[60] flex hidden justify-center px-4">
+      <div id="toast-body" class="flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-bold shadow-lg"></div>
+    </div>
+
     <div id="slide-preview" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
       <div class="flex max-h-full flex-col items-center gap-2">
         <div class="flex w-full items-center justify-between gap-4">
@@ -535,6 +541,7 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
           <span class="material-symbols-outlined text-[16px] leading-none">arrow_back</span> Library
         </button>
         <span id="format-chip" class="rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide"></span>
+        <button id="status-chip" class="rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide transition"></button>
         <input id="project-name" class="min-w-0 flex-1 basis-40 bg-transparent text-base font-bold tracking-tight text-neutral-100 outline-none placeholder:text-neutral-600" placeholder="Untitled" maxlength="80" />
         <button id="download-btn" disabled
                 class="flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"

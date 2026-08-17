@@ -4,6 +4,7 @@ import {
   FORMATS, YEAR_LISTS, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, relativeTime, projectDisplayName,
   YEAR_LIST_SIZE, numberWord, renumberYearEntries, matchesSearch,
+  STATUSES, statusOf, statusLabel, statusAfterOutroEdit, toggleReady,
 } from '../../public/scripts/tik/project.js';
 import { houseSetByKey } from '../../public/scripts/tik/hashtags.js';
 
@@ -325,4 +326,60 @@ test('matchesSearch never throws on a half-built record', () => {
   for (const r of [{}, { format: 'nope' }, null]) {
     assert.equal(typeof matchesSearch(r, 'x'), 'boolean');
   }
+});
+
+
+// ---- draft → ready → posted ----
+
+test('the status table is the three states in posting order', () => {
+  assert.deepEqual(STATUSES.map((s) => s.key), ['draft', 'ready', 'posted']);
+  for (const st of STATUSES) {
+    assert.ok(st.label, `${st.key} has no label`);
+    assert.ok(st.plural, `${st.key} has no plural`);
+  }
+});
+
+test('a new project starts as a draft', () => {
+  assert.equal(statusOf(makeProject({ id: 'a', format: 'trivia', now: 1 })), 'draft');
+});
+
+test('anything unrecognized reads as a draft, not as nothing', () => {
+  // Every record saved before 'ready' existed, plus any junk from a hand-edited
+  // blob. A record that matched no filter would vanish from the library.
+  for (const bad of [undefined, null, {}, { status: '' }, { status: 'READY' }, { status: 'archived' }, { status: 7 }]) {
+    assert.equal(statusOf(bad), 'draft', `${JSON.stringify(bad)} did not fall back`);
+  }
+  assert.equal(statusLabel({ status: 'nonsense' }), 'Draft');
+  assert.equal(statusLabel({ status: 'ready' }), 'Ready');
+});
+
+test('editing the outro promotes a draft and leaves everything else alone', () => {
+  assert.equal(statusAfterOutroEdit('draft'), 'ready');
+  assert.equal(statusAfterOutroEdit(undefined), 'ready');   // legacy record
+  // Already reviewed, or already on TikTok: do not move it.
+  assert.equal(statusAfterOutroEdit('ready'), 'ready');
+  assert.equal(statusAfterOutroEdit('posted'), 'posted');
+});
+
+test('promotion is idempotent — typing in the outro cannot ratchet past ready', () => {
+  let s = 'draft';
+  for (let i = 0; i < 25; i++) s = statusAfterOutroEdit(s);   // one per keystroke
+  assert.equal(s, 'ready');
+});
+
+test('the manual toggle flips draft and ready, and posted is terminal', () => {
+  assert.equal(toggleReady('draft'), 'ready');
+  assert.equal(toggleReady('ready'), 'draft');
+  assert.equal(toggleReady(undefined), 'ready');
+  // Posted records something that happened on TikTok; a click cannot undo it.
+  assert.equal(toggleReady('posted'), 'posted');
+});
+
+test('searching finds sets by status word', () => {
+  const rec = { name: 'Jaws', format: 'trivia', status: 'ready' };
+  assert.ok(matchesSearch(rec, 'ready'));
+  assert.ok(matchesSearch(rec, 'jaws ready'));
+  assert.ok(!matchesSearch(rec, 'posted'));
+  // A legacy record with no status is still findable as a draft.
+  assert.ok(matchesSearch({ name: 'Alien', format: 'trivia' }, 'draft'));
 });
