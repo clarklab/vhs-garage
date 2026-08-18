@@ -10,8 +10,9 @@ const usd = (n) => `$${n.toFixed(2)}`;
 
 // Money, all derived — change a quantity or the fee and every figure below
 // follows. Nothing here is typed in twice.
-const { printingFee, printer, sellPrice } = spec.money;
-const totalCost = total + printingFee;
+const { printingPerShirt, printer, sellPrice } = spec.money;
+const printingTotal = printingPerShirt * totalUnits;
+const totalCost = total + printingTotal;
 const costPerShirt = totalCost / totalUnits;
 const revenue = sellPrice * totalUnits;
 const profit = revenue - totalCost;
@@ -301,8 +302,8 @@ const profitPerShirt = profit / totalUnits;
               </tr>
               <tr>
                 <td class="k">Printing</td>
-                <td>{printer}</td>
-                <td class="num">{usd(printingFee)}</td>
+                <td>{printer} &nbsp;·&nbsp; {usd(printingPerShirt)} each</td>
+                <td class="num">{usd(printingTotal)}</td>
               </tr>
               <tr class="rule">
                 <td class="k">Total cost</td>
