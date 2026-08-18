@@ -9,7 +9,7 @@ export const SPECS = [
   {
     id: 'leatherface',
     docNo: 'VHSG-APP-001',
-    rev: 'F',
+    rev: 'G',
     title: 'Leatherface',
     subtitle: 'Screenprint Spec',
     issued: '2026-08-16',
@@ -73,7 +73,7 @@ export const SPECS = [
     // Everything downstream of this (cost per shirt, profit) is computed on
     // the page from these three numbers plus the size run.
     money: {
-      printingFee: 150,
+      printingPerShirt: 2,
       printer: 'Julia',
       sellPrice: 30,
     },
