@@ -7,6 +7,7 @@
 // - POST { action: 'trivia', imdbId }       → { movie, trivia, total, truncated, cached }
 // - POST { action: 'trivia', query, year }  → same, resolving the name first
 // - POST { action: 'quotes', imdbId }       → { movie, quotes, total, truncated, cached }
+// - POST { action: 'quotes', query, year }  → same, resolving the name first
 //
 // Trivia and quotes are cached in Blobs for a day. A film's lists barely move,
 // the vote counts move slowly, and a batch run over ten movies would otherwise

@@ -123,7 +123,7 @@ test('quotePlainText prefers plainText then joins character lines', () => {
   assert.equal(quotePlainText({ text: { plainText: "I'll be back." } }), "I'll be back.");
   assert.equal(quotePlainText({
     lines: [
-      { characters: [{ displayName: 'Terminator' }], text: "I'll be back." },
+      { characters: [{ character: 'Terminator' }], text: "I'll be back." },
     ],
   }), "Terminator: I'll be back.");
   assert.equal(quotePlainText({ text: { plainText: '  ' } }), '');
@@ -144,6 +144,21 @@ test('normalizeQuote and rankQuotes reuse trivia scoring', () => {
   const ranked = rankQuotes([b, a]);
   assert.deepEqual(ranked.map((x) => x.id), ['q1', 'q2']);
   assert.deepEqual(rankQuotes([b, a], { includeSpoilers: false }).map((x) => x.id), ['q1']);
+});
+
+test('normalizeQuote joins TitleQuote lines and skips stage directions', () => {
+  const q = normalizeQuote({
+    id: 'qt0001',
+    isSpoiler: false,
+    interestScore: { usersInterested: 900, usersVoted: 910 },
+    lines: [
+      { text: null, stageDirection: '[drawing a gun]', characters: [] },
+      { text: "I'll be back.", characters: [{ character: 'The Terminator' }] },
+    ],
+  });
+  assert.ok(q);
+  assert.equal(q.text, "The Terminator: I'll be back.");
+  assert.equal(q.score, 890);
 });
 
 // ---- the pool ----

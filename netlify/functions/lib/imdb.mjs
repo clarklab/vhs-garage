@@ -55,8 +55,7 @@ const QUOTES_QUERY = `query TikQuotes($id: ID!, $first: Int!, $after: ID) {
       pageInfo { hasNextPage endCursor }
       edges { node {
         id
-        text { plainText }
-        lines { text characters { displayName } }
+        lines { text characters { character } }
         interestScore { usersInterested usersVoted }
         isSpoiler
       } }
@@ -132,17 +131,17 @@ export function rankTrivia(nodes, { includeSpoilers = true } = {}) {
 }
 
 export function quotePlainText(node) {
-  const direct = String(node?.text?.plainText || '').replace(/\s+/g, ' ').trim();
-  if (direct) return direct;
   const lines = Array.isArray(node?.lines) ? node.lines : [];
   const parts = [];
   for (const ln of lines) {
     const text = String(typeof ln?.text === 'string' ? ln.text : ln?.text?.plainText || '').replace(/\s+/g, ' ').trim();
     if (!text) continue;
-    const who = String(ln?.characters?.[0]?.displayName || '').trim();
+    const who = String(ln?.characters?.[0]?.character || '').trim();
     parts.push(who ? `${who}: ${text}` : text);
   }
-  return parts.join(' ').replace(/\s+/g, ' ').trim();
+  const fromLines = parts.join(' ').replace(/\s+/g, ' ').trim();
+  if (fromLines) return fromLines;
+  return String(node?.text?.plainText || '').replace(/\s+/g, ' ').trim();
 }
 
 export function normalizeQuote(node) {
