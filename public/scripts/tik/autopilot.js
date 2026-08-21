@@ -192,3 +192,58 @@ export async function fetchBlurbs(opts = {}) {
   }
   return { intro: data.intro || '', blurbs: data.blurbs };
 }
+
+export const QUOTES_COUNT = 8;
+
+export async function fetchImdbQuotes({ imdbId, query, year, includeSpoilers = true } = {}) {
+  const res = await fetch('/.netlify/functions/tik-imdb', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'quotes', imdbId, query, year, includeSpoilers }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'IMDb quotes lookup failed');
+  return data;
+}
+
+// OpenSubtitles misses fail open: HTTP 200 with missing:true is the normal
+// "no English file" answer, not an error. !res.ok is treated the same way so
+// Autopilot can still boil quotes with guessed times.
+export async function fetchSubtitles({ imdbId, query, year } = {}) {
+  try {
+    const res = await fetch('/.netlify/functions/tik-subtitles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imdbId, query, year }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.missing) {
+      return { cues: Array.isArray(data.cues) ? data.cues : [], missing: true, error: data.error || 'Subtitle lookup failed' };
+    }
+    return { cues: Array.isArray(data.cues) ? data.cues : [], missing: false, error: data.error || null };
+  } catch (e) {
+    return { cues: [], missing: true, error: e.message || 'Subtitle lookup failed' };
+  }
+}
+
+export async function fetchQuotesPost(opts = {}) {
+  const data = await runJob({
+    kind: 'quotes',
+    title: opts.title,
+    year: opts.year,
+    durationSeconds: opts.durationSeconds || 0,
+    count: opts.count || QUOTES_COUNT,
+    quotes: opts.quotes || [],
+    cues: opts.cues || [],
+    hints: opts.hints || [],
+    exclude: opts.exclude || [],
+    guidance: opts.guidance || '',
+    includeTitleSlide: opts.includeTitleSlide !== false,
+    includeMeta: !!opts.includeMeta,
+    model: opts.model,
+  }, opts.onProgress);
+  if (!data.suggestions?.length) {
+    throw new Error(data.error || 'Autopilot couldn’t generate quotes — try again.');
+  }
+  return { suggestions: data.suggestions, meta: data.meta || null };
+}

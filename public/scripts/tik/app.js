@@ -9,7 +9,8 @@ import { addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLID
 // used it (the hashtag panel) now goes through reports.js loadPosts().
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory } from './auth.js';
 import { publishSlideshow } from './publish.js';
-import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot } from './autopilot.js';
+import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot, fetchQuotesPost, fetchImdbQuotes, fetchSubtitles, QUOTES_COUNT } from './autopilot.js';
+import { fontScaleForQuote } from './caption.js';
 import { parseMovieName } from './filename.js';
 import { composeToCanvas, composeSlide, captionFontReady } from './compose.js';
 import {
@@ -48,7 +49,7 @@ const els = {
   home: $('screen-home'), editor: $('screen-editor'), batch: $('screen-batch'),
   reports: $('screen-reports'),
   // home
-  newTrivia: $('new-trivia'), newGuys: $('new-guys'), newYear: $('new-year'),
+  newTrivia: $('new-trivia'), newQuotes: $('new-quotes'), newGuys: $('new-guys'), newYear: $('new-year'),
   newBatch: $('new-batch'),
   grid: $('project-grid'), libraryEmpty: $('library-empty'),
   statsCard: $('stats-card'), statsCount: $('stats-count'), statsDelta: $('stats-delta'),
@@ -479,18 +480,32 @@ async function openProject(id) {
 // ---- Format-specific UI wiring ----
 // One source pane per format; only the active one is shown (panes are flex
 // columns, so "hidden" has to be swapped for "flex", not just removed).
-const PANES = { trivia: els.paneTrivia, guys: els.paneGuys, year: els.paneYear };
+const PANES = { trivia: els.paneTrivia, quotes: els.paneTrivia, guys: els.paneGuys, year: els.paneYear };
+const TRIVIA_PASTE_PLACEHOLDER = 'Optional starter prompt — paste trivia you found (IMDb, Reddit, anywhere) or give a direction; autopilot verifies and riffs on it';
+const QUOTES_PASTE_PLACEHOLDER = 'Optional — paste quotes you want, or a direction';
 function applyFormatUI() {
   const f = formatOf(project);
-  for (const [key, pane] of Object.entries(PANES)) {
-    const on = key === f.key;
+  // quotes reuses the trivia movie-file pane. Unique the values so iterating
+  // both keys can't hide Tape Trivia when the quotes entry runs second.
+  const activePane = PANES[f.key];
+  for (const pane of new Set(Object.values(PANES))) {
+    const on = pane === activePane;
     pane.classList.toggle('hidden', !on);
     pane.classList.toggle('flex', on);
   }
-  els.addScene.classList.toggle('hidden', f.key !== 'trivia');
+  els.addScene.classList.toggle('hidden', f.key !== 'trivia' && f.key !== 'quotes');
   els.formatChip.textContent = f.label;
   els.formatChip.className = `rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${f.chip}`;
   els.slidesHint.textContent = f.editorHint;
+  const quotes = f.key === 'quotes';
+  if (els.autopilot?.lastChild) {
+    els.autopilot.lastChild.textContent = quotes
+      ? 'Autopilot — title slide + quotes'
+      : 'Autopilot — title slide + trivia scenes';
+  }
+  if (els.autopilotPrompt) {
+    els.autopilotPrompt.placeholder = quotes ? QUOTES_PASTE_PLACEHOLDER : TRIVIA_PASTE_PLACEHOLDER;
+  }
 }
 
 // Once a set is written, the starter prompt / bookmarklet help / Autopilot
@@ -499,7 +514,7 @@ function applyFormatUI() {
 let seedForced = false;
 function syncSeedControls() {
   if (!els.triviaSeed) return;
-  const trivia = project?.format === 'trivia';
+  const trivia = project?.format === 'trivia' || project?.format === 'quotes';
   const written = slides.length > 0;
   const show = trivia && (!written || seedForced);
   els.triviaSeed.classList.toggle('hidden', !show);
@@ -843,6 +858,7 @@ async function renderLibrary() {
 }
 
 els.newTrivia.addEventListener('click', () => { newProject('trivia').catch((e) => console.error('[tik] new project failed:', e)); });
+els.newQuotes.addEventListener('click', () => { newProject('quotes').catch((e) => console.error('[tik] new project failed:', e)); });
 els.newGuys.addEventListener('click', () => { newProject('guys').catch((e) => console.error('[tik] new project failed:', e)); });
 els.newYear.addEventListener('click', () => { newProject('year').catch((e) => console.error('[tik] new project failed:', e)); });
 
@@ -1331,20 +1347,51 @@ els.autopilot.addEventListener('click', async () => {
   setAiBusy(true);
   const ticket = project?.id; // bail if the user opens another project mid-job
   try {
-    els.status.textContent = `Researching ${movie.query || 'the film'}…`;
-    // If the starter box holds a list of pasted facts, make one slide per fact
-    // (capped); otherwise the default 5. Title slide is always added on top.
-    const guidance = els.autopilotPrompt.value.trim();
-    const pasteItems = guidance.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
-    const count = pasteItems.length >= 2 ? Math.min(pasteItems.length, 12) : 5;
-    // Same call writes the post's own copy (hook, film hashtags, songs). Doing
-    // it here rather than in a second call is what lets the prompt forbid the
-    // hook from spoiling a fact: the model has the captions it just wrote.
-    const { suggestions: scenes, meta } = await fetchTriviaPost({
-      title: movie.title, year: movie.year, durationSeconds: els.video.duration,
-      count, includeTitleSlide: true, includeMeta: true, guidance,
-      onProgress: (m) => { els.status.textContent = `Researching ${movie.query || 'the film'} — ${m}`; },
-    });
+    const quotesMode = project.format === 'quotes';
+    const duration = els.video.duration;
+    let scenes;
+    let meta;
+    let subMissing = false;
+    if (quotesMode) {
+      els.status.textContent = 'Fetching IMDb quotes…';
+      const pack = await fetchImdbQuotes({ query: movie.title || movie.query, year: movie.year });
+      if (!pack.quotes?.length) throw new Error('IMDb has no quotes for this title.');
+      els.status.textContent = 'Fetching English subtitles…';
+      const subs = await fetchSubtitles({ imdbId: pack.movie?.id, query: movie.title, year: movie.year });
+      subMissing = !!subs.missing;
+      const pool = pack.quotes.slice(0, 20);
+      const result = await fetchQuotesPost({
+        title: movie.title || movie.query,
+        year: movie.year,
+        durationSeconds: duration,
+        count: QUOTES_COUNT,
+        quotes: pool,
+        cues: subs.cues,
+        includeTitleSlide: true,
+        includeMeta: true,
+        guidance: els.autopilotPrompt?.value || '',
+        onProgress: (msg) => { els.status.textContent = msg; },
+      });
+      scenes = result.suggestions;
+      meta = result.meta;
+    } else {
+      els.status.textContent = `Researching ${movie.query || 'the film'}…`;
+      // If the starter box holds a list of pasted facts, make one slide per fact
+      // (capped); otherwise the default 5. Title slide is always added on top.
+      const guidance = els.autopilotPrompt.value.trim();
+      const pasteItems = guidance.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+      const count = pasteItems.length >= 2 ? Math.min(pasteItems.length, 12) : 5;
+      // Same call writes the post's own copy (hook, film hashtags, songs). Doing
+      // it here rather than in a second call is what lets the prompt forbid the
+      // hook from spoiling a fact: the model has the captions it just wrote.
+      const result = await fetchTriviaPost({
+        title: movie.title, year: movie.year, durationSeconds: duration,
+        count, includeTitleSlide: true, includeMeta: true, guidance,
+        onProgress: (m) => { els.status.textContent = `Researching ${movie.query || 'the film'} — ${m}`; },
+      });
+      scenes = result.suggestions;
+      meta = result.meta;
+    }
     if (project?.id === ticket && meta) {
       project.postMeta = meta;
       syncPostDefaults();  // no-op once the user has hand-edited the copy
@@ -1356,9 +1403,11 @@ els.autopilot.addEventListener('click', async () => {
       if (!canAddSlide(slides)) break;
       els.status.textContent = `Grabbing frame ${i + 1}/${scenes.length}…`;
       const bitmap = await grabAt(scenes[i].timecode);
+      const caption = scenes[i].caption;
       slides = addSlide(slides, {
         id: String(nextId++), bitmap, blob: null,
-        caption: scenes[i].caption, timecode: scenes[i].timecode, grabHint: scenes[i].grab || '', fontScale: 1,
+        caption, timecode: scenes[i].timecode, grabHint: scenes[i].grab || '',
+        fontScale: quotesMode ? (i === 0 ? 1 : fontScaleForQuote(caption)) : 1,
         // includeTitleSlide above means the first item is the intro, not a
         // fact. Marking it is what lets its editor buttons differ from a
         // fact's — an unmarked intro gets rewritten as another fact.
@@ -1367,6 +1416,7 @@ els.autopilot.addEventListener('click', async () => {
       added++;
     }
     // Cap off with the branded outro (logo + follow CTA). Never fatal.
+    // pickOutro(project.format) so quotes get "more movie quotes".
     if (project?.id !== ticket) return;
     let outroAdded = false;
     if (added > 0 && canAddSlide(slides)) {
@@ -1379,6 +1429,10 @@ els.autopilot.addEventListener('click', async () => {
     markDirty();
     if (added === 0) {
       els.status.textContent = `Slide cap reached (${MAX_SLIDES}) — nothing added.`;
+    } else if (quotesMode) {
+      const quotes = added - 1; // first added slide is the title slide
+      const guessNote = subMissing ? ' — subtitle file missing, some times are guesses' : '';
+      els.status.textContent = `Added a title slide + ${quotes} quote${quotes === 1 ? '' : 's'}${outroAdded ? ' + outro' : ''}${guessNote} — verify captions & frames, then post.`;
     } else {
       const trivia = added - 1; // first added slide is the title slide
       els.status.textContent = `Added a title slide + ${trivia} AI scene${trivia === 1 ? '' : 's'}${outroAdded ? ' + outro' : ''} — verify the trivia, tweak captions & frames, then post.`;
@@ -2312,21 +2366,27 @@ function renderSlide(slide, index) {
       for (const b of btns) b.disabled = true;
       try {
         if (mode === 'rewrite' && isIntro) {
-          // A fresh opener; the title card stays. Every other caption goes in
-          // as "already used" so the new intro can neither repeat itself nor
-          // spoil a fact the slides are about to pay off.
-          els.status.textContent = 'Rewriting the intro…';
-          const scene = await fetchTitleSlide({
-            title: movie.title || project.name, year: movie.year,
-            durationSeconds: els.video.duration || 7200,
-            exclude: slides.map((s) => s.caption),
-            onProgress: (m) => { els.status.textContent = `Rewriting the intro — ${m}`; },
-          });
-          if (project?.id !== ticket) return;
-          slides = editCaption(slides, slide.id, scene.caption);
-          ta.value = scene.caption;
-          redrawThumb();
-          els.status.textContent = 'Intro rewritten.';
+          // Quote-a-long title is the movie name only — never the two-sentence
+          // trivia intro rewrite.
+          if (project?.format === 'quotes') {
+            els.status.textContent = 'Quote-a-long intro stays the movie name.';
+          } else {
+            // A fresh opener; the title card stays. Every other caption goes in
+            // as "already used" so the new intro can neither repeat itself nor
+            // spoil a fact the slides are about to pay off.
+            els.status.textContent = 'Rewriting the intro…';
+            const scene = await fetchTitleSlide({
+              title: movie.title || project.name, year: movie.year,
+              durationSeconds: els.video.duration || 7200,
+              exclude: slides.map((s) => s.caption),
+              onProgress: (m) => { els.status.textContent = `Rewriting the intro — ${m}`; },
+            });
+            if (project?.id !== ticket) return;
+            slides = editCaption(slides, slide.id, scene.caption);
+            ta.value = scene.caption;
+            redrawThumb();
+            els.status.textContent = 'Intro rewritten.';
+          }
         } else if (mode === 'rewrite') {
           // A fresh take on THIS fact; the frame stays.
           els.status.textContent = 'Rewriting this fact…';
