@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parsePostedMovie, movieKey, isAlreadyPosted, summarizeHistory,
+  parsePostedMovie, parsePostedQuotes, movieKey, isAlreadyPosted, summarizeHistory,
   buildQueuePrompt, normalizeQueue, QUEUE_COUNT, parseHashtags, summarizeTagRows,
 } from '../../netlify/functions/lib/queue.mjs';
 import { parseTags } from '../../public/scripts/tik/tagreport.js';
@@ -46,6 +46,28 @@ test('parsePostedMovie returns null when there is no film in the title', () => {
 test('parsePostedMovie strips a trailing year and stray quotes', () => {
   assert.equal(parsePostedMovie('Alien (1979) — movie trivia & behind-the-scenes facts'), 'Alien');
   assert.equal(parsePostedMovie('"Alien" — movie trivia & behind-the-scenes facts'), 'Alien');
+});
+
+test('parsePostedQuotes reads the quotes title and ignores trivia', () => {
+  const q = defaultPostFields('quotes', 'Terminator 2');
+  assert.equal(parsePostedQuotes(q.title, q.description), 'Terminator 2');
+  const t = defaultPostFields('trivia', 'Terminator 2');
+  assert.equal(parsePostedQuotes(t.title, t.description), null);
+  assert.equal(parsePostedMovie(q.title, q.description), null);
+  assert.equal(parsePostedMovie(t.title, t.description), 'Terminator 2');
+});
+
+test('parsePostedQuotes handles dash variants', () => {
+  assert.equal(parsePostedQuotes('Jaws — movie quotes'), 'Jaws');
+  assert.equal(parsePostedQuotes('Jaws - movie quotes'), 'Jaws');
+  assert.equal(parsePostedQuotes('Alien (1979) — movie quotes'), 'Alien');
+});
+
+test('buildQueuePrompt quotes mode asks for quotable films', () => {
+  const p = buildQueuePrompt({ format: 'quotes', posted: ['Jaws'] });
+  assert.match(p, /quote/i);
+  assert.match(p, /Jaws/);
+  assert.doesNotMatch(p, /behind-the-scenes movie trivia/);
 });
 
 // ---- matching films ----
@@ -104,6 +126,15 @@ test('summarizeHistory nulls missing metrics instead of emitting NaN', () => {
 test('summarizeHistory survives junk', () => {
   assert.deepEqual(summarizeHistory(null), []);
   assert.deepEqual(summarizeHistory([null, 7, {}]), []);
+});
+
+test('summarizeHistory format quotes vs trivia splits posts', () => {
+  const posts = [
+    row('Jaws', { create_time: 100 }),
+    { title: 'Alien — movie quotes', view_count: 200, create_time: 200 },
+  ];
+  assert.deepEqual(summarizeHistory(posts).map((r) => r.movie), ['Jaws']);
+  assert.deepEqual(summarizeHistory(posts, { format: 'quotes' }).map((r) => r.movie), ['Alien']);
 });
 
 // ---- the prompt ----

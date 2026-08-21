@@ -35,6 +35,7 @@ export const CALLS = [
     id: 'autopilot',
     group: 'Writing a set',
     what: 'Writes the slide captions',
+    formats: ['trivia'],
     detail: 'Turns your pasted facts (or its own research) into one caption per slide, plus the title-slide opener and the post copy — hook, film hashtags, soundtrack picks.',
     model: 'claude-opus-5',
     thinking: true,
@@ -60,8 +61,26 @@ export const CALLS = [
     why: 'Speed over quality: a degraded answer beats a spinner that never resolves.',
   },
   {
+    id: 'quotes-autopilot',
+    group: 'Writing a set',
+    what: 'Boils the Quote-a-long captions',
+    detail: 'Reads the top 20 IMDb quotes plus a sample of the film\u2019s subtitle file, boils each pick to the one or two lines that land, and writes the post copy. It does NOT decide the timecodes: those are matched against the full subtitle file afterwards, in code.',
+    model: 'claude-opus-5',
+    thinking: true,
+    budget: 8192,
+    budgetKey: 'DEFAULT_MAX_TOKENS',
+    // Much heavier input than the trivia prompt: 20 quotes and up to 400
+    // subtitle cues ride along as context.
+    inTokens: 11000,
+    outTokens: 1200,
+    perSlideshow: 1,
+    formats: ['quotes'],
+    why: 'Same call as the trivia writer, same reason: the captions are the product. Its input is roughly three times bigger because the subtitle context travels with it.',
+  },
+  {
     id: 'curate',
     group: 'Batch mode',
+    formats: ['trivia'],
     what: 'Ranks the trivia',
     detail: 'Reads 25 IMDb items by helpful votes and picks the 10 that will actually land on a slide, with a reason for each.',
     model: 'claude-sonnet-5',
@@ -88,6 +107,7 @@ export const CALLS = [
   {
     id: 'vision',
     group: 'Frame checking',
+    formats: ['trivia'],
     what: 'Picks the right frame',
     detail: `Grabs ${6} frames spanning about six minutes of the film and asks which one actually illustrates the caption. Only if all six are rejected does it look again somewhere else.`,
     model: 'claude-sonnet-5',
@@ -116,8 +136,17 @@ export const cost = (model, inTok, outTok) => {
 
 // What a batch of `movies` films actually costs, walking the same call sites.
 // Returns per-line detail so the page shows its work instead of one number.
-export function batchEstimate({ movies = 10, slidesPerMovie = 6 } = {}) {
+// A batch is one format or the other — the toggle in batch mode is exclusive —
+// so the estimate has to be too. `formats` on a call says which runs it takes
+// part in; a call with no `formats` runs in both (picking the films).
+//
+// The two bills are shaped differently in a way worth seeing: Quote-a-long
+// pays more per set to write (the subtitle context rides along) and nothing at
+// all to shoot, because its frames come from arithmetic instead of the frame
+// checker, which is the largest line in a trivia batch.
+export function batchEstimate({ movies = 10, slidesPerMovie = 6, format = 'trivia' } = {}) {
   const lines = CALLS
+    .filter((c) => !c.formats || c.formats.includes(format))
     .filter((c) => c.perSlideshow || c.perMovie || c.perBatch || c.perSlide)
     .map((c) => {
       const runs = (c.perBatch || 0)
@@ -129,7 +158,7 @@ export function batchEstimate({ movies = 10, slidesPerMovie = 6 } = {}) {
     })
     .filter((l) => l.runs > 0)
     .sort((a, b) => b.total - a.total);
-  return { movies, slidesPerMovie, lines, total: lines.reduce((n, l) => n + l.total, 0) };
+  return { movies, slidesPerMovie, format, lines, total: lines.reduce((n, l) => n + l.total, 0) };
 }
 
 // ---- rendering ----
@@ -173,6 +202,7 @@ function callCard(c) {
 export function modelMapHtml({ movies = 10, slidesPerMovie = 6 } = {}) {
   const groups = [...new Set(CALLS.map((c) => c.group))];
   const est = batchEstimate({ movies, slidesPerMovie });
+  const quoteEst = batchEstimate({ movies, slidesPerMovie, format: 'quotes' });
 
   return `
     <p class="max-w-2xl text-sm leading-relaxed text-neutral-400">
@@ -193,7 +223,8 @@ export function modelMapHtml({ movies = 10, slidesPerMovie = 6 } = {}) {
         What a batch of ${movies} costs
       </h3>
       <p class="mt-1 text-[11px] text-neutral-600">Assuming ${slidesPerMovie} slides per film, every draft written and every frame checked.</p>
-      <div class="mt-3 overflow-x-auto">
+      <p class="mt-2 text-[11px] font-semibold uppercase tracking-wide text-amber-300/80">Tape Trivia</p>
+      <div class="mt-2 overflow-x-auto">
         <table class="w-full min-w-[26rem] text-xs">
           <thead>
             <tr class="text-[10px] uppercase tracking-wide text-neutral-600">
@@ -219,9 +250,39 @@ export function modelMapHtml({ movies = 10, slidesPerMovie = 6 } = {}) {
           </tbody>
         </table>
       </div>
+
+      <p class="mt-5 text-[11px] font-semibold uppercase tracking-wide text-rose-300/80">Quote-a-long</p>
+      <div class="mt-2 overflow-x-auto">
+        <table class="w-full min-w-[26rem] text-xs">
+          <thead>
+            <tr class="text-[10px] uppercase tracking-wide text-neutral-600">
+              <th class="py-1 pr-3 text-left font-semibold">Call</th>
+              <th class="py-1 pr-3 text-right font-semibold">Runs</th>
+              <th class="py-1 pr-3 text-right font-semibold">Each</th>
+              <th class="py-1 text-right font-semibold">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${quoteEst.lines.map((l) => `
+              <tr>
+                <td class="py-1 pr-3 text-neutral-300">${esc(l.what)} <span class="text-neutral-600">${esc(l.model.replace('claude-', ''))}</span></td>
+                <td class="py-1 pr-3 text-right tabular-nums text-neutral-400">${l.runs}</td>
+                <td class="py-1 pr-3 text-right tabular-nums text-neutral-500">${money(l.each)}</td>
+                <td class="py-1 text-right font-semibold tabular-nums text-neutral-100">${money(l.total)}</td>
+              </tr>`).join('')}
+            <tr class="border-t border-neutral-800">
+              <td class="py-1.5 pr-3 font-bold text-neutral-200">Whole batch</td>
+              <td></td><td></td>
+              <td class="py-1.5 text-right font-bold tabular-nums text-rose-300">${money(quoteEst.total)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <p class="mt-3 text-[11px] leading-relaxed text-neutral-600">
-        Frame checking is usually the largest line, and it is images rather than intelligence: six frames cost more to send than the caption costs to write.
-        The cheapest lever is fewer or smaller frames, not a cheaper model.
+        In a Tape Trivia batch, frame checking is the largest line, and it is images rather than intelligence: six frames cost more to send than the caption costs to write.
+        Quote-a-long does not appear on that line at all — its frames come from matching the quote against the film's subtitle file, which is arithmetic and costs nothing.
+        It pays for that up front instead, in a heavier writing prompt that carries the subtitle context.
       </p>
     </section>
 

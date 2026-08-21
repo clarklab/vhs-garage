@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  AUTOPILOT_COUNT, buildAutopilotPrompt, buildTitleSlidePrompt, normalizeSuggestions, normalizeMeta, META_HOOK_MAX,
+  AUTOPILOT_COUNT, QUOTES_COUNT, buildAutopilotPrompt, buildQuotesPrompt, buildTitleSlidePrompt,
+  normalizeSuggestions, applyCueSeek, normalizeMeta, META_HOOK_MAX,
   clampText, CAPTION_TARGET, CAPTION_MAX, META_HOOK_TARGET,
 } from '../../netlify/functions/lib/autopilot.mjs';
 
@@ -441,4 +442,49 @@ test('buildTitleSlidePrompt feeds back the wording already on the post', () => {
 test('buildTitleSlidePrompt without exclusions has no dangling block', () => {
   const p = buildTitleSlidePrompt({ title: 'Jaws', durationSeconds: 7440 });
   assert.doesNotMatch(p, /Already used on this post/i);
+});
+
+test('buildQuotesPrompt asks for 8 boiled lines plus a name-only title', () => {
+  const p = buildQuotesPrompt({
+    title: 'Terminator 2',
+    year: 1991,
+    durationSeconds: 8220,
+    quotes: [{ text: "Terminator: I'll be back.", score: 900 }],
+    cues: [{ start: 72, end: 76, text: "I'll be back." }],
+  });
+  assert.match(p, /Quote-a-long|quote-a-long|movie quotes/i);
+  assert.match(p, new RegExp(String(QUOTES_COUNT)));
+  assert.match(p, /I'll be back/);
+  assert.match(p, /TITLE slide/);
+  assert.match(p, /movie name only|first line is the movie name/i);
+  assert.doesNotMatch(p, /TWO short sentences/);
+  assert.match(p, /character names/i);
+  assert.match(p, /"start"/);
+  assert.match(p, /"end"/);
+});
+
+test('buildQuotesPrompt still works with no cues', () => {
+  const p = buildQuotesPrompt({ title: 'Jaws', durationSeconds: 7000, quotes: [{ text: "You're gonna need a bigger boat." }] });
+  assert.match(p, /guess/i);
+});
+
+test('applyCueSeek prefers start/end quarter over model timecode', () => {
+  assert.equal(applyCueSeek({ caption: 'x', timecode: 9, start: 12, end: 16 }, 1000).timecode, 13);
+  assert.equal(applyCueSeek({ caption: 'x', timecode: 9 }, 1000).timecode, 9);
+});
+
+test('normalizeSuggestions keeps start and end when present', () => {
+  const out = normalizeSuggestions({
+    suggestions: [{ caption: "I'll be back.", timecode: 0, grab: 'close-up', start: 72, end: 76 }],
+  }, 8000, 8);
+  assert.equal(out[0].start, 72);
+  assert.equal(out[0].end, 76);
+  assert.equal(out[0].timecode, 73);
+});
+
+test('normalizeSuggestions keeps seek times when durationSeconds is 0', () => {
+  const out = normalizeSuggestions({
+    suggestions: [{ caption: "I'll be back.", timecode: 0, start: 72, end: 76 }],
+  }, 0, 8);
+  assert.equal(out[0].timecode, 73);
 });

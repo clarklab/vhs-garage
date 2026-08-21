@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { triviaScore, normalizeTrivia, rankTrivia, normalizeTitle } from '../../netlify/functions/lib/imdb.mjs';
+import { triviaScore, normalizeTrivia, rankTrivia, normalizeTitle, quotePlainText, normalizeQuote, rankQuotes } from '../../netlify/functions/lib/imdb.mjs';
 import { createTriviaPool, helpfulLabel, DEFAULT_PICK } from '../../public/scripts/tik/triviapool.js';
 
 // IMDb gives us ups and TOTAL votes, so downs are the difference.
@@ -115,6 +115,50 @@ test('normalizeTitle rejects anything without a real IMDb id and title', () => {
 test('normalizeTitle nulls out missing numbers rather than emitting NaN', () => {
   const out = normalizeTitle({ id: 'tt1234567', titleText: { text: 'Untitled' } });
   assert.deepEqual([out.year, out.runtimeSeconds, out.rating, out.votes], [null, null, null, null]);
+});
+
+// ---- quotes ----
+
+test('quotePlainText prefers plainText then joins character lines', () => {
+  assert.equal(quotePlainText({ text: { plainText: "I'll be back." } }), "I'll be back.");
+  assert.equal(quotePlainText({
+    lines: [
+      { characters: [{ character: 'Terminator' }], text: "I'll be back." },
+    ],
+  }), "Terminator: I'll be back.");
+  assert.equal(quotePlainText({ text: { plainText: '  ' } }), '');
+  assert.equal(quotePlainText(null), '');
+});
+
+test('normalizeQuote and rankQuotes reuse trivia scoring', () => {
+  const a = normalizeQuote({
+    id: 'q1', text: { plainText: "I'll be back." },
+    interestScore: { usersInterested: 900, usersVoted: 910 }, isSpoiler: false,
+  });
+  const b = normalizeQuote({
+    id: 'q2', text: { plainText: 'Get out.' },
+    interestScore: { usersInterested: 10, usersVoted: 12 }, isSpoiler: true,
+  });
+  assert.equal(a.text, "I'll be back.");
+  assert.equal(a.score, 890);
+  const ranked = rankQuotes([b, a]);
+  assert.deepEqual(ranked.map((x) => x.id), ['q1', 'q2']);
+  assert.deepEqual(rankQuotes([b, a], { includeSpoilers: false }).map((x) => x.id), ['q1']);
+});
+
+test('normalizeQuote joins TitleQuote lines and skips stage directions', () => {
+  const q = normalizeQuote({
+    id: 'qt0001',
+    isSpoiler: false,
+    interestScore: { usersInterested: 900, usersVoted: 910 },
+    lines: [
+      { text: null, stageDirection: '[drawing a gun]', characters: [] },
+      { text: "I'll be back.", characters: [{ character: 'The Terminator' }] },
+    ],
+  });
+  assert.ok(q);
+  assert.equal(q.text, "The Terminator: I'll be back.");
+  assert.equal(q.score, 890);
 });
 
 // ---- the pool ----

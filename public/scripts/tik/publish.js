@@ -16,7 +16,7 @@ async function uploadJpeg(blob) {
 
 // slides: [{ bitmap, caption }]; opts: { title, description, coverIndex, titleLine, maxFrameHeightRatio, onProgress }
 export async function publishSlideshow(slides, opts = {}) {
-  const { title = '', description = '', coverIndex = 0, titleLine = '', maxFrameHeightRatio = null, onProgress = () => {} } = opts;
+  const { title = '', description = '', coverIndex = 0, titleLine = '', maxFrameHeightRatio = null, format, onProgress = () => {} } = opts;
   const refreshToken = getRefreshToken();
   if (!refreshToken) throw new Error('Sign in to TikTok first.');
   if (slides.length === 0) throw new Error('Grab at least one frame first.');
@@ -24,7 +24,7 @@ export async function publishSlideshow(slides, opts = {}) {
   const photoUrls = [];
   for (let i = 0; i < slides.length; i++) {
     onProgress(`Rendering slide ${i + 1}/${slides.length}…`);
-    const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio });
+    const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio, format, kind: slides[i].kind });
     onProgress(`Uploading slide ${i + 1}/${slides.length}…`);
     photoUrls.push(await uploadJpeg(blob));
   }

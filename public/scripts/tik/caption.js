@@ -37,3 +37,12 @@ export function fitFontSize(lineCount, bandHeight, opts = {}) {
   const ideal = Math.floor(bandHeight / (n * lineHeightFactor));
   return Math.max(minFont, Math.min(maxFont, ideal));
 }
+
+export function fontScaleForQuote(text) {
+  const n = String(text ?? '').trim().length;
+  if (!n) return 1;
+  if (n <= 40) return 1.35;
+  if (n <= 80) return 1.15;
+  if (n <= 140) return 1.0;
+  return 0.85;
+}

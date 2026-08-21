@@ -77,7 +77,30 @@ function pillPath(ctx, x, y, w, h, r) {
 // square or widescreen image goes full width; a tall one is held back so it
 // can't push the caption down the slide. The whole image is always visible —
 // this is a contain fit, never a crop.
-export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null } = {}) {
+export function wantsQuoteStamp({ format, kind } = {}) {
+  return format === 'quotes' && kind === 'title';
+}
+
+function drawQuoteStamp(ctx, frameX, frameY, frameW, frameH) {
+  const cx = frameX + frameW * 0.52;
+  const cy = frameY + frameH * 0.38;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-12 * Math.PI / 180);
+  ctx.font = '900 86px Inter, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 14;
+  ctx.strokeStyle = '#111';
+  ctx.fillStyle = '#fb7185';
+  const label = 'QUOTE-A-LONG';
+  ctx.strokeText(label, 0, 0);
+  ctx.fillText(label, 0, 0);
+  ctx.restore();
+}
+
+export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null, format, kind } = {}) {
   const fs = Math.min(Math.max(Number(fontScale) || 1, 0.5), 1.6);
   const heightRatio = Number.isFinite(maxFrameHeightRatio)
     ? Math.min(Math.max(maxFrameHeightRatio, 0.05), 1)
@@ -154,6 +177,7 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   const frameX = Math.round((CANVAS_W - F.w) / 2);
   const frameY = Math.max(0, Math.round((CANVAS_H - groupH) / 2));
   ctx.drawImage(bitmap, frameX, frameY, F.w, F.h);
+  if (wantsQuoteStamp({ format, kind })) drawQuoteStamp(ctx, frameX, frameY, F.w, F.h);
 
   // Caption pills: white rounded pill per line, bold black centered text.
   // Blank lines (blank paragraph in the textarea) get no pill — just space.

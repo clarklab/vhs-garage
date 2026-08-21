@@ -17,6 +17,15 @@ export const FORMATS = {
     chip: 'bg-amber-400/15 text-amber-300',
     editorHint: 'Click a slide’s preview to re-grab its frame, or paste/drop/pick a custom image while it’s selected. Drag to reorder.',
   },
+  quotes: {
+    key: 'quotes',
+    label: 'Quote-a-long',
+    tagline: 'Famous lines over the frames they were spoken on',
+    icon: 'format_quote',
+    accent: 'rose',
+    chip: 'bg-rose-400/15 text-rose-300',
+    editorHint: 'Click a slide’s preview to re-grab its frame, or paste/drop/pick a custom image while it’s selected. Drag to reorder.',
+  },
   guys: {
     key: 'guys',
     label: 'Remembering Some Guys',
@@ -172,6 +181,17 @@ export function defaultPostFields(format, name = '', { meta = null, projectId = 
       ].join(' '),
     };
   }
+  if (format === 'quotes') {
+    const movie = name;
+    const houseSet = houseSetByKey(houseSetKey) || pickHouseSet(projectId || movie);
+    const hashtags = buildHashtags({ filmTags: meta?.filmTags || [], houseSet });
+    return {
+      title: movie ? `${movie} — movie quotes` : 'Movie quotes',
+      description: buildDescription({ hook: meta?.hook || '', movie, hashtags }),
+      hashtags,
+      hashtagSet: houseSet.key,
+    };
+  }
   const movie = name;
   // An explicit key wins (batch mode balances a run of drafts across the sets).
   // Otherwise rotate on the project id, so a draft's tags never change under
@@ -217,6 +237,7 @@ const OUTRO_TEMPLATES = [
 // What "more" means per format, so one pool of templates serves all three.
 const OUTRO_MORE = {
   trivia: 'more movie trivia',
+  quotes: 'more movie quotes',
   guys: 'more forgotten legends',
   year: 'more trips back',
 };

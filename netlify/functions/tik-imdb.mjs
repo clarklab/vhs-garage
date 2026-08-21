@@ -1,4 +1,4 @@
-// IMDb lookups for the studio: title search and the full ranked trivia pool.
+// IMDb lookups for the studio: title search and the full ranked trivia/quotes pool.
 // This is what replaced the "Pick IMDb trivia" bookmarklet — the browser asks
 // us, we ask IMDb, and the ranking happens here so every client sees the same
 // order.
@@ -6,12 +6,14 @@
 // - POST { action: 'search', query }        → { titles: [...] }
 // - POST { action: 'trivia', imdbId }       → { movie, trivia, total, truncated, cached }
 // - POST { action: 'trivia', query, year }  → same, resolving the name first
+// - POST { action: 'quotes', imdbId }       → { movie, quotes, total, truncated, cached }
+// - POST { action: 'quotes', query, year }  → same, resolving the name first
 //
-// Trivia is cached in Blobs for a day. A film's trivia list barely moves, the
-// vote counts move slowly, and a batch run over ten movies would otherwise
+// Trivia and quotes are cached in Blobs for a day. A film's lists barely move,
+// the vote counts move slowly, and a batch run over ten movies would otherwise
 // re-fetch the same few hundred items every time the user reshuffles a pool.
 import { getStore } from '@netlify/blobs';
-import { fetchTrivia, searchTitles, resolveTitle, IMDB_ID_RE } from './lib/imdb.mjs';
+import { fetchTrivia, fetchQuotes, searchTitles, resolveTitle, IMDB_ID_RE } from './lib/imdb.mjs';
 
 const CACHE_STORE = 'tik-imdb';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -50,6 +52,28 @@ export default async (req) => {
 
       const result = await fetchTrivia(target.id, { includeSpoilers });
       // resolveTitle already knows the year/runtime; keep whichever is richer.
+      if (target.title && !result.movie.title) result.movie = { ...result.movie, ...target };
+      await writeCache(cacheKey, result);
+      return json({ ...result, cached: false });
+    }
+
+    if (action === 'quotes') {
+      const imdbId = String(body?.imdbId || '').trim();
+      let target = IMDB_ID_RE.test(imdbId) ? { id: imdbId } : null;
+
+      if (!target) {
+        const query = String(body?.query || '').trim();
+        if (!query) return json({ error: 'Give an imdbId or a query' }, 400);
+        target = await resolveTitle(query, body?.year);
+        if (!target) return json({ error: `No movie found for "${query}"` }, 404);
+      }
+
+      const includeSpoilers = body?.includeSpoilers !== false;
+      const cacheKey = `quotes:${target.id}:${includeSpoilers ? 'all' : 'nospoil'}`;
+      const cached = await readCache(cacheKey);
+      if (cached) return json({ ...cached, cached: true });
+
+      const result = await fetchQuotes(target.id, { includeSpoilers });
       if (target.title && !result.movie.title) result.movie = { ...result.movie, ...target };
       await writeCache(cacheKey, result);
       return json({ ...result, cached: false });

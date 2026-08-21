@@ -195,6 +195,7 @@ test('pickOutro tails the follow line per format', () => {
     assert.match(pickOutro('trivia', 0), /more movie trivia/);
     assert.match(pickOutro('guys', 0), /more forgotten legends/);
     assert.match(pickOutro('year', 0), /more trips back/);
+    assert.match(pickOutro('quotes', 0), /more movie quotes/);
     assert.match(pickOutro('nonsense', 0), /more movie trivia/); // safe default
   });
 });

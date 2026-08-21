@@ -110,6 +110,25 @@ async function grabAt(video, at, dur, onProgress) {
   return { bitmap, seconds };
 }
 
+// Quotes Shoot: seek to the subtitle-derived time, grab, and hop off a blank
+// locally. Never calls tik-vision — the line is already matched to a cue.
+export async function grabSettledFrame(video, { timecode, durationSeconds = 0, onProgress = () => {} } = {}) {
+  const dur = Number(durationSeconds) || video.duration || 0;
+  let t = Math.min(Math.max(0, Number(timecode) || 0), dur || Number(timecode) || 0);
+  await seekAndSettle(video, t);
+  let bitmap = await grabFrame(video);
+  for (let n = 0; n < BLANK_NUDGES; n++) {
+    const stats = frameStats(bitmap);
+    if (!stats.blank) break;
+    onProgress('nudge off a blank frame');
+    t = Math.min(dur || t + BLANK_NUDGE_SECONDS, t + BLANK_NUDGE_SECONDS);
+    bitmap.close?.();
+    await seekAndSettle(video, t);
+    bitmap = await grabFrame(video);
+  }
+  return { bitmap, timecode: t, verified: false };
+}
+
 // Grab the frame for one slide by showing the checker a spread of the film.
 //
 // The old loop sent one frame, was told "try 400 seconds later", and re-grabbed
