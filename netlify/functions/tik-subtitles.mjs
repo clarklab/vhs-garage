@@ -31,35 +31,54 @@ export default async (req) => {
   }
   const cached = await readCache(id);
   if (cached) return json({ ...cached, cached: true });
-  const { apiKey, username, password, canDownload } = osCredentials();
+  const { apiKey, username, password, canTry, canLogin } = osCredentials();
   const budget = new AbortController();
   const timer = setTimeout(() => budget.abort(), BUDGET_MS);
   try {
-    if (!canDownload) {
-      // Say exactly what is missing. This used to fail deep inside the download
-      // call as a bare 401, which reads as "no subtitles for this film" when it
-      // actually means "this install was never finished".
-      throw new Error(apiKey
-        ? 'OpenSubtitles needs a login: set OPENSUBTITLES_USERNAME and OPENSUBTITLES_PASSWORD'
-        : 'OpenSubtitles API key missing: set OpenSubtitles');
-    }
+    if (!canTry) throw new Error('OpenSubtitles API key missing: set OpenSubtitles');
     const picked = await searchSubtitles(id, { apiKey, signal: budget.signal });
     if (!picked) throw new Error('No English subtitle for this title');
-    const token = await authToken({ apiKey, username, password, signal: budget.signal });
-    const srt = await downloadSubtitle(picked.file_id, { apiKey, token, signal: budget.signal });
+    const srt = await fetchSrt(picked.file_id, { apiKey, username, password, canLogin, signal: budget.signal });
     const cues = parseSrt(srt);
     if (!cues.length) throw new Error('Empty subtitle parse');
     const value = { cues, missing: false, error: null };
     await writeCache(id, value);
     return json({ ...value, cached: false });
   } catch (e) {
-    console.warn('[tik-subtitles] miss', { id, message: e.message });
-    const value = { cues: [], missing: true, error: e.message || 'OpenSubtitles lookup failed' };
+    // An abort is our own budget firing, not OpenSubtitles saying no. Naming it
+    // matters: "took too long" and "refused us" lead to completely different
+    // next steps, and both used to read as "this film has no subtitles".
+    const aborted = e?.name === 'AbortError' || e?.name === 'TimeoutError';
+    const message = aborted
+      ? `OpenSubtitles did not answer within ${Math.round(BUDGET_MS / 100) / 10}s, so the lookup was cut short to stay inside the function limit`
+      : (e.message || 'OpenSubtitles lookup failed');
+    console.warn('[tik-subtitles] miss', { id, aborted, message });
+    const value = { cues: [], missing: true, error: message };
     return json({ ...value, cached: false });
   } finally {
     clearTimeout(timer);
   }
 };
+
+// Anonymous first, log in only if the API says we must.
+//
+// A consumer can be set up to allow downloads with no user token — there is a
+// checkbox for it, and an "under dev" one that lifts that allowance to 100 a
+// day. Demanding a username and password up front would break exactly those
+// installs, so the token is a fallback for a real 401 and nothing more.
+async function fetchSrt(fileId, { apiKey, username, password, canLogin, signal }) {
+  try {
+    return await downloadSubtitle(fileId, { apiKey, signal });
+  } catch (e) {
+    if (e.status !== 401) throw e;
+    if (!canLogin) {
+      throw new Error('OpenSubtitles wants a login for downloads. Either tick anonymous downloads on this API key\u2019s consumer, or set OPENSUBTITLES_USERNAME and OPENSUBTITLES_PASSWORD.');
+    }
+    console.warn('[tik-subtitles] anonymous download refused, logging in');
+    const token = await authToken({ apiKey, username, password, signal });
+    return await downloadSubtitle(fileId, { apiKey, token, signal });
+  }
+}
 
 // One login per half-day, shared by every invocation through the blob store.
 // Logging in per request is what gets an app rate-limited at the far end.
