@@ -43,6 +43,27 @@ const TRIVIA_QUERY = `query TikTrivia($id: ID!, $first: Int!, $after: ID) {
   }
 }`;
 
+const QUOTES_QUERY = `query TikQuotes($id: ID!, $first: Int!, $after: ID) {
+  title(id: $id) {
+    id
+    titleText { text }
+    releaseYear { year }
+    runtime { seconds }
+    ratingsSummary { aggregateRating voteCount }
+    quotes(first: $first, after: $after) {
+      total
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        id
+        text { plainText }
+        lines { text characters { displayName } }
+        interestScore { usersInterested usersVoted }
+        isSpoiler
+      } }
+    }
+  }
+}`;
+
 const SEARCH_QUERY = `query TikSearch($q: String!, $first: Int!) {
   mainSearch(first: $first, options: {
     searchTerm: $q, type: TITLE, titleSearchOptions: { type: [MOVIE] }
@@ -108,6 +129,39 @@ export function rankTrivia(nodes, { includeSpoilers = true } = {}) {
   }
   out.sort((a, b) => b.score - a.score || b.up - a.up || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return out;
+}
+
+export function quotePlainText(node) {
+  const direct = String(node?.text?.plainText || '').replace(/\s+/g, ' ').trim();
+  if (direct) return direct;
+  const lines = Array.isArray(node?.lines) ? node.lines : [];
+  const parts = [];
+  for (const ln of lines) {
+    const text = String(typeof ln?.text === 'string' ? ln.text : ln?.text?.plainText || '').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    const who = String(ln?.characters?.[0]?.displayName || '').trim();
+    parts.push(who ? `${who}: ${text}` : text);
+  }
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+export function normalizeQuote(node) {
+  const text = quotePlainText(node);
+  if (!text) return null;
+  const up = Math.max(0, Math.round(Number(node?.interestScore?.usersInterested) || 0));
+  const total = Math.max(up, Math.round(Number(node?.interestScore?.usersVoted) || 0));
+  return {
+    id: String(node?.id || ''),
+    text,
+    up,
+    down: total - up,
+    score: up - (total - up),
+    spoiler: node?.isSpoiler === true,
+  };
+}
+
+export function rankQuotes(nodes, opts) {
+  return rankTrivia(nodes, opts);
 }
 
 // A mainSearch entity → { id, title, year, runtimeSeconds, rating, votes }.
@@ -197,6 +251,38 @@ export async function fetchTrivia(imdbId, { signal, includeSpoilers = true } = {
   return {
     movie,
     trivia: rankTrivia(nodes.map(normalizeTrivia), { includeSpoilers }),
+    total,
+    truncated: hasNextPage,
+  };
+}
+
+export async function fetchQuotes(imdbId, { signal, includeSpoilers = true } = {}) {
+  if (!IMDB_ID_RE.test(String(imdbId || ''))) throw new Error('Invalid IMDb id');
+  const nodes = [];
+  let after = null;
+  let pages = 0;
+  let movie = null;
+  let total = 0;
+  let hasNextPage = false;
+
+  do {
+    const data = await imdbGraphQL(QUOTES_QUERY, { id: imdbId, first: PAGE_SIZE, after }, signal);
+    const title = data?.title;
+    if (!title) throw new Error('IMDb returned no title');
+    if (!movie) {
+      movie = normalizeTitle(title) || { id: imdbId, title: '', year: null, runtimeSeconds: null, rating: null, votes: null, poster: null };
+    }
+    const conn = title.quotes || {};
+    total = Number(conn.total) || total;
+    for (const edge of conn.edges || []) nodes.push(edge?.node);
+    after = conn.pageInfo?.endCursor || null;
+    hasNextPage = conn.pageInfo?.hasNextPage === true && !!after;
+    pages += 1;
+  } while (hasNextPage && pages < MAX_PAGES);
+
+  return {
+    movie,
+    quotes: rankQuotes(nodes.map(normalizeQuote), { includeSpoilers }),
     total,
     truncated: hasNextPage,
   };
