@@ -920,6 +920,10 @@ async function buildAll() {
       let meta;
       if (batchFormat === 'quotes') {
         const packSubs = await fetchSubtitles({ imdbId: it.imdbId, query: it.title, year: it.year });
+        // Carried onto the draft so the editor can explain the guessed times
+        // later, when whoever opens it has no idea this call ever happened.
+        it.subsError = packSubs.missing ? (packSubs.error || 'Subtitle lookup failed') : null;
+        if (packSubs.missing) console.warn('[tik-batch] no subtitles', { movie: it.title, error: packSubs.error });
         const result = await fetchQuotesPost({
           title: it.title,
           year: it.year,
@@ -1013,6 +1017,7 @@ async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
   const outro = await fetchOutroFrame();
 
   const project = makeProject({ id, format: batchFormat, now });
+  project.subsError = item.subsError || null;
   // Round-robin the house hashtag pair across the run rather than hashing ten
   // random ids: a batch of ten then covers all five sets twice, which is what
   // makes the tag report readable in weeks instead of months.

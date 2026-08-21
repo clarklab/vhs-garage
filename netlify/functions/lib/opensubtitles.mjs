@@ -1,9 +1,19 @@
 // OpenSubtitles REST v1: pick an English human SRT for an IMDb title.
 // Zip payloads are treated as a miss — we do not unzip.
+//
+// Two credentials, not one. SEARCH is happy with the Api-Key alone, but
+// DOWNLOAD also wants an Authorization: Bearer JWT that you get by POSTing a
+// username and password to /login. Sending only the key meant every search
+// succeeded, every download failed, and every quote came back with a guessed
+// timecode — a silent, total failure that looked like a matching problem.
+//
+// Login is expensive and rate-limited at the far end, so the token is cached
+// and only re-fetched when it is missing or stale.
 
 export const OS_USER_AGENT = 'vhs-garage v1.0';
 const SEARCH = 'https://api.opensubtitles.com/api/v1/subtitles';
 const DOWNLOAD = 'https://api.opensubtitles.com/api/v1/download';
+const LOGIN = 'https://api.opensubtitles.com/api/v1/login';
 // Per hop, not per call. A lookup is THREE round trips (search, download
 // ticket, then the file itself) and the endpoint that runs them is a plain
 // Netlify function on a 10-second ceiling, so a 10s-per-hop budget could spend
@@ -23,6 +33,46 @@ async function fetchWithTimeout(url, options = {}) {
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', relay);
   }
+}
+
+// Tokens are good for about a day at the far end; refresh well inside that.
+export const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
+
+// The credentials, and a single place that decides whether we have them.
+// Returns null rather than throwing so the caller can say something useful.
+export function osCredentials(env = process.env) {
+  const apiKey = env.OpenSubtitles || env.OPENSUBTITLES_API_KEY || '';
+  const username = env.OPENSUBTITLES_USERNAME || '';
+  const password = env.OPENSUBTITLES_PASSWORD || '';
+  return { apiKey, username, password, canDownload: !!(apiKey && username && password) };
+}
+
+export async function login({ apiKey, username, password, signal } = {}) {
+  if (!apiKey) throw new Error('OpenSubtitles key missing');
+  if (!username || !password) {
+    throw new Error('OpenSubtitles needs a login: set OPENSUBTITLES_USERNAME and OPENSUBTITLES_PASSWORD');
+  }
+  const res = await fetchWithTimeout(LOGIN, {
+    method: 'POST',
+    headers: {
+      'Api-Key': apiKey,
+      'User-Agent': OS_USER_AGENT,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ username, password }),
+    signal,
+  });
+  if (!res.ok) {
+    // 401 here means the username or password is wrong, not that we asked
+    // wrongly. Retrying with the same credentials is what gets an app blocked.
+    throw new Error(res.status === 401
+      ? 'OpenSubtitles rejected the username or password'
+      : `OpenSubtitles login ${res.status}`);
+  }
+  const body = await res.json();
+  if (!body?.token) throw new Error('OpenSubtitles login returned no token');
+  return body.token;
 }
 
 export function numericImdbId(raw) {
@@ -85,13 +135,15 @@ export async function searchSubtitles(imdbId, { apiKey, signal } = {}) {
   return pickBestSubtitle(body?.data || []);
 }
 
-export async function downloadSubtitle(fileId, { apiKey, signal } = {}) {
+export async function downloadSubtitle(fileId, { apiKey, token, signal } = {}) {
   if (!fileId) throw new Error('Missing subtitle file');
   if (!apiKey) throw new Error('OpenSubtitles key missing');
+  if (!token) throw new Error('OpenSubtitles download needs a login token');
   const res = await fetchWithTimeout(DOWNLOAD, {
     method: 'POST',
     headers: {
       'Api-Key': apiKey,
+      Authorization: `Bearer ${token}`,
       'User-Agent': OS_USER_AGENT,
       Accept: 'application/json',
       'Content-Type': 'application/json',
@@ -99,7 +151,13 @@ export async function downloadSubtitle(fileId, { apiKey, signal } = {}) {
     body: JSON.stringify({ file_id: fileId }),
     signal,
   });
-  if (!res.ok) throw new Error(`OpenSubtitles download ${res.status}`);
+  if (!res.ok) {
+    // These two are the ones worth naming: a stale token and a spent daily
+    // allowance look identical from the outside otherwise.
+    if (res.status === 401) throw new Error('OpenSubtitles login token was rejected');
+    if (res.status === 406) throw new Error('OpenSubtitles download quota is spent for today');
+    throw new Error(`OpenSubtitles download ${res.status}`);
+  }
   const body = await res.json();
   const link = body?.link;
   if (!link) throw new Error('OpenSubtitles returned no link');

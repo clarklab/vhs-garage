@@ -59,6 +59,7 @@ const els = {
   back: $('back-btn'), formatChip: $('format-chip'), projectName: $('project-name'),
   download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
   statusChip: $('status-chip'), toast: $('toast'), toastBody: $('toast-body'),
+  subsNote: $('subs-note'), subsNoteText: $('subs-note-text'),
   cadenceCard: $('cadence-card'), cadenceGhost: $('cadence-ghost'), cadenceLive: $('cadence-live'),
   cadenceIcon: $('cadence-icon'), cadenceHeadline: $('cadence-headline'),
   cadenceLabel: $('cadence-label'), cadenceDetail: $('cadence-detail'),
@@ -390,6 +391,7 @@ function enterEditor() {
   history.replaceState({}, '', `${location.pathname}${location.search}#p/${project.id}`);
   applyFormatUI();
   renderStatusChip();
+  renderSubsNote();
   els.projectName.value = project.name || '';
   els.postTitleInput.value = project.postTitle || '';
   els.postDescInput.value = project.postDesc || '';
@@ -582,6 +584,22 @@ function toast(message, tone = 'ready') {
   els.toast.classList.remove('hidden');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => els.toast.classList.add('hidden'), 2600);
+}
+
+// Why every timecode on this set is a guess.
+//
+// Without subtitles the matcher has nothing to match against, so every slide
+// falls back to the model's estimate. That is a legitimate outcome, but it is
+// also what a broken install looks like, and the two are indistinguishable
+// unless the reason is written down where it survives a reload.
+function renderSubsNote() {
+  const show = project?.format === 'quotes' && !!project?.subsError;
+  els.subsNote.classList.toggle('hidden', !show);
+  els.subsNote.classList.toggle('flex', show);
+  if (show) {
+    els.subsNoteText.textContent =
+      `No subtitles for this film, so every timecode below is the model's estimate rather than a subtitle match. Reason: ${project.subsError}`;
+  }
 }
 
 function renderStatusChip() {
@@ -1370,6 +1388,10 @@ els.autopilot.addEventListener('click', async () => {
       els.status.textContent = 'Fetching English subtitles…';
       const subs = await fetchSubtitles({ imdbId: pack.movie?.id, query: movie.title, year: movie.year });
       subMissing = !!subs.missing;
+      // Keep the REASON on the project, not just in a status line that the next
+      // message overwrites. A whole set of guessed timecodes with no
+      // explanation anywhere is how a broken install passes for a bad matcher.
+      project.subsError = subMissing ? (subs.error || 'Subtitle lookup failed') : null;
       const pool = pack.quotes.slice(0, 20);
       const result = await fetchQuotesPost({
         title: movie.title || movie.query,
@@ -1444,7 +1466,8 @@ els.autopilot.addEventListener('click', async () => {
       els.status.textContent = `Slide cap reached (${MAX_SLIDES}) — nothing added.`;
     } else if (quotesMode) {
       const quotes = added - 1; // first added slide is the title slide
-      const guessNote = subMissing ? ' — subtitle file missing, some times are guesses' : '';
+      renderSubsNote();
+      const guessNote = subMissing ? ' — no subtitles, every time is a guess' : '';
       els.status.textContent = `Added a title slide + ${quotes} quote${quotes === 1 ? '' : 's'}${outroAdded ? ' + outro' : ''}${guessNote} — verify captions & frames, then post.`;
     } else {
       const trivia = added - 1; // first added slide is the title slide
