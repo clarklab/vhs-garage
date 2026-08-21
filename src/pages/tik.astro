@@ -665,6 +665,10 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
               <input id="scrub-range" type="range" min="0" max="1000" value="0"
                      class="h-7 w-full cursor-pointer accent-red-600" />
               <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                <button id="play-btn" title="Play with sound, to hear the line" aria-label="Play with sound, to hear the line"
+                        class="flex items-center justify-center rounded-lg bg-neutral-800 px-2.5 py-1.5 text-neutral-100 hover:bg-neutral-700">
+                  <span class="material-symbols-outlined text-[20px] leading-none">play_arrow</span>
+                </button>
                 <span id="timecode" class="tabular-nums text-neutral-300">00:00.000</span>
                 <button data-seconds="-5" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">−5s</button>
                 <button data-seconds="-1" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">−1s</button>

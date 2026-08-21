@@ -13,6 +13,7 @@ import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs,
 import { fontScaleForQuote } from './caption.js';
 import { parseMovieName } from './filename.js';
 import { composeToCanvas, composeSlide, captionFontReady } from './compose.js';
+import { clockTimecode } from './timecode.js';
 import {
   FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, renumberYearEntries,
@@ -69,7 +70,7 @@ const els = {
   slidePreview: $('slide-preview'), slidePreviewCanvas: $('slide-preview-canvas'),
   slidePreviewClose: $('slide-preview-close'), slidePreviewMeta: $('slide-preview-meta'),
   videoReload: $('video-reload'), videoReloadLabel: $('video-reload-label'),
-  video: $('video'), range: $('scrub-range'), timecode: $('timecode'),
+  video: $('video'), range: $('scrub-range'), timecode: $('timecode'), play: $('play-btn'),
   grab: $('grab-btn'), grabIcon: $('grab-icon'), grabLabel: $('grab-label'),
   cancelEdit: $('cancel-edit'),
   titleToggle: $('title-toggle'), movieTitle: $('movie-title'),
@@ -139,6 +140,7 @@ function iconSpan(name, sizeClass = 'text-[18px]') {
 initScrubber({
   video: els.video, range: els.range, timecode: els.timecode,
   steps: [...document.querySelectorAll('#scrubber [data-frames], #scrubber [data-seconds]')],
+  play: els.play,
 });
 
 els.video.addEventListener('loadedmetadata', () => {
@@ -226,6 +228,9 @@ async function serializeProject() {
       id: s.id, caption: s.caption, timecode: s.timecode, grabHint: s.grabHint || '',
       fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
       entry: s.entry || null, section: s.section || null,
+      // Present only when the subtitle matcher placed this line. Its absence is
+      // meaningful: the timecode was estimated, and the slide says so.
+      cue: s.cue || null,
       frame: await frameBlobFor(s),
     });
   }
@@ -462,7 +467,7 @@ async function openProject(id) {
         id: String(nextId++), bitmap, blob: s.frame,
         caption: s.caption || '', timecode: s.timecode, grabHint: s.grabHint || '',
         fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
-        entry: s.entry || null, section: s.section || null,
+        entry: s.entry || null, section: s.section || null, cue: s.cue || null,
       });
     } catch (e) {
       console.error('[tik] could not decode a saved frame; slide dropped', e);
@@ -1413,6 +1418,8 @@ els.autopilot.addEventListener('click', async () => {
       slides = addSlide(slides, {
         id: String(nextId++), bitmap, blob: null,
         caption, timecode: scenes[i].timecode, grabHint: scenes[i].grab || '',
+        // Only when applyCueTimes actually matched it — a model guess is not a cue.
+        cue: scenes[i].matched ? { start: scenes[i].start, end: scenes[i].end } : null,
         fontScale: quotesMode ? (i === 0 ? 1 : fontScaleForQuote(caption)) : 1,
         // includeTitleSlide above means the first item is the intro, not a
         // fact. Marking it is what lets its editor buttons differ from a
@@ -2265,6 +2272,49 @@ function renderSlide(slide, index) {
     markDirty();
   });
   mid.append(ta);
+
+  // Where in the film this slide is supposed to come from.
+  //
+  // The number was invisible until you clicked the thumbnail and watched the
+  // scrubber move, which is no way to check eight slides. Clicking it parks the
+  // playhead there so Play can confirm the line by ear — the fastest way to know
+  // a quote slide is on the wrong scene is to hear the wrong words.
+  //
+  // On a Quote-a-long it also says where the number came from: a cue span the
+  // subtitle matcher found, or an estimate the model made because nothing
+  // matched. Those two deserve very different amounts of trust.
+  if (isMovieFileFormat() && Number.isFinite(Number(slide.timecode))) {
+    const row = document.createElement('div');
+    row.className = 'flex flex-wrap items-center gap-1.5';
+
+    const jump = document.createElement('button');
+    const matched = !!slide.cue;
+    jump.className = `flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold tabular-nums transition ${
+      matched ? 'bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}`;
+    jump.append(iconSpan('schedule', 'text-[13px]'), document.createTextNode(clockTimecode(slide.timecode)));
+    jump.title = videoReady
+      ? 'Jump the player here, then press play to hear it'
+      : 'Load the movie file to jump here';
+    jump.addEventListener('click', () => {
+      if (!videoReady) { els.status.textContent = 'Load the movie file first.'; return; }
+      els.video.pause();
+      els.video.currentTime = Math.min(slide.timecode, els.video.duration || slide.timecode);
+      els.video.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      els.status.textContent = `Player at ${clockTimecode(slide.timecode)} — press play to hear it.`;
+    });
+    row.append(jump);
+
+    if (project?.format === 'quotes' && slide.kind !== 'title' && slide.kind !== 'outro') {
+      const src = document.createElement('span');
+      src.className = `text-[10px] uppercase tracking-wide ${matched ? 'text-emerald-400/70' : 'text-amber-300/70'}`;
+      src.textContent = matched ? 'from subtitles' : 'estimated';
+      src.title = matched
+        ? `Matched to the subtitle cue at ${clockTimecode(slide.cue.start)}–${clockTimecode(slide.cue.end)}.`
+        : 'No subtitle cue matched this line, so the time is the model\u2019s guess. Worth checking.';
+      row.append(src);
+    }
+    mid.append(row);
+  }
 
   // Editor-only hint from the AI: what shot to look for when (re)grabbing.
   // Never baked into the slide or sent to TikTok.
