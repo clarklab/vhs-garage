@@ -311,7 +311,9 @@ function formatQuotePool(quotes) {
   const list = (Array.isArray(quotes) ? quotes : []).slice(0, QUOTES_POOL);
   return list.map((q, i) => {
     const text = typeof q === 'string' ? q : String(q?.text || '').trim();
-    return `${i + 1}. ${text}`;
+    // A pool item is an exchange over several lines. Indent the continuations
+    // so the numbering stays readable as a list rather than running together.
+    return `${i + 1}. ${text.replace(/\n/g, '\n   ')}`;
   }).filter((line) => !/^\d+\.\s*$/.test(line)).join('\n');
 }
 
@@ -423,7 +425,8 @@ Produce exactly ${n} quote slides. Each caption is one or two spoken lines from 
 
 HOW TO WRITE EACH QUOTE CAPTION (the TITLE slide has its own rule below):
 - Boil each IMDb block to 1-2 spoken lines. Keep the punchline; drop setup that does not earn its space.
-- Include character names only when it helps the viewer place the line (who is speaking, or who is being addressed). Never invent a speaker.
+- KEEP THE EXCHANGE ON SEPARATE LINES. When two or more characters speak, put each speaker on their own line as "Name: line", separated by a real newline (\n) inside the caption string. Never join an exchange onto one line. A single speaker is a single line with no name.
+- Use the character names exactly as the IMDb block gives them. Never invent a speaker.
 - Write a confident spoken LINE. Do NOT use questions, challenges, or hype. Do not turn a quote into trivia.
 - Do NOT use em dashes or en dashes (the — or – characters). Use commas, periods, or the word "and" instead.
 - Keep it tight: about ${CAPTION_TARGET} characters, no hashtags, no emoji. Going a little over is fine if the line needs it; do not pad.

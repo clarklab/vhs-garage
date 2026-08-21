@@ -44,6 +44,11 @@ export function normalizeQuoteText(raw) {
   let s = String(raw || '');
   s = s.replace(/^\s*\[[^\]]+\]\s*:?\s*/gm, '');
   s = s.replace(/^\s*[A-Z][A-Za-z0-9 .'\-]{1,40}:\s*/gm, '');
+  // And again mid-line, for when an exchange arrives on one line: an IMDb
+  // quote is usually two or three characters talking, and every speaker label
+  // left in here is a word the subtitle file will never contain. They are pure
+  // ballast in the score — enough of them and a real match drops under the bar.
+  s = s.replace(/(^|[.!?]["“”']?\s+)([A-Z][A-Za-z0-9 .'\-]{1,30}):\s*/g, '$1');
   s = s.replace(/["“”']/g, '');
   s = s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   return s;
@@ -53,35 +58,57 @@ function tokens(s) {
   return normalizeQuoteText(s).split(' ').filter((w) => w.length > 1);
 }
 
-// Score single cues and concatenated adjacent pairs; pick the best span.
-// A single-cue ratio of 0.6 misses quotes split across two lines (~0.33 on
-// the first cue, or a later cue stealing the match), so pairs are required.
+// How many consecutive cues one quote may span.
+//
+// Pairs are not enough. A subtitle file breaks a line every few words and an
+// IMDb quote is usually an exchange, so the words of one quote routinely land
+// across three or four cues. Scored against pairs only, such a quote either
+// finds nothing and falls back to a guess, or latches onto whichever half-
+// window scores best and lands seconds off the line it is captioning.
+//
+// Four is the ceiling because the tie-break prefers fewer cues, so a wider
+// window only wins when it genuinely holds more of the quote.
+export const MAX_SPAN_CUES = 4;
+
+// How much of the quote a span has to carry to count as a match. Below this we
+// return nothing, which is honest: the caller keeps the model's guess rather
+// than being handed a confident wrong answer.
+const MIN_RATIO = 0.6;
+
+// Best matching run of cues for one quote, or null.
+//
+// Score is recall over the quote's distinct words: what fraction of them the
+// span contains. Ties go to the shorter span, then to the earlier one — a line
+// quoted twice belongs to the first time it is said.
 export function matchQuoteToCues(quote, cues) {
   const list = Array.isArray(cues) ? cues : [];
-  const want = tokens(quote);
-  if (want.length < 2 || !list.length) return null;
+  const want = new Set(tokens(quote));
+  if (want.size < 2 || !list.length) return null;
 
+  // Tokenize each cue once. The old version re-normalized the joined text of
+  // every window it scored, which is the same work over and over.
+  const per = list.map((c) => tokens(c?.text));
   let best = null;
 
-  function consider(from, to) {
-    const span = list.slice(from, to + 1);
-    const have = new Set(tokens(span.map((c) => c.text).join(' ')));
-    const ratio = want.filter((w) => have.has(w)).length / want.length;
-    const cueCount = to - from + 1;
-    if (ratio < 0.6) return;
-    if (
-      !best
-      || ratio > best.ratio
-      || (ratio === best.ratio && cueCount < best.cueCount)
-      || (ratio === best.ratio && cueCount === best.cueCount && from < best.from)
-    ) {
-      best = { from, to, ratio, cueCount };
-    }
-  }
-
   for (let i = 0; i < list.length; i++) {
-    consider(i, i);
-    if (i + 1 < list.length) consider(i, i + 1);
+    const have = new Set();
+    const last = Math.min(list.length - 1, i + MAX_SPAN_CUES - 1);
+    for (let j = i; j <= last; j++) {
+      for (const w of per[j]) have.add(w);
+      let hits = 0;
+      for (const w of want) if (have.has(w)) hits++;
+      const ratio = hits / want.size;
+      if (ratio < MIN_RATIO) continue;
+      const cueCount = j - i + 1;
+      if (
+        !best
+        || ratio > best.ratio
+        || (ratio === best.ratio && cueCount < best.cueCount)
+        || (ratio === best.ratio && cueCount === best.cueCount && i < best.from)
+      ) {
+        best = { from: i, to: j, ratio, cueCount };
+      }
+    }
   }
 
   if (!best) return null;
