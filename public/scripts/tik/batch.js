@@ -60,6 +60,9 @@ let searchSeq = 0;
 let busy = false;
 let exitTo = () => {};
 let batchFormat = 'trivia';
+// Bumped whenever queued pools are thrown out (format toggle, spoilers, …)
+// so an IMDb fetch that started before the bump cannot write a stale pool.
+let poolGeneration = 0;
 
 export function initBatch({ onExit = () => {} } = {}) {
   exitTo = onExit;
@@ -160,6 +163,7 @@ function onFormatClick(e) {
   if (next !== 'trivia' && next !== 'quotes') return;
   if (next === batchFormat) return;
   batchFormat = next;
+  poolGeneration += 1;
   for (const it of queue) {
     it.pool = null;
     it.state = 'idle';
@@ -481,6 +485,8 @@ function selectMovie(key) {
 // pool for as long as the movie stays queued.
 async function ensurePool(item) {
   if (!item || item.pool || item.state === 'loading') return;
+  const generation = poolGeneration;
+  const format = batchFormat;
   item.state = 'loading';
   item.error = '';
   renderQueue();
@@ -489,23 +495,27 @@ async function ensurePool(item) {
     const res = await fetchWithTimeout('/.netlify/functions/tik-imdb', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        action: batchFormat === 'quotes' ? 'quotes' : 'trivia', imdbId: item.imdbId, query: item.title, year: item.year,
+        action: format === 'quotes' ? 'quotes' : 'trivia', imdbId: item.imdbId, query: item.title, year: item.year,
         includeSpoilers: els.spoilers.checked,
       }),
     });
     const data = await res.json().catch(() => ({}));
+    if (generation !== poolGeneration) return;
     if (!res.ok) throw new Error(data.error || `IMDb lookup failed (${res.status})`);
     item.imdbId = data.movie?.id || item.imdbId;
     item.year = data.movie?.year ?? item.year;
     item.runtimeSeconds = data.movie?.runtimeSeconds || item.runtimeSeconds;
-    item.pool = createTriviaPool(data.quotes || data.trivia || [], sizeValue());
-    item.total = data.total || (data.quotes || data.trivia || []).length;
+    const rows = format === 'quotes' ? (data.quotes || []) : (data.trivia || []);
+    item.pool = createTriviaPool(rows, sizeValue());
+    item.total = data.total || rows.length;
     item.state = 'ready';
   } catch (e) {
-    console.error(`[tik-batch] ${batchFormat} fetch failed: ${item.title} — ${e.message}`, e);
+    if (generation !== poolGeneration) return;
+    console.error(`[tik-batch] ${format} fetch failed: ${item.title} — ${e.message}`, e);
     item.state = 'error';
     item.error = e.message;
   }
+  if (generation !== poolGeneration) return;
   renderQueue();
   if (selectedKey === item.key) renderPicker();
   refreshBuildButton();
@@ -514,7 +524,7 @@ async function ensurePool(item) {
   // shows instantly, then re-ranks when the agent answers. Only the movie
   // being looked at — the rest get curated during buildAll, so a ten-movie
   // queue doesn't fire ten agent calls just from being queued.
-  if (item.state === 'ready' && selectedKey === item.key && batchFormat !== 'quotes') curateSelected(item);
+  if (item.state === 'ready' && selectedKey === item.key && format !== 'quotes') curateSelected(item);
 }
 
 // Walk the queue loading pools one at a time. Sequential on purpose: ten
@@ -525,8 +535,15 @@ async function prefetchPools() {
   if (prefetching) return;
   prefetching = true;
   try {
-    for (const it of queue) {
-      if (!it.pool && it.state === 'idle') await ensurePool(it);
+    // A format/spoilers bump mid-walk invalidates this pass. Restart so the
+    // remaining idle rows load the new format instead of stopping halfway.
+    while (true) {
+      const generation = poolGeneration;
+      for (const it of queue) {
+        if (generation !== poolGeneration) break;
+        if (!it.pool && it.state === 'idle') await ensurePool(it);
+      }
+      if (generation === poolGeneration) break;
     }
   } finally {
     prefetching = false;
@@ -619,6 +636,7 @@ async function runCurateSync(params) {
 function onCurateToggle() {
   if (batchFormat === 'quotes') return;
   if (!els.curate.checked) {
+    poolGeneration += 1;
     for (const it of queue) { it.pool = null; it.state = 'idle'; it.curated = 0; }
     render();
     const it = find(selectedKey);
@@ -652,6 +670,7 @@ function onSizeChange() {
 
 // Changing the spoiler rule changes what IMDb sends, so every pool is stale.
 function onSpoilersChange() {
+  poolGeneration += 1;
   for (const it of queue) { it.pool = null; it.state = 'idle'; }
   render();
   const it = find(selectedKey);
