@@ -99,27 +99,41 @@ function isHuman(row) {
   return a.ai_translated !== true && a.machine_translated !== true && a.auto_translated !== true;
 }
 
-function srtFile(file) {
-  return /\.srt$/i.test(String(file?.file_name || '')) || !file?.file_name;
+// Hearing-impaired tracks carry bracketed sound cues on top of the dialogue.
+// They match fine, but a clean dialogue track is the better default when both
+// exist, so this is a preference and never an exclusion.
+function isHearingImpaired(row) {
+  return row?.attributes?.hearing_impaired === true;
 }
 
+// NOTE: there is deliberately no filter on the file's extension here.
+//
+// `file_name` on an OpenSubtitles file is the RELEASE name — "The.Princess.
+// Bride.1987.DVDRip", "...REMUX...-FGT.en-HI" — and essentially never ends in
+// ".srt". Requiring that extension threw away every English subtitle for every
+// film and reported "no English subtitle for this title", which for a film like
+// The Princess Bride (44 English tracks) was plainly untrue. The format is
+// decided at DOWNLOAD time by asking for sub_format: srt, which the API
+// converts to; the stored file's name says nothing about what we can get.
 export function pickBestSubtitle(rows) {
   const list = (Array.isArray(rows) ? rows : [])
     .filter(isEnglish)
     .filter(isHuman)
     .map((row) => {
-      const file = filesOf(row).find(srtFile) || filesOf(row)[0];
+      const file = filesOf(row)[0];
       if (!file?.file_id) return null;
-      if (file.file_name && !srtFile(file)) return null;
       return {
         file_id: file.file_id,
         file_name: file.file_name || '',
+        clean: isHearingImpaired(row) ? 0 : 1,
         trusted: row.attributes?.from_trusted === true ? 1 : 0,
         downloads: Number(row.attributes?.download_count) || 0,
       };
     })
     .filter(Boolean);
-  list.sort((a, b) => b.trusted - a.trusted || b.downloads - a.downloads);
+  // Most-downloaded is the strongest signal that a track matches the common
+  // cut of the film, so it outranks the trusted flag.
+  list.sort((a, b) => b.clean - a.clean || b.downloads - a.downloads || b.trusted - a.trusted);
   return list[0] || null;
 }
 
@@ -152,7 +166,9 @@ export async function downloadSubtitle(fileId, { apiKey, token, signal } = {}) {
       Accept: 'application/json',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ file_id: fileId }),
+    // Ask for SRT rather than hoping the stored file is one. /infos/formats
+    // lists srt as an output format, so this is a conversion the API does.
+    body: JSON.stringify({ file_id: fileId, sub_format: 'srt' }),
     signal,
   });
   if (!res.ok) {
@@ -167,6 +183,12 @@ export async function downloadSubtitle(fileId, { apiKey, token, signal } = {}) {
     throw err;
   }
   const body = await res.json();
+  // The download response is the only place the allowance is visible. Logging
+  // it means "quota is spent" arrives as a number you watched fall, not as a
+  // surprise in the middle of a batch.
+  if (Number.isFinite(Number(body?.remaining))) {
+    console.log('[opensubtitles] download ok', { remaining: body.remaining, resetsIn: body.reset_time });
+  }
   const link = body?.link;
   if (!link) throw new Error('OpenSubtitles returned no link');
   const file = await fetchWithTimeout(link, { signal, headers: { 'User-Agent': OS_USER_AGENT } });
