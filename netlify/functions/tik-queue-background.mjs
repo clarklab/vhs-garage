@@ -23,7 +23,7 @@ export default async (req) => {
   let body;
   try { body = await req.json(); } catch { return new Response(null, { status: 400 }); }
 
-  const { jobId, history = [], posted = [], count = QUEUE_COUNT, guidance = '' } = body;
+  const { jobId, history = [], posted = [], count = QUEUE_COUNT, guidance = '', format } = body;
   if (!jobId || !/^[a-zA-Z0-9-]{8,64}$/.test(jobId)) {
     console.error('[tik-queue-job] missing/invalid jobId');
     return new Response(null, { status: 400 });
@@ -38,7 +38,7 @@ export default async (req) => {
     const prompt = buildQueuePrompt({
       history: Array.isArray(history) ? history : [],
       posted: Array.isArray(posted) ? posted : [],
-      count, guidance,
+      count, guidance, format,
     });
 
     const controller = new AbortController();
