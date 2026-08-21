@@ -81,22 +81,48 @@ export function wantsQuoteStamp({ format, kind } = {}) {
   return format === 'quotes' && kind === 'title';
 }
 
+// The Quote-a-long wordmark, laid over the title card.
+//
+// Placement and tilt are the ones the drawn-text version used, because those
+// were right: a little past centre, high on the frame, kicked up 12 degrees so
+// it reads as something stuck on rather than something rendered.
+const STAMP_URL = '/tik/quote.png';
+const STAMP_WIDTH_RATIO = 0.62;   // of the frame's width, matching the old text's span
+const STAMP_TILT_DEG = -12;
+const STAMP_CX_RATIO = 0.52;
+const STAMP_CY_RATIO = 0.38;
+
+let stampPromise = null;
+let stamp = null;
+
+// Preloaded, because composeToCanvas is synchronous and an <img> that has not
+// decoded yet draws nothing. Same shape as captionFontReady: resolve once, and
+// whoever needs a correct frame awaits it first.
+export function quoteStampReady() {
+  if (stampPromise) return stampPromise;
+  stampPromise = (async () => {
+    try {
+      const res = await fetch(STAMP_URL);
+      if (!res.ok) throw new Error(`stamp ${res.status}`);
+      stamp = await createImageBitmap(await res.blob());
+      return true;
+    } catch (e) {
+      // A missing stamp costs the title slide its badge, never the slide.
+      console.error('[tik] Quote-a-long stamp failed to load:', e);
+      return false;
+    }
+  })();
+  return stampPromise;
+}
+
 function drawQuoteStamp(ctx, frameX, frameY, frameW, frameH) {
-  const cx = frameX + frameW * 0.52;
-  const cy = frameY + frameH * 0.38;
+  if (!stamp) return;   // not decoded yet; the caller redraws when it is
+  const w = frameW * STAMP_WIDTH_RATIO;
+  const h = w * (stamp.height / stamp.width);
   ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(-12 * Math.PI / 180);
-  ctx.font = '900 86px Inter, system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = 14;
-  ctx.strokeStyle = '#111';
-  ctx.fillStyle = '#fb7185';
-  const label = 'QUOTE-A-LONG';
-  ctx.strokeText(label, 0, 0);
-  ctx.fillText(label, 0, 0);
+  ctx.translate(frameX + frameW * STAMP_CX_RATIO, frameY + frameH * STAMP_CY_RATIO);
+  ctx.rotate(STAMP_TILT_DEG * Math.PI / 180);
+  ctx.drawImage(stamp, -w / 2, -h / 2, w, h);
   ctx.restore();
 }
 
@@ -228,7 +254,7 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
 // against Inter. Previews that were drawn before it arrived get redrawn by the
 // caller; this end is the authoritative one and must never be the odd one out.
 export async function composeSlide(bitmap, caption, opts = {}) {
-  await captionFontReady();
+  await Promise.all([captionFontReady(), quoteStampReady()]);
   const cvs = document.createElement('canvas');
   composeToCanvas(cvs, bitmap, caption, opts);
   return await new Promise((resolve) => cvs.toBlob(resolve, 'image/jpeg', 0.9));
