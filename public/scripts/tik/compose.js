@@ -87,11 +87,12 @@ export function wantsQuoteStamp({ format, kind } = {}) {
 // were right: a little past centre, high on the frame, kicked up 12 degrees so
 // it reads as something stuck on rather than something rendered.
 const STAMP_URL = '/tik/quote.png';
-const STAMP_WIDTH_RATIO = 0.775;  // of the frame's width
-const STAMP_TILT_DEG = -12;
+const STAMP_WIDTH_RATIO = 0.88;   // of the frame's width
+const STAMP_TILT_DEG = -7;
 const STAMP_CX_RATIO = 0.52;
 const STAMP_CY_RATIO = 0.38;
 const STAMP_MAX_FRAME_HEIGHT = 0.92;   // of the room it has above and below, so it never touches an edge
+const STAMP_MAX_FRAME_WIDTH = 0.96;    // and the same either side
 
 let stampPromise = null;
 let stamp = null;
@@ -131,17 +132,21 @@ function drawQuoteStamp(ctx, frameX, frameY, frameW, frameH) {
   // onto the black, reading as floating rather than stuck on. So the width
   // ratio is the intent and this is the ceiling, which only binds on the wide
   // aspect ratios where it has to.
-  const wanted = frameW * STAMP_WIDTH_RATIO;
-  // The badge sits ABOVE centre, so the room it has is twice the shorter of the
-  // two gaps around it, not the whole frame height. Bounding the box against
-  // the full height is what let it hang off the top anyway.
+  // The badge is off-centre both ways, so the room it has on each axis is twice
+  // the SHORTER of the two gaps around it, not the whole frame. Measuring
+  // against the full height is what let it hang off the top of a scope frame;
+  // now it is near enough the full width for the same trap to exist sideways.
+  const cx = frameW * STAMP_CX_RATIO;
   const cy = frameH * STAMP_CY_RATIO;
-  const room = 2 * Math.min(cy, frameH - cy) * STAMP_MAX_FRAME_HEIGHT;
-  const maxByHeight = room / (sin + aspect * cos);
-  const w = Math.min(wanted, maxByHeight);
+  const roomX = 2 * Math.min(cx, frameW - cx) * STAMP_MAX_FRAME_WIDTH;
+  const roomY = 2 * Math.min(cy, frameH - cy) * STAMP_MAX_FRAME_HEIGHT;
+  // Width and height of the TILTED box, per unit of art width.
+  const boxW = cos + aspect * sin;
+  const boxH = sin + aspect * cos;
+  const w = Math.min(frameW * STAMP_WIDTH_RATIO, roomX / boxW, roomY / boxH);
   const h = w * aspect;
   ctx.save();
-  ctx.translate(frameX + frameW * STAMP_CX_RATIO, frameY + frameH * STAMP_CY_RATIO);
+  ctx.translate(frameX + cx, frameY + cy);
   ctx.rotate(STAMP_TILT_DEG * Math.PI / 180);
   ctx.drawImage(stamp, -w / 2, -h / 2, w, h);
   ctx.restore();
