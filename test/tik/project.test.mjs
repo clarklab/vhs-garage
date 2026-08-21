@@ -52,6 +52,25 @@ test('guys post defaults ask for a favorite role, ≤5 hashtags, name-safe fallb
   assert.match(empty.title, /Remembering some guys/);
 });
 
+test('quotes post defaults use the load-bearing quotes title', () => {
+  const d = defaultPostFields('quotes', 'Terminator 2 (1991)');
+  assert.equal(d.title, 'Terminator 2 (1991) — movie quotes');
+  assert.match(d.description, /follow VHS Garage/i);
+  const tags = d.description.match(/#\w+/g) || [];
+  assert.ok(tags.length <= 5, `expected ≤5 hashtags, got ${tags.length}`);
+  const empty = defaultPostFields('quotes', '');
+  assert.match(empty.title, /movie quotes/i);
+  assert.doesNotMatch(empty.title, /trivia/i);
+});
+
+test('quotes is a registered format with chrome', () => {
+  assert.equal(FORMATS.quotes.key, 'quotes');
+  assert.equal(FORMATS.quotes.label, 'Quote-a-long');
+  assert.equal(formatOf({ format: 'quotes' }).label, 'Quote-a-long');
+  const p = makeProject({ id: 'q', format: 'quotes', now: 1 });
+  assert.equal(p.format, 'quotes');
+});
+
 test('captionForRole formats "Movie (Year)" + blurb, hook fallback, no year fallback', () => {
   const role = { movie: 'They Live', year: 1988, role: 'Frank', hook: 'The alley fight ran six minutes.' };
   assert.equal(
