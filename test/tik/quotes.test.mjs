@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { wantsQuoteStamp } from '../../public/scripts/tik/compose.js';
+import { wantsQuoteStamp, wantsLeftAlign } from '../../public/scripts/tik/compose.js';
 import { fontScaleForQuote } from '../../public/scripts/tik/caption.js';
 import { defaultPostFields } from '../../public/scripts/tik/project.js';
 import { buildQuotesPrompt } from '../../netlify/functions/lib/autopilot.mjs';
 import { quoteHints } from '../../netlify/functions/lib/srt.mjs';
+import { quotePlainText } from '../../netlify/functions/lib/imdb.mjs';
 
 test('wantsQuoteStamp only on quotes title slides', () => {
   assert.equal(wantsQuoteStamp({ format: 'quotes', kind: 'title' }), true);
@@ -71,4 +72,61 @@ test('the prompt admits when the cue list is only a sample', () => {
   const q = buildQuotesPrompt({ title: 'Aliens', durationSeconds: 9000, quotes: [{ text: 'line 7 here' }], cues: few });
   assert.match(q, /English subtitle cues for matching/);
   assert.doesNotMatch(q, /as context only/i);
+});
+
+// ---- an exchange keeps its line breaks, all the way to the frame ----
+
+test('quotePlainText puts each character on their own line', () => {
+  const out = quotePlainText({ lines: [
+    { text: 'Get away from her, you bitch!', characters: [{ character: 'Ripley' }] },
+    { text: 'Mommy!', characters: [{ character: 'Newt' }] },
+  ] });
+  assert.equal(out, 'Ripley: Get away from her, you bitch!\nNewt: Mommy!');
+});
+
+test('a single speaker stays a single line with no name', () => {
+  const out = quotePlainText({ lines: [{ text: 'I will be back.', characters: [] }] });
+  assert.equal(out, 'I will be back.');
+  assert.ok(!out.includes('\n'));
+});
+
+test('the prompt tells the model to keep the exchange broken up', () => {
+  const p = buildQuotesPrompt({ title: 'Aliens', durationSeconds: 9000, quotes: [{ text: 'A: one\nB: two' }] });
+  assert.match(p, /KEEP THE EXCHANGE ON SEPARATE LINES/);
+  assert.match(p, /each speaker on their own line as "Name: line"/i);
+  assert.match(p, /Never join an exchange onto one line/i);
+});
+
+test('a multi-line pool item stays readable in the numbered list', () => {
+  const p = buildQuotesPrompt({
+    title: 'Aliens', durationSeconds: 9000,
+    quotes: [{ text: 'Hudson: Game over, man!\nRipley: Deal with it.' }, { text: 'Second one.' }],
+  });
+  const pool = p.match(/<imdb_quotes>\n([\s\S]*?)\n<\/imdb_quotes>/)[1].split('\n');
+  assert.match(pool[0], /^1\. Hudson: Game over, man!$/);
+  assert.match(pool[1], /^\s+Ripley: Deal with it\.$/, 'continuation was not indented under its number');
+  assert.match(pool[2], /^2\. Second one\.$/);
+});
+
+// ---- and reads as dialogue on the slide ----
+
+test('a multi-line quote is flush left, a single line is centred', () => {
+  const two = ['Hudson: Game over, man!', 'Ripley: Deal with it.'];
+  assert.equal(wantsLeftAlign({ format: 'quotes', kind: null, lines: two }), true);
+  assert.equal(wantsLeftAlign({ format: 'quotes', kind: null, lines: ['I will be back.'] }), false);
+});
+
+test('the title slide and the sign-off stay centred like every other format', () => {
+  const two = ['Hudson: Game over, man!', 'Ripley: Deal with it.'];
+  assert.equal(wantsLeftAlign({ format: 'quotes', kind: 'title', lines: two }), false);
+  assert.equal(wantsLeftAlign({ format: 'quotes', kind: 'outro', lines: two }), false);
+  // Trivia is never left-aligned, however many lines it runs to.
+  assert.equal(wantsLeftAlign({ format: 'trivia', kind: null, lines: two }), false);
+});
+
+test('wantsLeftAlign shrugs off junk and blank lines', () => {
+  assert.equal(wantsLeftAlign(), false);
+  assert.equal(wantsLeftAlign({ format: 'quotes', lines: null }), false);
+  // A blank paragraph is spacing, not a second speaker.
+  assert.equal(wantsLeftAlign({ format: 'quotes', lines: ['one line', '', '   '] }), false);
 });

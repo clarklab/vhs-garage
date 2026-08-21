@@ -139,7 +139,12 @@ export function quotePlainText(node) {
     const who = String(ln?.characters?.[0]?.character || '').trim();
     parts.push(who ? `${who}: ${text}` : text);
   }
-  const fromLines = parts.join(' ').replace(/\s+/g, ' ').trim();
+  // One line per character, not one run-on line. Two reasons, and they are the
+  // same reason: a slide reads better with the exchange broken up the way it
+  // was spoken, and the matcher's speaker-label strip is anchored per line, so
+  // a glued-together exchange leaves every name after the first sitting in the
+  // words we score against the subtitles.
+  const fromLines = parts.join('\n').replace(/[ \t]+/g, ' ').trim();
   if (fromLines) return fromLines;
   return String(node?.text?.plainText || '').replace(/\s+/g, ' ').trim();
 }

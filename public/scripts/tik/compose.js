@@ -100,6 +100,20 @@ function drawQuoteStamp(ctx, frameX, frameY, frameW, frameH) {
   ctx.restore();
 }
 
+// Left-align the caption pills instead of centring them.
+//
+// A Quote-a-long exchange is one line per character, and centred pills turn a
+// back-and-forth into a ragged diamond where the eye cannot find where each
+// speaker starts. Flush left, the names stack and it reads as dialogue.
+//
+// Only for that case: a one-line quote, the title slide and the sign-off are
+// all single thoughts and look better centred, the way every other format is.
+export function wantsLeftAlign({ format, kind, lines } = {}) {
+  if (format !== 'quotes') return false;
+  if (kind === 'title' || kind === 'outro') return false;
+  return (Array.isArray(lines) ? lines : []).filter((l) => String(l || '').trim()).length > 1;
+}
+
 export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null, format, kind } = {}) {
   const fs = Math.min(Math.max(Number(fontScale) || 1, 0.5), 1.6);
   const heightRatio = Number.isFinite(maxFrameHeightRatio)
@@ -183,20 +197,26 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   // Blank lines (blank paragraph in the textarea) get no pill — just space.
   if (lines.length) {
     ctx.font = FONT(fontSize);
-    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    const left = wantsLeftAlign({ format, kind, lines });
+    ctx.textAlign = left ? 'left' : 'center';
     const cx = CANVAS_W / 2;
+    const pillW = (line) => Math.min(ctx.measureText(line).width + PILL_PAD_X * 2, CANVAS_W - 40);
+    // Flush to the frame's own left edge so the block reads as one column with
+    // the image, and never so far right that the widest pill runs off-canvas.
+    const widest = left ? Math.max(...lines.filter(Boolean).map(pillW)) : 0;
+    const leftX = Math.max(20, Math.min(frameX, CANVAS_W - 20 - widest));
     let y = frameY + F.h + GAP;
     for (const line of lines) {
       const pillH = lineBoxH(fontSize);
       if (!line) { y += pillH + PILL_GAP; continue; } // no empty white blob
-      const textW = ctx.measureText(line).width;
-      const pillW = Math.min(textW + PILL_PAD_X * 2, CANVAS_W - 40);
+      const w = pillW(line);
+      const x = left ? leftX : cx - w / 2;
       ctx.fillStyle = '#ffffff';
-      pillPath(ctx, cx - pillW / 2, y, pillW, pillH, PILL_RADIUS);
+      pillPath(ctx, x, y, w, pillH, PILL_RADIUS);
       ctx.fill();
       ctx.fillStyle = '#000000';
-      ctx.fillText(line, cx, y + pillH / 2 + 1);
+      ctx.fillText(line, left ? x + PILL_PAD_X : cx, y + pillH / 2 + 1);
       y += pillH + PILL_GAP;
     }
   }
