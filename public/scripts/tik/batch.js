@@ -21,7 +21,8 @@ import { createTriviaPool, helpfulLabel, DEFAULT_PICK } from './triviapool.js';
 // Step 2 lives in its own module: it owns the folder scan, the per-draft list
 // and the run, and nothing here reaches into it beyond showing and refreshing.
 import { initShoot, refreshShoot, isShooting } from './shoot.js';
-import { fetchTriviaPost } from './autopilot.js';
+import { fetchTriviaPost, fetchQuotesPost, fetchSubtitles } from './autopilot.js';
+import { fontScaleForQuote } from './caption.js';
 import { makeProject, defaultPostFields, pickOutro } from './project.js';
 import { parseTitleList, pickBestMatch } from './movielist.js';
 import { houseSetAt } from './hashtags.js';
@@ -58,11 +59,13 @@ let selectedKey = null;
 let searchSeq = 0;
 let busy = false;
 let exitTo = () => {};
+let batchFormat = 'trivia';
 
 export function initBatch({ onExit = () => {} } = {}) {
   exitTo = onExit;
   els = {
     screen: $('screen-batch'), back: $('batch-back'), status: $('batch-status'),
+    format: $('batch-format'),
     tabWrite: $('batch-tab-write'), tabShoot: $('batch-tab-shoot'),
     write: $('batch-write'), shoot: $('batch-shoot'),
     // write
@@ -75,6 +78,7 @@ export function initBatch({ onExit = () => {} } = {}) {
     build: $('batch-build'), buildLabel: $('batch-build-label'),
     pickerTitle: $('batch-picker-title'), pickerMeta: $('batch-picker-meta'),
     size: $('batch-size'), spoilers: $('batch-spoilers'), curate: $('batch-curate'),
+    curateWrap: $('batch-curate-wrap'),
     curateNote: $('batch-curate-note'),
     replaceAll: $('batch-replace-all'), reset: $('batch-reset'),
     trivia: $('batch-trivia'), triviaEmpty: $('batch-trivia-empty'),
@@ -92,11 +96,13 @@ export function initBatch({ onExit = () => {} } = {}) {
   els.size.addEventListener('change', onSizeChange);
   els.spoilers.addEventListener('change', onSpoilersChange);
   els.curate.addEventListener('change', onCurateToggle);
+  els.format.addEventListener('click', onFormatClick);
   els.replaceAll.addEventListener('click', () => withSelected((it) => { it.pool.replaceAll(); renderPicker(); }));
   els.reset.addEventListener('click', () => withSelected((it) => { it.pool.reset(); renderPicker(); }));
   initShoot();
 
   showTab('write');
+  syncFormatChrome();
   render();
 }
 
@@ -141,7 +147,45 @@ function say(msg, tone = 'idle') {
 function setBusy(on) {
   busy = on;
   for (const b of [els.suggest, els.build, els.replaceAll, els.reset]) b.disabled = on;
+  if (els.format) {
+    for (const btn of els.format.querySelectorAll('[data-batch-format]')) btn.disabled = on;
+  }
   if (!on) refreshBuildButton();
+}
+
+function onFormatClick(e) {
+  const btn = e.target.closest('[data-batch-format]');
+  if (!btn || busy) return;
+  const next = btn.dataset.batchFormat;
+  if (next !== 'trivia' && next !== 'quotes') return;
+  if (next === batchFormat) return;
+  batchFormat = next;
+  for (const it of queue) {
+    it.pool = null;
+    it.state = 'idle';
+    it.curated = 0;
+    it.curateError = '';
+  }
+  syncFormatChrome();
+  render();
+  const it = find(selectedKey);
+  if (it) ensurePool(it);
+}
+
+function syncFormatChrome() {
+  const on = 'rounded-md px-3 py-1.5 text-xs font-semibold bg-neutral-800 text-white';
+  const off = 'rounded-md px-3 py-1.5 text-xs font-semibold text-neutral-400 hover:text-neutral-200';
+  if (els.format) {
+    for (const btn of els.format.querySelectorAll('[data-batch-format]')) {
+      btn.className = btn.dataset.batchFormat === batchFormat ? on : off;
+    }
+  }
+  const quotes = batchFormat === 'quotes';
+  els.curateWrap?.classList.toggle('hidden', quotes);
+  if (quotes) {
+    els.curateNote.classList.add('hidden');
+    els.curateNote.textContent = '';
+  }
 }
 
 // ================= step 1: the queue =================
@@ -152,7 +196,7 @@ async function suggestMovies() {
   try {
     // Everything already made on this device, so the agent never repeats one.
     const posted = (await listProjects().catch(() => []))
-      .filter((p) => p.format === 'trivia' && p.movie?.title)
+      .filter((p) => p.format === batchFormat && p.movie?.title)
       .map((p) => ({ movie: p.movie.title }));
 
     // Real post performance if TikTok has granted video.list, otherwise the
@@ -171,7 +215,7 @@ async function suggestMovies() {
         : 'Using this device\'s library. Connect post history for real view counts.';
     }
 
-    const picks = await runQueueJob({ history, posted, count: 10 });
+    const picks = await runQueueJob({ history, posted, count: 10, format: batchFormat });
 
     let added = 0;
     for (const pick of picks) if (addToQueue(pick)) added++;
@@ -445,7 +489,7 @@ async function ensurePool(item) {
     const res = await fetchWithTimeout('/.netlify/functions/tik-imdb', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        action: 'trivia', imdbId: item.imdbId, query: item.title, year: item.year,
+        action: batchFormat === 'quotes' ? 'quotes' : 'trivia', imdbId: item.imdbId, query: item.title, year: item.year,
         includeSpoilers: els.spoilers.checked,
       }),
     });
@@ -454,11 +498,11 @@ async function ensurePool(item) {
     item.imdbId = data.movie?.id || item.imdbId;
     item.year = data.movie?.year ?? item.year;
     item.runtimeSeconds = data.movie?.runtimeSeconds || item.runtimeSeconds;
-    item.pool = createTriviaPool(data.trivia || [], sizeValue());
-    item.total = data.total || (data.trivia || []).length;
+    item.pool = createTriviaPool(data.quotes || data.trivia || [], sizeValue());
+    item.total = data.total || (data.quotes || data.trivia || []).length;
     item.state = 'ready';
   } catch (e) {
-    console.error(`[tik-batch] trivia fetch failed: ${item.title} — ${e.message}`, e);
+    console.error(`[tik-batch] ${batchFormat} fetch failed: ${item.title} — ${e.message}`, e);
     item.state = 'error';
     item.error = e.message;
   }
@@ -470,7 +514,7 @@ async function ensurePool(item) {
   // shows instantly, then re-ranks when the agent answers. Only the movie
   // being looked at — the rest get curated during buildAll, so a ten-movie
   // queue doesn't fire ten agent calls just from being queued.
-  if (item.state === 'ready' && selectedKey === item.key) curateSelected(item);
+  if (item.state === 'ready' && selectedKey === item.key && batchFormat !== 'quotes') curateSelected(item);
 }
 
 // Walk the queue loading pools one at a time. Sequential on purpose: ten
@@ -499,7 +543,7 @@ async function prefetchPools() {
 const CANDIDATES = 25;
 
 async function curatePool(item, { announce = () => {} } = {}) {
-  if (!els.curate.checked || !item?.pool || item.curated) return false;
+  if (batchFormat === 'quotes' || !els.curate.checked || !item?.pool || item.curated) return false;
   const size = item.pool.size();
   const all = item.pool.top(CANDIDATES);
   if (all.length <= size) return false; // nothing to choose between
@@ -573,6 +617,7 @@ async function runCurateSync(params) {
 // Turning it on re-ranks what's loaded; turning it off restores vote order by
 // reloading the pools (the original order is the server's, not ours to undo).
 function onCurateToggle() {
+  if (batchFormat === 'quotes') return;
   if (!els.curate.checked) {
     for (const it of queue) { it.pool = null; it.state = 'idle'; it.curated = 0; }
     render();
@@ -585,6 +630,7 @@ function onCurateToggle() {
 }
 
 async function curateSelected(item) {
+  if (batchFormat === 'quotes') return false;
   const changed = await curatePool(item, { announce: (m) => { els.curateNote.textContent = m; els.curateNote.classList.remove('hidden'); } });
   if (find(selectedKey) === item) renderPicker();
   renderQueue();
@@ -664,8 +710,9 @@ function hiddenNote(it) {
 }
 
 function statusLine(it) {
-  if (it.state === 'loading') return 'Loading trivia…';
-  if (it.state === 'error') return it.error || 'Could not load trivia';
+  const noun = batchFormat === 'quotes' ? 'quotes' : 'trivia';
+  if (it.state === 'loading') return `Loading ${noun}…`;
+  if (it.state === 'error') return it.error || `Could not load ${noun}`;
   if (it.state === 'written') return 'Draft written';
   if (it.pool) {
     const n = it.pool.visible().length;
@@ -679,9 +726,11 @@ function renderPicker() {
   els.trivia.innerHTML = '';
 
   if (!it) {
-    els.pickerTitle.textContent = 'Trivia';
+    els.pickerTitle.textContent = batchFormat === 'quotes' ? 'Quotes' : 'Trivia';
     els.pickerMeta.textContent = '';
-    els.triviaEmpty.textContent = 'Pick a movie on the left to see its trivia.';
+    els.triviaEmpty.textContent = batchFormat === 'quotes'
+      ? 'Pick a movie on the left to see its quotes.'
+      : 'Pick a movie on the left to see its trivia.';
     els.triviaEmpty.classList.remove('hidden');
     return;
   }
@@ -689,7 +738,9 @@ function renderPicker() {
 
   if (it.state === 'loading') {
     els.pickerMeta.textContent = '';
-    els.triviaEmpty.textContent = 'Pulling every trivia item IMDb has…';
+    els.triviaEmpty.textContent = batchFormat === 'quotes'
+      ? 'Pulling every quote IMDb has…'
+      : 'Pulling every trivia item IMDb has…';
     els.triviaEmpty.classList.remove('hidden');
     return;
   }
@@ -712,17 +763,22 @@ function renderPicker() {
   els.pickerMeta.textContent =
     `${visible.length} of ${it.pool.total()} · ${it.pool.benchCount()} in reserve${hiddenNote(it)}`;
   const curated = it.pool.isCurated();
-  els.curateNote.textContent = it.curateError
-    ? `Agent ranking unavailable (${it.curateError}) — showing IMDb vote order.`
-    : curated
-      ? `Agent chose these ${it.curated} from the top ${Math.min(25, it.pool.total())} by votes.`
-      : '';
-  // Visibility and colour in ONE assignment: setting .className separately
-  // wipes whatever classList.toggle('hidden') just did, leaving an empty
-  // element holding layout space.
-  els.curateNote.className = `mt-1 text-[11px] leading-snug ${
-    els.curateNote.textContent ? '' : 'hidden '}${
-    it.curateError ? 'text-amber-300/80' : 'text-emerald-300/80'}`;
+  if (batchFormat === 'quotes') {
+    els.curateNote.textContent = '';
+    els.curateNote.className = 'mt-1 hidden text-[11px] leading-snug text-emerald-300/80';
+  } else {
+    els.curateNote.textContent = it.curateError
+      ? `Agent ranking unavailable (${it.curateError}) — showing IMDb vote order.`
+      : curated
+        ? `Agent chose these ${it.curated} from the top ${Math.min(25, it.pool.total())} by votes.`
+        : '';
+    // Visibility and colour in ONE assignment: setting .className separately
+    // wipes whatever classList.toggle('hidden') just did, leaving an empty
+    // element holding layout space.
+    els.curateNote.className = `mt-1 text-[11px] leading-snug ${
+      els.curateNote.textContent ? '' : 'hidden '}${
+      it.curateError ? 'text-amber-300/80' : 'text-emerald-300/80'}`;
+  }
   els.triviaEmpty.classList.toggle('hidden', visible.length > 0);
   if (!visible.length) els.triviaEmpty.textContent = 'Every item was thrown out. Hit Reset to bring them back.';
 
@@ -820,43 +876,71 @@ async function buildAll() {
     // A movie the user never opened has no pool yet. Load it now rather than
     // skipping it: "write every draft" has to mean every one in the queue.
     if (!it.pool) {
-      say(`Loading trivia for ${it.title} (${i + 1} of ${ready.length})…`);
+      say(`Loading ${batchFormat === 'quotes' ? 'quotes' : 'trivia'} for ${it.title} (${i + 1} of ${ready.length})…`);
       await ensurePool(it);
     }
     // Curate before writing so an unopened movie still gets the agent's ten
-    // rather than the raw vote order.
-    if (it.pool && !it.curated) {
+    // rather than the raw vote order. Quotes skip this: the ranked IMDb list
+    // is the source, and Autopilot boils the picked lines itself.
+    if (batchFormat !== 'quotes' && it.pool && !it.curated) {
       say(`Choosing the best trivia for ${it.title} (${i + 1} of ${ready.length})…`);
       await curatePool(it);
       if (selectedKey === it.key) renderPicker();
     }
     const picked = it.pool?.visible() || [];
     if (!picked.length) {
-      console.warn('[tik-batch] no trivia to write', { movie: it.title, error: it.error });
-      failed.push(`${it.title} (${it.error || 'no trivia found'})`);
+      const miss = batchFormat === 'quotes' ? 'no quotes found' : 'no trivia found';
+      console.warn('[tik-batch] nothing to write', { movie: it.title, format: batchFormat, error: it.error });
+      failed.push(`${it.title} (${it.error || miss})`);
       continue;
     }
-    say(`Writing ${it.title} (${i + 1} of ${ready.length}) — ${picked.length} facts…`);
+    say(`Writing ${it.title} (${i + 1} of ${ready.length}) — ${picked.length} ${batchFormat === 'quotes' ? 'quotes' : 'facts'}…`);
     try {
-      // A blank-line separated list is what the server reads as USER-CHOSEN
-      // FACTS: it rewrites each one, in order, and adds nothing of its own.
-      const { suggestions, meta } = await fetchTriviaPost({
-        title: it.title,
-        year: it.year,
-        durationSeconds: it.runtimeSeconds || 0,
-        count: picked.length,
-        // Same opener the hand-driven flow gets: the server prepends a title
-        // slide ("Movie (Year)" + a lead-in) pointed at the film's title card,
-        // so it arrives as suggestions[0] and the count above stays the number
-        // of TRIVIA slides.
-        includeTitleSlide: true,
-        // Same call writes the post's own copy: hook, film hashtags, and
-        // soundtrack picks. Doing it here is what lets the prompt forbid the
-        // hook from spoiling a fact, since the model has the captions in hand.
-        includeMeta: true,
-        guidance: picked.map((p) => p.text).join('\n\n'),
-        onProgress: (m) => say(`${it.title} (${i + 1} of ${ready.length}) — ${m}`),
-      });
+      let suggestions;
+      let meta;
+      if (batchFormat === 'quotes') {
+        const packSubs = await fetchSubtitles({ imdbId: it.imdbId, query: it.title, year: it.year });
+        const result = await fetchQuotesPost({
+          title: it.title,
+          year: it.year,
+          durationSeconds: it.runtimeSeconds || 0,
+          count: Math.min(8, picked.length),
+          quotes: picked,
+          cues: packSubs.cues || [],
+          includeTitleSlide: true,
+          includeMeta: true,
+          guidance: '',
+          onProgress: (m) => say(`${it.title} — ${m}`),
+        });
+        suggestions = result.suggestions;
+        meta = result.meta;
+      } else {
+        // A blank-line separated list is what the server reads as USER-CHOSEN
+        // FACTS: it rewrites each one, in order, and adds nothing of its own.
+        const result = await fetchTriviaPost({
+          title: it.title,
+          year: it.year,
+          durationSeconds: it.runtimeSeconds || 0,
+          count: picked.length,
+          // Same opener the hand-driven flow gets: the server prepends a title
+          // slide ("Movie (Year)" + a lead-in) pointed at the film's title card,
+          // so it arrives as suggestions[0] and the count above stays the number
+          // of TRIVIA slides.
+          includeTitleSlide: true,
+          // Same call writes the post's own copy: hook, film hashtags, and
+          // soundtrack picks. Doing it here is what lets the prompt forbid the
+          // hook from spoiling a fact, since the model has the captions in hand.
+          includeMeta: true,
+          guidance: picked.map((p) => p.text).join('\n\n'),
+          onProgress: (m) => say(`${it.title} (${i + 1} of ${ready.length}) — ${m}`),
+        });
+        suggestions = result.suggestions;
+        meta = result.meta;
+      }
+      if (!suggestions?.length) {
+        failed.push(`${it.title} (${batchFormat === 'quotes' ? 'no quotes returned' : 'no trivia returned'})`);
+        continue;
+      }
       it.draftId = await saveDraft(it, suggestions, meta, made);
       it.state = 'written';
       made++;
@@ -908,11 +992,11 @@ async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
   card.close?.();
   const outro = await fetchOutroFrame();
 
-  const project = makeProject({ id, format: 'trivia', now });
+  const project = makeProject({ id, format: batchFormat, now });
   // Round-robin the house hashtag pair across the run rather than hashing ten
   // random ids: a batch of ten then covers all five sets twice, which is what
   // makes the tag report readable in weeks instead of months.
-  const post = defaultPostFields('trivia', label, {
+  const post = defaultPostFields(batchFormat, label, {
     meta, projectId: id, houseSetKey: houseSetAt(batchIndex).key,
   });
   Object.assign(project, {
@@ -939,13 +1023,14 @@ async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
         caption: s.caption,
         timecode: s.timecode,
         grabHint: s.grab || '',
-        fontScale: 1, role: null, kind: null, entry: null, section: null,
+        fontScale: i === 0 ? 1 : (batchFormat === 'quotes' ? fontScaleForQuote(s.caption) : 1),
+        role: null, kind: i === 0 ? 'title' : null, entry: null, section: null,
         frame,
-        batchShot: i === 0 ? 'title' : 'trivia',
+        batchShot: i === 0 ? 'title' : (batchFormat === 'quotes' ? 'quotes' : 'trivia'),
       })),
       ...(outro ? [{
         id: String(suggestions.length + 1),
-        caption: pickOutro('trivia'),
+        caption: pickOutro(batchFormat),
         timecode: null,
         grabHint: '',
         fontScale: 1, role: null, kind: 'outro', entry: null, section: null,

@@ -387,6 +387,10 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
           <span class="material-symbols-outlined text-[16px] leading-none">arrow_back</span> Library
         </button>
         <span class="rounded bg-emerald-400/15 px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-emerald-300">Batch mode</span>
+        <div id="batch-format" class="flex items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
+          <button type="button" data-batch-format="trivia" class="rounded-md px-3 py-1.5 text-xs font-semibold">Trivia</button>
+          <button type="button" data-batch-format="quotes" class="rounded-md px-3 py-1.5 text-xs font-semibold">Quotes</button>
+        </div>
         <div class="ml-auto flex items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
           <button id="batch-tab-write" class="rounded-md px-3 py-1.5 text-xs font-semibold">1 · Write</button>
           <button id="batch-tab-shoot" class="rounded-md px-3 py-1.5 text-xs font-semibold">2 · Shoot</button>
@@ -463,7 +467,7 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
               <label class="flex items-center gap-1 text-xs text-neutral-400" title="Spoiler trivia is flagged by IMDb">
                 <input id="batch-spoilers" type="checkbox" class="accent-emerald-500" /> Spoilers
               </label>
-              <label class="flex items-center gap-1 text-xs text-neutral-400"
+              <label id="batch-curate-wrap" class="flex items-center gap-1 text-xs text-neutral-400"
                      title="Send the top 25 by votes to the agent and let it choose the best slides, instead of taking the top 10 by votes">
                 <input id="batch-curate" type="checkbox" class="accent-emerald-500" checked /> AI picks
               </label>

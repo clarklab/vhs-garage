@@ -16,7 +16,7 @@
 //
 // Owns its own DOM. batch.js only tells it when the tab is shown.
 
-import { grabVerifiedFrame } from './vision.js';
+import { grabVerifiedFrame, grabSettledFrame } from './vision.js';
 import { loadVideoFile } from './capture.js';
 import {
   fsSupported, setMoviesFolder, getMoviesFolder, armHandle, pickMovieFile,
@@ -154,7 +154,7 @@ async function scanFolder({ rescan = false } = {}) {
 async function loadDrafts() {
   let drafts = [];
   try {
-    drafts = (await listProjects()).filter((p) => p.batch?.pendingFrames && p.format === 'trivia');
+    drafts = (await listProjects()).filter((p) => p.batch?.pendingFrames && (p.format === 'trivia' || p.format === 'quotes'));
   } catch (e) {
     console.error(`[tik-shoot] could not list drafts: ${e.message}`, e);
   }
@@ -166,6 +166,7 @@ async function loadDrafts() {
       name: d.name || d.movie?.title || 'Untitled',
       title: d.movie?.title || '',
       year: d.movie?.year || null,
+      format: d.format,
       total: (d.slides || []).filter((s) => s.batchShot !== 'skip' && s.kind !== 'outro').length,
       state: old?.state === 'done' ? 'done' : (old?.state || 'idle'),
       file: old?.file || null,
@@ -255,7 +256,8 @@ async function shootAll() {
         if (abort.signal.aborted) break;
         setPhase('Shooting', `${row.name} — movie ${i + 1} of ${queue.length}, frame ${n + 1} of ${shootable.length}`);
         try {
-          const out = await grabVerifiedFrame(video, {
+          const grabber = project.format === 'quotes' ? grabSettledFrame : grabVerifiedFrame;
+          const out = await grabber(video, {
             timecode: slide.timecode,
             durationSeconds: row.duration || project.batch?.runtimeSeconds || 0,
             caption: slide.caption,
@@ -283,7 +285,9 @@ async function shootAll() {
         project.updatedAt = Date.now();
         await putProject(project);
         row.state = 'done';
-        row.detail = `${verified} of ${shootable.length} frames verified`;
+        row.detail = project.format === 'quotes'
+          ? `${shootable.length} frames grabbed`
+          : `${verified} of ${shootable.length} frames verified`;
       } else {
         row.state = 'stopped';
         row.detail = `stopped after ${row.done} frames (not saved)`;
