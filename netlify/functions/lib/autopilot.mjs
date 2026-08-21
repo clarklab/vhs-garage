@@ -1,6 +1,6 @@
 // Pure helpers for autopilot. buildAutopilotPrompt() writes the LLM prompt;
 // normalizeSuggestions() validates/clamps the model's JSON. No network / DOM.
-import { seekTime } from '../../../public/scripts/tik/timecode.js';
+import { seekTime } from './srt.mjs';
 
 export const AUTOPILOT_COUNT = 5;
 export const QUOTES_COUNT = 8;
@@ -343,9 +343,13 @@ function formatHints(hints) {
       lines.push(h);
       continue;
     }
-    const qi = h.quoteIndex ?? h.index;
-    if (qi == null || !Number.isFinite(Number(h.start)) || !Number.isFinite(Number(h.end))) continue;
-    lines.push(`${qi} -> ${h.start}-${h.end}`);
+    const qi = Number(h.quoteIndex ?? h.index);
+    if (!Number.isFinite(qi) || !Number.isFinite(Number(h.start)) || !Number.isFinite(Number(h.end))) continue;
+    // +1 because formatQuotePool numbers the pool from 1. These two lists sit
+    // hundreds of lines apart in the prompt and the model has no way to notice
+    // they disagree, so a hint written 0-based silently hands every quote the
+    // PREVIOUS quote's timecode.
+    lines.push(`${qi + 1} -> ${h.start}-${h.end}`);
   }
   return lines;
 }
@@ -364,8 +368,15 @@ export function buildQuotesPrompt({
     : '';
 
   const cueRows = formatCueList(cues);
+  const sampled = Array.isArray(cues) && cues.length > cueRows.length;
+  // Saying "match against these" over a 1-in-4 sample invites a confident
+  // answer off the nearest visible cue. The server re-matches on the full file
+  // afterwards either way, so the honest framing is the useful one.
+  const cuesLead = sampled
+    ? `English subtitle cues, EVERY ${Math.round((cues.length / cueRows.length) * 10) / 10}th line of a longer file, as context only. Each line is index | start | end | text. The exact cue for a quote may not be here; give your best "start" and "end" and do not stretch to fit a line that is merely nearby.`
+    : 'English subtitle cues for matching. Each line is index | start | end | text. Subtitles have no character names and different punctuation — match anyway.';
   const cuesBlock = cueRows.length
-    ? `\n\nEnglish subtitle cues for matching. Each line is index | start | end | text. Subtitles have no character names and different punctuation — match anyway.\n<subtitles>\n${cueRows.map((c) => `${c.i} | ${c.start} | ${c.end} | ${String(c.text || '').replace(/\s+/g, ' ').trim()}`).join('\n')}\n</subtitles>`
+    ? `\n\n${cuesLead}\n<subtitles>\n${cueRows.map((c) => `${c.i} | ${c.start} | ${c.end} | ${String(c.text || '').replace(/\s+/g, ' ').trim()}`).join('\n')}\n</subtitles>`
     : `\n\nNo subtitle file is available. For every quote slide, omit "start" and "end" and guess a "timecode" in seconds where that line is spoken. Never drop a quote because you cannot match it.`;
 
   const hintLines = formatHints(hints);

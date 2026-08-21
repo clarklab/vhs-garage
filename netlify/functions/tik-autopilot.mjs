@@ -8,7 +8,7 @@
 //   lives under Netlify's 10s function ceiling so it uses a fast model + 9s abort.
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, buildTitleSlidePrompt, buildQuotesPrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, QUOTES_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
-import { quoteHints } from './lib/srt.mjs';
+import { quoteHints, applyCueTimes } from './lib/srt.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
@@ -111,7 +111,14 @@ export default async (req) => {
     const base = titleOnly ? 1 : (Number(count) || (kind === 'quotes' ? QUOTES_COUNT : AUTOPILOT_COUNT));
     const max = (kind === 'quotes' ? includeTitleSlide !== false : includeTitleSlide) ? base + 1 : base;
     const parsed = parseModelJson(raw);
-    const suggestions = normalizeSuggestions(parsed, durationSeconds, max);
+    let suggestions = normalizeSuggestions(parsed, durationSeconds, max);
+    // Same override as the background job — see applyCueTimes.
+    if (kind === 'quotes') {
+      suggestions = applyCueTimes(suggestions, cues, {
+        skipFirst: includeTitleSlide !== false,
+        durationSeconds,
+      });
+    }
     const meta = includeMeta ? normalizeMeta(parsed) : null;
     if (!suggestions.length) {
       console.warn('[tik-autopilot] model returned no usable suggestions', { model, rawPreview: String(raw).slice(0, 300) });

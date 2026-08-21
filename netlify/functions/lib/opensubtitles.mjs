@@ -4,16 +4,24 @@
 export const OS_USER_AGENT = 'vhs-garage v1.0';
 const SEARCH = 'https://api.opensubtitles.com/api/v1/subtitles';
 const DOWNLOAD = 'https://api.opensubtitles.com/api/v1/download';
-const REQUEST_TIMEOUT_MS = 10_000;
+// Per hop, not per call. A lookup is THREE round trips (search, download
+// ticket, then the file itself) and the endpoint that runs them is a plain
+// Netlify function on a 10-second ceiling, so a 10s-per-hop budget could spend
+// 30 and come back as a platform 502 instead of a graceful miss.
+const REQUEST_TIMEOUT_MS = 4_000;
 
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  if (options.signal) options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+  const relay = () => controller.abort();
+  // One caller signal covers all three hops, so the listener has to come back
+  // off again — otherwise each hop leaves another one attached to it.
+  if (options.signal) options.signal.addEventListener('abort', relay, { once: true });
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener('abort', relay);
   }
 }
 

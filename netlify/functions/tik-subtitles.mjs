@@ -7,6 +7,11 @@ import { downloadSubtitle, searchSubtitles } from './lib/opensubtitles.mjs';
 
 const CACHE_STORE = 'tik-subtitles';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+// Under Netlify's 10s ceiling for a non-background function, the same way
+// tik-autopilot's sync path aborts at 9s. Blowing the ceiling returns a
+// platform 502, which the client cannot fail open from; aborting ourselves
+// lands in the catch below and comes back as a normal "no subtitles" miss.
+const BUDGET_MS = 8_500;
 
 export default async (req) => {
   if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
@@ -24,10 +29,12 @@ export default async (req) => {
   const cached = await readCache(id);
   if (cached) return json({ ...cached, cached: true });
   const apiKey = process.env.OpenSubtitles || '';
+  const budget = new AbortController();
+  const timer = setTimeout(() => budget.abort(), BUDGET_MS);
   try {
-    const picked = await searchSubtitles(id, { apiKey });
+    const picked = await searchSubtitles(id, { apiKey, signal: budget.signal });
     if (!picked) throw new Error('No English subtitle');
-    const srt = await downloadSubtitle(picked.file_id, { apiKey });
+    const srt = await downloadSubtitle(picked.file_id, { apiKey, signal: budget.signal });
     const cues = parseSrt(srt);
     if (!cues.length) throw new Error('Empty subtitle parse');
     const value = { cues, missing: false, error: null };
@@ -37,6 +44,8 @@ export default async (req) => {
     console.warn('[tik-subtitles] miss', { id, message: e.message });
     const value = { cues: [], missing: true, error: e.message || 'OpenSubtitles lookup failed' };
     return json({ ...value, cached: false });
+  } finally {
+    clearTimeout(timer);
   }
 };
 

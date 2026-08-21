@@ -15,13 +15,3 @@ export function frameStep(currentTime, dir, fps = 30) {
   const next = (Number(currentTime) || 0) + dir / (fps || 30);
   return Math.max(0, next);
 }
-
-export function seekTime(start, end) {
-  if (start == null) return 0;
-  const a = Number(start);
-  const b = Number(end);
-  if (!Number.isFinite(a) || a < 0) return 0;
-  const from = Math.max(0, a);
-  const to = Number.isFinite(b) ? Math.max(from, b) : from;
-  return from + 0.25 * (to - from);
-}

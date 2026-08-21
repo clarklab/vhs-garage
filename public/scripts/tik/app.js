@@ -2338,7 +2338,10 @@ function renderSlide(slide, index) {
 
   toolbar.append(pickBtn, ...(photoSearch ? [photoSearch] : []), ...(insertBtn ? [insertBtn] : []), fontDown, fontUp);
 
-  if (isTrivia && isOutroSlide(slide)) {
+  // The sign-off is house copy and format-agnostic (nextOutro knows what
+  // "more" means per format), so Quote-a-long gets the swap too even though it
+  // has no per-slide AI actions of its own.
+  if (isMovieFileFormat() && isOutroSlide(slide)) {
     // The sign-off is house copy from a fixed pool, so "another one" is a pool
     // pick, not a model call: there is nothing here for an LLM to know, and
     // paying Opus to re-say "follow VHS Garage" would be silly.

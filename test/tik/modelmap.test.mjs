@@ -18,6 +18,7 @@ const byId = (id) => CALLS.find((c) => c.id === id);
 test('every documented model is the one the function really defaults to', () => {
   const declared = [
     ['autopilot', 'tik-autopilot-job-background.mjs', 'TIK_AUTOPILOT_MODEL'],
+    ['quotes-autopilot', 'tik-autopilot-job-background.mjs', 'TIK_AUTOPILOT_MODEL'],
     ['autopilot-sync', 'tik-autopilot.mjs', 'TIK_AUTOPILOT_SYNC_MODEL'],
     ['curate', 'tik-curate-background.mjs', 'TIK_CURATE_MODEL'],
     ['queue', 'tik-queue-background.mjs', 'TIK_QUEUE_MODEL'],
@@ -39,8 +40,9 @@ test('the documented token budgets are the numbers the code sends', () => {
   assert.ok(curate, 'no explicit budget found in tik-curate-background');
   assert.equal(byId('curate').budget, Number(curate[1]));
 
-  // Autopilot rides the shared default rather than passing its own.
+  // Both autopilot prompts ride the shared default rather than passing their own.
   assert.equal(byId('autopilot').budget, DEFAULT_MAX_TOKENS);
+  assert.equal(byId('quotes-autopilot').budget, DEFAULT_MAX_TOKENS);
 });
 
 test('the frame-check card matches the sheet the client actually grabs', () => {
@@ -132,4 +134,42 @@ test('modelMapHtml escapes rather than injects', () => {
     const close = (html.match(new RegExp(`</${tag}>`, 'g')) || []).length;
     assert.equal(open, close, `unbalanced <${tag}>`);
   }
+});
+
+// ---- the two batch formats are costed apart ----
+
+test('a batch is one format or the other, never both at once', () => {
+  // The toggle in batch mode is exclusive, so an estimate that summed both
+  // would describe a run nobody can start.
+  const trivia = batchEstimate({ movies: 10, format: 'trivia' });
+  const quotes = batchEstimate({ movies: 10, format: 'quotes' });
+  const ids = (e) => e.lines.map((l) => l.id);
+  assert.ok(ids(trivia).includes('autopilot'));
+  assert.ok(!ids(trivia).includes('quotes-autopilot'));
+  assert.ok(ids(quotes).includes('quotes-autopilot'));
+  assert.ok(!ids(quotes).includes('autopilot'));
+  // Picking the films is the one call both runs share.
+  assert.ok(ids(trivia).includes('queue') && ids(quotes).includes('queue'));
+});
+
+test('Quote-a-long pays nothing to the frame checker', () => {
+  // Its frames come from matching the line against the subtitle file, which is
+  // arithmetic. If this ever starts costing something, the math stopped being
+  // the source of truth and the page should say so.
+  const quotes = batchEstimate({ movies: 10, format: 'quotes' });
+  assert.ok(!quotes.lines.some((l) => l.id === 'vision'));
+  assert.ok(!quotes.lines.some((l) => l.id === 'curate'));
+});
+
+test('trivia stays the default estimate, so the page reads the same as before', () => {
+  assert.equal(batchEstimate({ movies: 10 }).total, batchEstimate({ movies: 10, format: 'trivia' }).total);
+});
+
+test('the page shows both bills, not just the trivia one', () => {
+  const html = modelMapHtml();
+  assert.ok(html.includes('Tape Trivia'));
+  assert.ok(html.includes('Quote-a-long'));
+  assert.ok(html.includes('Boils the Quote-a-long captions'));
+  // And it explains why one of them has no frame-checking line.
+  assert.match(html, /subtitle file/i);
 });

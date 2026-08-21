@@ -14,7 +14,7 @@
 // - 'year': one year's two ranked lists           → { intro, rated, boxoffice }
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, buildTitleSlidePrompt, buildQuotesPrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, QUOTES_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
-import { quoteHints } from './lib/srt.mjs';
+import { quoteHints, applyCueTimes } from './lib/srt.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
@@ -151,7 +151,15 @@ export default async (req) => {
       const base = titleOnly ? 1 : (Number(count) || (kind === 'quotes' ? QUOTES_COUNT : AUTOPILOT_COUNT));
       const max = (kind === 'quotes' ? includeTitleSlide !== false : includeTitleSlide) ? base + 1 : base;
       const parsed = parseModelJson(raw);
-      const suggestions = normalizeSuggestions(parsed, durationSeconds, max);
+      let suggestions = normalizeSuggestions(parsed, durationSeconds, max);
+      // Arithmetic beats the model's own bookkeeping: re-match every caption
+      // against the FULL cue list and let that decide the timecode.
+      if (kind === 'quotes') {
+        suggestions = applyCueTimes(suggestions, cues, {
+          skipFirst: includeTitleSlide !== false,
+          durationSeconds,
+        });
+      }
       // Meta is a bonus, never a gate: a malformed one costs the post copy, not
       // the trivia we just paid for. The client falls back to the template.
       const meta = includeMeta ? normalizeMeta(parsed) : null;
