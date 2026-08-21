@@ -415,6 +415,12 @@ function withStorageWarning(msg) {
   return storageAvailable() ? msg : `${msg} (Local saving is unavailable in this browser — work here won’t persist.)`;
 }
 
+// Trivia and Quote-a-long both drive a local movie file (seek, grab, reload).
+// Keep rewrite / Add-scene on trivia only — those still call fetchScenes.
+function isMovieFileFormat(format = project?.format) {
+  return format === 'trivia' || format === 'quotes';
+}
+
 async function newProject(format) {
   openSeq++; // abort any in-flight openProject load
   await teardownProject();
@@ -466,7 +472,7 @@ async function openProject(id) {
   slides = loaded;
   dirty = false;
   enterEditor();
-  if (project.format === 'trivia') {
+  if (isMovieFileFormat()) {
     els.videoNote.classList.toggle('hidden', slides.length === 0);
     els.status.textContent = withStorageWarning(slides.length
       ? 'Reopened from your library — captions, fonts, and posting all work; re-pick the movie file to grab new frames.'
@@ -493,7 +499,7 @@ function applyFormatUI() {
     pane.classList.toggle('hidden', !on);
     pane.classList.toggle('flex', on);
   }
-  els.addScene.classList.toggle('hidden', f.key !== 'trivia' && f.key !== 'quotes');
+  els.addScene.classList.toggle('hidden', f.key !== 'trivia');
   els.formatChip.textContent = f.label;
   els.formatChip.className = `rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${f.chip}`;
   els.slidesHint.textContent = f.editorHint;
@@ -514,7 +520,7 @@ function applyFormatUI() {
 let seedForced = false;
 function syncSeedControls() {
   if (!els.triviaSeed) return;
-  const trivia = project?.format === 'trivia' || project?.format === 'quotes';
+  const trivia = isMovieFileFormat();
   const written = slides.length > 0;
   const show = trivia && (!written || seedForced);
   els.triviaSeed.classList.toggle('hidden', !show);
@@ -897,7 +903,7 @@ els.connectHistoryBtn.addEventListener('click', async () => {
 async function offerRememberedReload() {
   els.videoReload.classList.add('hidden');
   try {
-    if (!fsSupported() || !project || project.format !== 'trivia' || videoReady) return;
+    if (!fsSupported() || !project || !isMovieFileFormat() || videoReady) return;
     const title = project.movie?.title;
     if (!title) return;
     const openedFor = project.id;
@@ -2054,8 +2060,7 @@ async function enterEdit(id) {
   els.grabLabel.textContent = 'Save frame';
   els.cancelEdit.classList.remove('hidden');
   render(); // apply the highlight
-  const isTrivia = project?.format === 'trivia';
-  if (isTrivia) {
+  if (isMovieFileFormat()) {
     els.status.textContent = slide.grabHint
       ? `Editing — GRAB: ${slide.grabHint}  (or paste/drop an image)`
       : 'Editing this slide — scrub to a new frame and Save, or paste/drop an image. Esc cancels.';
@@ -2203,6 +2208,7 @@ function redrawAllThumbs() {
 
 function renderSlide(slide, index) {
   const isTrivia = project?.format === 'trivia';
+  const movieFile = isMovieFileFormat();
   const li = document.createElement('li');
   li.className = 'flex flex-col gap-2 rounded-xl border border-neutral-800 bg-neutral-900 p-2';
   if (slide.id === editingId) li.className += ' ring-2 ring-red-500';
@@ -2217,7 +2223,7 @@ function renderSlide(slide, index) {
   const thumb = document.createElement('canvas');
   thumb.dataset.thumb = slide.id;
   thumb.className = 'w-[72px] flex-none cursor-pointer rounded-md bg-black h-auto';
-  thumb.title = isTrivia ? 'Click to re-grab or replace this frame' : 'Click to select, then paste/drop/pick an image';
+  thumb.title = movieFile ? 'Click to re-grab or replace this frame' : 'Click to select, then paste/drop/pick an image';
   thumb.addEventListener('click', () => {
     if (slide.id === editingId) { exitEdit(); els.status.textContent = 'Edit cancelled.'; return; }
     enterEdit(slide.id);
@@ -2237,7 +2243,8 @@ function renderSlide(slide, index) {
   ta.className = 'w-full rounded-md border border-neutral-800 bg-neutral-950 p-2 text-sm text-neutral-100';
   ta.rows = 3;
   ta.maxLength = 300; // AI caps at 180; give manual edits headroom but keep slides renderable
-  ta.placeholder = isTrivia ? 'Trivia for this frame…'
+  ta.placeholder = project?.format === 'quotes' ? 'Quote for this frame…'
+    : isTrivia ? 'Trivia for this frame…'
     : project?.format === 'year' ? 'Caption for this slide…'
       : 'Blurb for this guy…';
   ta.value = slide.caption;
