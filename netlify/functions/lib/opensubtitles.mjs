@@ -4,6 +4,18 @@
 export const OS_USER_AGENT = 'vhs-garage v1.0';
 const SEARCH = 'https://api.opensubtitles.com/api/v1/subtitles';
 const DOWNLOAD = 'https://api.opensubtitles.com/api/v1/download';
+const REQUEST_TIMEOUT_MS = 10_000;
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  if (options.signal) options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export function numericImdbId(raw) {
   const s = String(raw || '').trim();
@@ -56,7 +68,7 @@ export async function searchSubtitles(imdbId, { apiKey, signal } = {}) {
   const url = new URL(SEARCH);
   url.searchParams.set('imdb_id', numeric);
   url.searchParams.set('languages', 'en');
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: { 'Api-Key': apiKey, 'User-Agent': OS_USER_AGENT, Accept: 'application/json' },
     signal,
   });
@@ -68,7 +80,7 @@ export async function searchSubtitles(imdbId, { apiKey, signal } = {}) {
 export async function downloadSubtitle(fileId, { apiKey, signal } = {}) {
   if (!fileId) throw new Error('Missing subtitle file');
   if (!apiKey) throw new Error('OpenSubtitles key missing');
-  const res = await fetch(DOWNLOAD, {
+  const res = await fetchWithTimeout(DOWNLOAD, {
     method: 'POST',
     headers: {
       'Api-Key': apiKey,
@@ -83,7 +95,7 @@ export async function downloadSubtitle(fileId, { apiKey, signal } = {}) {
   const body = await res.json();
   const link = body?.link;
   if (!link) throw new Error('OpenSubtitles returned no link');
-  const file = await fetch(link, { signal, headers: { 'User-Agent': OS_USER_AGENT } });
+  const file = await fetchWithTimeout(link, { signal, headers: { 'User-Agent': OS_USER_AGENT } });
   if (!file.ok) throw new Error(`Subtitle file ${file.status}`);
   const buf = Buffer.from(await file.arrayBuffer());
   const head = buf.slice(0, 4).toString('utf8');

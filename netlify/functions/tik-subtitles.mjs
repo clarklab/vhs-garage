@@ -29,6 +29,7 @@ export default async (req) => {
     if (!picked) throw new Error('No English subtitle');
     const srt = await downloadSubtitle(picked.file_id, { apiKey });
     const cues = parseSrt(srt);
+    if (!cues.length) throw new Error('Empty subtitle parse');
     const value = { cues, missing: false, error: null };
     await writeCache(id, value);
     return json({ ...value, cached: false });
