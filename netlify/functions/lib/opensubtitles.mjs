@@ -1,14 +1,16 @@
 // OpenSubtitles REST v1: pick an English human SRT for an IMDb title.
 // Zip payloads are treated as a miss — we do not unzip.
 //
-// Two credentials, not one. SEARCH is happy with the Api-Key alone, but
-// DOWNLOAD also wants an Authorization: Bearer JWT that you get by POSTing a
-// username and password to /login. Sending only the key meant every search
-// succeeded, every download failed, and every quote came back with a guessed
-// timecode — a silent, total failure that looked like a matching problem.
+// Downloads are ANONYMOUS-FIRST. A consumer (the thing an Api-Key belongs to)
+// can be configured to allow downloads with no user token at all — there is a
+// checkbox for it, and an "under dev" one that lifts the anonymous allowance
+// to 100 a day. Plenty of keys are set up that way, so refusing to try without
+// a username and password would break a perfectly good install.
 //
-// Login is expensive and rate-limited at the far end, so the token is cached
-// and only re-fetched when it is missing or stale.
+// The Bearer JWT from /login is therefore a FALLBACK, used only when the API
+// actually answers 401. It also raises the ceiling for a consumer that has not
+// enabled anonymous downloads. Login is expensive and rate-limited at the far
+// end, so the token is cached and only re-fetched when missing or stale.
 
 export const OS_USER_AGENT = 'vhs-garage v1.0';
 const SEARCH = 'https://api.opensubtitles.com/api/v1/subtitles';
@@ -38,13 +40,15 @@ async function fetchWithTimeout(url, options = {}) {
 // Tokens are good for about a day at the far end; refresh well inside that.
 export const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 
-// The credentials, and a single place that decides whether we have them.
-// Returns null rather than throwing so the caller can say something useful.
+// The credentials, and a single place that decides what we can attempt.
+//
+// `canTry` is the only gate that matters: with a key we can always attempt an
+// anonymous download. `canLogin` says whether the 401 fallback is available.
 export function osCredentials(env = process.env) {
   const apiKey = env.OpenSubtitles || env.OPENSUBTITLES_API_KEY || '';
   const username = env.OPENSUBTITLES_USERNAME || '';
   const password = env.OPENSUBTITLES_PASSWORD || '';
-  return { apiKey, username, password, canDownload: !!(apiKey && username && password) };
+  return { apiKey, username, password, canTry: !!apiKey, canLogin: !!(apiKey && username && password) };
 }
 
 export async function login({ apiKey, username, password, signal } = {}) {
@@ -138,12 +142,12 @@ export async function searchSubtitles(imdbId, { apiKey, signal } = {}) {
 export async function downloadSubtitle(fileId, { apiKey, token, signal } = {}) {
   if (!fileId) throw new Error('Missing subtitle file');
   if (!apiKey) throw new Error('OpenSubtitles key missing');
-  if (!token) throw new Error('OpenSubtitles download needs a login token');
+  // No token is a normal call, not an error: the consumer may allow it.
   const res = await fetchWithTimeout(DOWNLOAD, {
     method: 'POST',
     headers: {
       'Api-Key': apiKey,
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       'User-Agent': OS_USER_AGENT,
       Accept: 'application/json',
       'Content-Type': 'application/json',
@@ -152,11 +156,15 @@ export async function downloadSubtitle(fileId, { apiKey, token, signal } = {}) {
     signal,
   });
   if (!res.ok) {
-    // These two are the ones worth naming: a stale token and a spent daily
-    // allowance look identical from the outside otherwise.
-    if (res.status === 401) throw new Error('OpenSubtitles login token was rejected');
-    if (res.status === 406) throw new Error('OpenSubtitles download quota is spent for today');
-    throw new Error(`OpenSubtitles download ${res.status}`);
+    // Carry the status so the caller can tell "log in and try again" apart from
+    // "today's allowance is gone", which are the same words to a human and very
+    // different instructions. The body often names the real reason; keep it.
+    const detail = await res.text().catch(() => '');
+    const err = new Error(res.status === 406
+      ? 'OpenSubtitles download quota is spent for today'
+      : `OpenSubtitles download ${res.status}${detail ? `: ${detail.slice(0, 160)}` : ''}`);
+    err.status = res.status;
+    throw err;
   }
   const body = await res.json();
   const link = body?.link;

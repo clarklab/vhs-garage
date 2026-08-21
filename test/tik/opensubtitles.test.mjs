@@ -30,20 +30,26 @@ test('pickBestSubtitle returns null when nothing is usable', () => {
   assert.equal(pickBestSubtitle(null), null);
 });
 
-// ---- two credentials, not one ----
+// ---- anonymous first, login only if refused ----
 
-test('canDownload needs the key AND a login', () => {
-  // Search is happy with the key alone; download is not. Sending only the key
-  // meant every search succeeded, every download 401'd, and every quote came
-  // back with a guessed timecode — a total failure that read as a bad matcher.
+test('a key alone is enough to TRY a download', () => {
+  // A consumer can be configured to allow downloads with no user token, and
+  // an "under dev" consumer gets 100 a day that way. Refusing to attempt one
+  // without a username and password breaks exactly those installs.
+  const key = osCredentials({ OpenSubtitles: 'k' });
+  assert.equal(key.canTry, true);
+  assert.equal(key.canLogin, false, 'no login is available, but that must not stop the attempt');
+  assert.equal(osCredentials({}).canTry, false, 'without a key there is nothing to try');
+});
+
+test('canLogin needs all three, since it is the fallback', () => {
   const full = { OpenSubtitles: 'k', OPENSUBTITLES_USERNAME: 'u', OPENSUBTITLES_PASSWORD: 'p' };
-  assert.equal(osCredentials(full).canDownload, true);
+  assert.equal(osCredentials(full).canLogin, true);
   for (const missing of ['OpenSubtitles', 'OPENSUBTITLES_USERNAME', 'OPENSUBTITLES_PASSWORD']) {
     const env = { ...full };
     delete env[missing];
-    assert.equal(osCredentials(env).canDownload, false, `${missing} was treated as optional`);
+    assert.equal(osCredentials(env).canLogin, false, `${missing} was treated as optional`);
   }
-  assert.equal(osCredentials({}).canDownload, false);
 });
 
 test('the key is read under either name', () => {
@@ -53,18 +59,24 @@ test('the key is read under either name', () => {
   assert.equal(osCredentials({ OPENSUBTITLES_API_KEY: 'k' }).apiKey, 'k');
 });
 
+test('downloadSubtitle needs a file and a key, but NOT a token', async () => {
+  await assert.rejects(() => downloadSubtitle('', { apiKey: 'k' }), /Missing subtitle file/);
+  await assert.rejects(() => downloadSubtitle('123', {}), /key missing/i);
+  // No token is a normal anonymous call: it must get as far as the network,
+  // not be turned away here.
+  await assert.doesNotReject(
+    () => downloadSubtitle('123', { apiKey: 'k', signal: AbortSignal.abort() }).catch((e) => {
+      assert.doesNotMatch(String(e.message), /token/i, `refused locally instead of trying: ${e.message}`);
+    }),
+  );
+});
+
 test('login says which piece is missing instead of failing at the far end', async () => {
   await assert.rejects(() => login({}), /key missing/i);
   await assert.rejects(
     () => login({ apiKey: 'k' }),
     /OPENSUBTITLES_USERNAME and OPENSUBTITLES_PASSWORD/,
   );
-});
-
-test('downloadSubtitle refuses to try without a token', async () => {
-  // Better a named error than a bare 401 that reads as "no subtitles exist".
-  await assert.rejects(() => downloadSubtitle('123', { apiKey: 'k' }), /login token/i);
-  await assert.rejects(() => downloadSubtitle('', { apiKey: 'k', token: 't' }), /Missing subtitle file/);
 });
 
 test('the token refresh window sits well inside the day the token lasts', () => {
