@@ -51,7 +51,7 @@ export default async (req) => {
           // Expected until the portal grants video.list. Not an error state.
           console.warn('[tik-history] video.list not granted', { status: res.status, code });
           return json({
-            posts: [], movies: [], tagRows: [], scope: 'missing',
+            posts: [], movies: [], quoteMovies: [], tagRows: [], scope: 'missing',
             error: 'This TikTok app has not been granted the video.list scope yet.',
             hint: 'Request the video.list scope in the TikTok developer portal, then use "Connect post history" to re-authorize. Batch mode uses your local library until then.',
           });
@@ -75,6 +75,7 @@ export default async (req) => {
   return json({
     posts: posts.length,
     movies: summarizeHistory(posts),
+    quoteMovies: summarizeHistory(posts, { format: 'quotes' }),
     tagRows: summarizeTagRows(posts),
     scope: 'granted',
   });

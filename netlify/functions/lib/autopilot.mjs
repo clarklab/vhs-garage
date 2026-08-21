@@ -293,7 +293,7 @@ export function normalizeSuggestions(raw, durationSeconds, max = AUTOPILOT_COUNT
     const sought = applyCueSeek(item, durationSeconds);
     let tc = Number(sought.timecode);
     if (!Number.isFinite(tc)) tc = 0;
-    tc = Math.min(dur, Math.max(0, Math.round(tc)));
+    tc = Math.min(dur || tc, Math.max(0, Math.round(tc)));
     const grab = typeof item?.grab === 'string' ? clampText(item.grab, GRAB_MAX) : '';
     const start = Number(item?.start);
     const end = Number(item?.end);

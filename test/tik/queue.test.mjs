@@ -128,6 +128,15 @@ test('summarizeHistory survives junk', () => {
   assert.deepEqual(summarizeHistory([null, 7, {}]), []);
 });
 
+test('summarizeHistory format quotes vs trivia splits posts', () => {
+  const posts = [
+    row('Jaws', { create_time: 100 }),
+    { title: 'Alien — movie quotes', view_count: 200, create_time: 200 },
+  ];
+  assert.deepEqual(summarizeHistory(posts).map((r) => r.movie), ['Jaws']);
+  assert.deepEqual(summarizeHistory(posts, { format: 'quotes' }).map((r) => r.movie), ['Alien']);
+});
+
 // ---- the prompt ----
 
 test('buildQueuePrompt shows real numbers when we have them', () => {

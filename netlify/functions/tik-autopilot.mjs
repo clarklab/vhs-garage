@@ -8,6 +8,7 @@
 //   lives under Netlify's 10s function ceiling so it uses a fast model + 9s abort.
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, buildTitleSlidePrompt, buildQuotesPrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, QUOTES_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
+import { quoteHints } from './lib/srt.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
@@ -48,7 +49,10 @@ export default async (req) => {
   let body;
   try { body = await req.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
 
-  const { kind = 'trivia', title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta, titleOnly, actor, roles, minVotes, ratedGiven, boxofficeGiven, quotes, cues, hints, model: requested } = body;
+  let { kind = 'trivia', title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta, titleOnly, actor, roles, minVotes, ratedGiven, boxofficeGiven, quotes, cues, hints, model: requested } = body;
+  if (kind === 'quotes' && !(Array.isArray(hints) && hints.length)) {
+    hints = quoteHints(quotes, cues);
+  }
   if ((kind === 'trivia' || kind === 'quotes') && !title) return json({ error: 'Missing movie title' }, 400);
   if ((kind === 'roles' || kind === 'blurbs') && !actor) return json({ error: 'Missing actor name' }, 400);
   if (kind === 'blurbs' && !(Array.isArray(roles) && roles.length)) return json({ error: 'No roles picked' }, 400);

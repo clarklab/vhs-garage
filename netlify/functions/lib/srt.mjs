@@ -85,3 +85,12 @@ export function matchQuoteToCues(quote, cues) {
     index: best.from,
   };
 }
+
+export function quoteHints(quotes, cues) {
+  return (Array.isArray(quotes) ? quotes : []).map((q, i) => {
+    const text = typeof q === 'string' ? q : String(q?.text || '');
+    const hit = matchQuoteToCues(text, cues);
+    if (!hit) return null;
+    return { quoteIndex: i, start: hit.start, end: hit.end };
+  }).filter(Boolean);
+}

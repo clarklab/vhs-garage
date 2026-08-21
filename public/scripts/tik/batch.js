@@ -213,7 +213,8 @@ async function suggestMovies() {
         body: JSON.stringify({ refreshToken: token }),
       }).catch(() => null);
       const data = res && res.ok ? await res.json().catch(() => ({})) : {};
-      history = Array.isArray(data.movies) ? data.movies : [];
+      const movies = batchFormat === 'quotes' ? data.quoteMovies : data.movies;
+      history = Array.isArray(movies) ? movies : [];
       els.suggestNote.textContent = data.scope === 'granted'
         ? `Reading ${history.length} of your posts for what performs.`
         : 'Using this device\'s library. Connect post history for real view counts.';

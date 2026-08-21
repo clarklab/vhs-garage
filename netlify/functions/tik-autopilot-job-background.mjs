@@ -14,6 +14,7 @@
 // - 'year': one year's two ranked lists           → { intro, rated, boxoffice }
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, buildTitleSlidePrompt, buildQuotesPrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, QUOTES_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
+import { quoteHints } from './lib/srt.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
@@ -53,7 +54,7 @@ export default async (req) => {
   let body;
   try { body = await req.json(); } catch { return new Response(null, { status: 400 }); }
 
-  const {
+  let {
     jobId, kind = 'trivia',
     title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta, titleOnly,
     actor, roles,
@@ -61,6 +62,9 @@ export default async (req) => {
     quotes, cues, hints,
     model: requested,
   } = body;
+  if (kind === 'quotes' && !(Array.isArray(hints) && hints.length)) {
+    hints = quoteHints(quotes, cues);
+  }
   if (!jobId || !/^[a-zA-Z0-9-]{8,64}$/.test(jobId)) {
     console.error('[tik-autopilot-job] missing/invalid jobId');
     return new Response(null, { status: 400 });

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSrt, srtTimeToSeconds, normalizeQuoteText, matchQuoteToCues } from '../../netlify/functions/lib/srt.mjs';
+import { parseSrt, srtTimeToSeconds, normalizeQuoteText, matchQuoteToCues, quoteHints } from '../../netlify/functions/lib/srt.mjs';
 import { seekTime } from '../../public/scripts/tik/timecode.js';
 
 const SAMPLE = `1
@@ -67,4 +67,10 @@ test('matchQuoteToCues spans two adjacent cues when the quote covers both', () =
 test('matchQuoteToCues returns null when nothing is close', () => {
   const cues = parseSrt(SAMPLE);
   assert.equal(matchQuoteToCues('Get to the chopper', cues), null);
+});
+
+test('quoteHints maps matched quotes to cue spans', () => {
+  const cues = parseSrt(SAMPLE);
+  const out = quoteHints([{ text: "The Terminator: I'll be back." }], cues);
+  assert.deepEqual(out, [{ quoteIndex: 0, start: 72, end: 76 }]);
 });

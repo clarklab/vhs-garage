@@ -481,3 +481,10 @@ test('normalizeSuggestions keeps start and end when present', () => {
   assert.equal(out[0].end, 76);
   assert.equal(out[0].timecode, 73);
 });
+
+test('normalizeSuggestions keeps seek times when durationSeconds is 0', () => {
+  const out = normalizeSuggestions({
+    suggestions: [{ caption: "I'll be back.", timecode: 0, start: 72, end: 76 }],
+  }, 0, 8);
+  assert.equal(out[0].timecode, 73);
+});
