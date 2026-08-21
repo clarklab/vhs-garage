@@ -213,6 +213,7 @@ async function makeThumbBlob(slide) {
   composeToCanvas(c, slide.bitmap, slide.caption, {
     titleLine: currentTitleLine(), scale: 0.12, fontScale: slide.fontScale || 1,
     maxFrameHeightRatio: frameHeightRatio(),
+    format: project.format, kind: slide.kind,
   });
   return await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.7));
 }
@@ -929,6 +930,7 @@ function openSlidePreview(slide) {
       scale: PREVIEW_MODAL_SCALE,
       fontScale: slide.fontScale || 1,
       maxFrameHeightRatio: frameHeightRatio(),
+      format: project.format, kind: slide.kind,
     });
     const idx = slides.findIndex((s) => s.id === slide.id);
     const scale = Math.round((slide.fontScale || 1) * 100);
@@ -2141,7 +2143,7 @@ function frameHeightRatio() {
 function redrawAllThumbs() {
   slides.forEach((slide) => {
     const thumb = els.list.querySelector(`canvas[data-thumb="${slide.id}"]`);
-    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, maxFrameHeightRatio: frameHeightRatio() });
+    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slide.kind });
   });
 }
 
@@ -2191,6 +2193,7 @@ function renderSlide(slide, index) {
   const redrawThumb = () => composeToCanvas(thumb, slide.bitmap, ta.value, {
     titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1,
     maxFrameHeightRatio: frameHeightRatio(),
+    format: project.format, kind: slide.kind,
   });
   redrawThumb();
 
@@ -2460,7 +2463,7 @@ els.download.addEventListener('click', async () => {
     const titleLine = currentTitleLine();
     for (let i = 0; i < slides.length; i++) {
       els.status.textContent = `Rendering slide ${i + 1}/${slides.length}…`;
-      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio: frameHeightRatio() });
+      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slides[i].kind });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `${slug}-${String(i + 1).padStart(2, '0')}.jpg`;
@@ -2513,6 +2516,7 @@ els.post.addEventListener('click', async () => {
     const result = await publishSlideshow(slides, {
       titleLine,
       maxFrameHeightRatio: frameHeightRatio(),
+      format: project.format,
       title: (project.postTitle || '').trim() || fallback.title,
       description: (project.postDesc || '').trim() || fallback.description,
       onProgress: (m) => { els.status.textContent = m; },
