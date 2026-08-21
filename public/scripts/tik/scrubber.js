@@ -5,7 +5,14 @@ import { formatTimecode, frameStep } from './timecode.js';
 
 const RANGE_MAX = 1000; // range input resolution (0..1000 mapped to 0..duration)
 
-export function initScrubber({ video, range, timecode, steps = [], fps = 30 }) {
+// `play` is optional: the button that runs the film with sound.
+//
+// Stepping a frame at a time tells you what a shot looks like and nothing about
+// whether it is the right shot — for a quote slide the only way to know is to
+// hear the line said. The <video> ships muted so nothing can blare on load; the
+// first press of this button is a user gesture, which is exactly when unmuting
+// is allowed and wanted.
+export function initScrubber({ video, range, timecode, steps = [], fps = 30, play = null }) {
   const sync = () => {
     const d = video.duration || 0;
     if (d > 0) range.value = String(Math.round((video.currentTime / d) * RANGE_MAX));
@@ -23,8 +30,30 @@ export function initScrubber({ video, range, timecode, steps = [], fps = 30 }) {
   video.addEventListener('seeked', sync);
 
   const clamp = (t) => Math.min(Math.max(0, t), video.duration || t);
-  const stepFrames = (n) => { video.currentTime = clamp(frameStep(video.currentTime, n, fps)); };
-  const stepSeconds = (n) => { video.currentTime = clamp(video.currentTime + n); };
+  // Nudging a frame while it is running is a fight with the playhead, so any
+  // step stops it first.
+  const stepFrames = (n) => { video.pause(); video.currentTime = clamp(frameStep(video.currentTime, n, fps)); };
+  const stepSeconds = (n) => { video.pause(); video.currentTime = clamp(video.currentTime + n); };
+
+  if (play) {
+    const icon = play.querySelector('.material-symbols-outlined') || play;
+    const syncPlay = () => {
+      const running = !video.paused && !video.ended;
+      icon.textContent = running ? 'pause' : 'play_arrow';
+      play.title = running ? 'Pause' : 'Play with sound, to hear the line';
+      play.setAttribute('aria-label', play.title);
+    };
+    play.addEventListener('click', () => {
+      if (video.paused || video.ended) {
+        video.muted = false;   // the click IS the gesture that permits this
+        video.play().catch((e) => console.warn('[tik] playback failed:', e));
+      } else {
+        video.pause();
+      }
+    });
+    for (const ev of ['play', 'pause', 'ended', 'loadedmetadata']) video.addEventListener(ev, syncPlay);
+    syncPlay();
+  }
 
   // Press = one step; press-and-HOLD = continuous scrubbing (repeat after a
   // short delay). pointerdown covers mouse, touch, and pen — no click handler,
