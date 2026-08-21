@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { wrapLines, fitFontSize } from '../../public/scripts/tik/caption.js';
+import { wrapLines, fitFontSize, fontScaleForQuote } from '../../public/scripts/tik/caption.js';
 
 // Fake measurer: every character is 10px wide.
 const measure10 = (s) => s.length * 10;
@@ -32,4 +32,14 @@ test('fitFontSize shrinks so all lines fit the band height', () => {
   assert.equal(fitFontSize(1, 4000, { lineHeightFactor: 1.25, maxFont: 100 }), 100);
   // never below minFont
   assert.equal(fitFontSize(50, 100, { lineHeightFactor: 1.25, maxFont: 100, minFont: 24 }), 24);
+});
+
+test('fontScaleForQuote grows short lines and shrinks long ones', () => {
+  assert.equal(fontScaleForQuote("I'll be back."), 1.35);
+  assert.equal(fontScaleForQuote('Come with me if you want to live.'), 1.35);
+  assert.equal(fontScaleForQuote('x'.repeat(50)), 1.15);
+  assert.equal(fontScaleForQuote('x'.repeat(100)), 1.0);
+  assert.equal(fontScaleForQuote('x'.repeat(200)), 0.85);
+  assert.equal(fontScaleForQuote(''), 1);
+  assert.equal(fontScaleForQuote(null), 1);
 });
