@@ -89,7 +89,11 @@ export function wantsQuoteStamp({ format, kind } = {}) {
 const STAMP_URL = '/tik/quote.png';
 const STAMP_WIDTH_RATIO = 0.88;   // of the frame's width
 const STAMP_TILT_DEG = -7;
-const STAMP_CX_RATIO = 0.52;
+// Dead centre. It sat at 0.52 back when the badge was small and being a little
+// off-axis read as casual. At 88% of the frame it does not: the art itself is
+// centred to within half a percent, so a 2% offset simply makes the left margin
+// twice the right one, which reads as a mistake rather than as a flourish.
+const STAMP_CX_RATIO = 0.5;
 const STAMP_CY_RATIO = 0.38;
 const STAMP_MAX_FRAME_HEIGHT = 0.92;   // of the room it has above and below, so it never touches an edge
 const STAMP_MAX_FRAME_WIDTH = 0.96;    // and the same either side
