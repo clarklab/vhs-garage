@@ -3,9 +3,12 @@
 import { getStore } from '@netlify/blobs';
 import { IMDB_ID_RE, resolveTitle } from './lib/imdb.mjs';
 import { parseSrt } from './lib/srt.mjs';
-import { downloadSubtitle, searchSubtitles } from './lib/opensubtitles.mjs';
+import { downloadSubtitle, searchSubtitles, login, osCredentials, TOKEN_TTL_MS } from './lib/opensubtitles.mjs';
 
 const CACHE_STORE = 'tik-subtitles';
+// Reserved key in the same store. IMDb ids all start with "tt", so it can
+// never collide with a cached film.
+const TOKEN_KEY = 'auth-token';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 // Under Netlify's 10s ceiling for a non-background function, the same way
 // tik-autopilot's sync path aborts at 9s. Blowing the ceiling returns a
@@ -28,13 +31,22 @@ export default async (req) => {
   }
   const cached = await readCache(id);
   if (cached) return json({ ...cached, cached: true });
-  const apiKey = process.env.OpenSubtitles || '';
+  const { apiKey, username, password, canDownload } = osCredentials();
   const budget = new AbortController();
   const timer = setTimeout(() => budget.abort(), BUDGET_MS);
   try {
+    if (!canDownload) {
+      // Say exactly what is missing. This used to fail deep inside the download
+      // call as a bare 401, which reads as "no subtitles for this film" when it
+      // actually means "this install was never finished".
+      throw new Error(apiKey
+        ? 'OpenSubtitles needs a login: set OPENSUBTITLES_USERNAME and OPENSUBTITLES_PASSWORD'
+        : 'OpenSubtitles API key missing: set OpenSubtitles');
+    }
     const picked = await searchSubtitles(id, { apiKey, signal: budget.signal });
-    if (!picked) throw new Error('No English subtitle');
-    const srt = await downloadSubtitle(picked.file_id, { apiKey, signal: budget.signal });
+    if (!picked) throw new Error('No English subtitle for this title');
+    const token = await authToken({ apiKey, username, password, signal: budget.signal });
+    const srt = await downloadSubtitle(picked.file_id, { apiKey, token, signal: budget.signal });
     const cues = parseSrt(srt);
     if (!cues.length) throw new Error('Empty subtitle parse');
     const value = { cues, missing: false, error: null };
@@ -48,6 +60,25 @@ export default async (req) => {
     clearTimeout(timer);
   }
 };
+
+// One login per half-day, shared by every invocation through the blob store.
+// Logging in per request is what gets an app rate-limited at the far end.
+async function authToken({ apiKey, username, password, signal }) {
+  const store = getStore(CACHE_STORE);
+  try {
+    const entry = await store.get(TOKEN_KEY, { type: 'json' });
+    if (entry?.token && Number.isFinite(entry.at) && Date.now() - entry.at < TOKEN_TTL_MS) return entry.token;
+  } catch (e) {
+    console.warn('[tik-subtitles] token cache read failed', { message: e.message });
+  }
+  const token = await login({ apiKey, username, password, signal });
+  try {
+    await store.setJSON(TOKEN_KEY, { at: Date.now(), token });
+  } catch (e) {
+    console.warn('[tik-subtitles] token cache write failed', { message: e.message });
+  }
+  return token;
+}
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), { status, headers: { 'content-type': 'application/json' } });

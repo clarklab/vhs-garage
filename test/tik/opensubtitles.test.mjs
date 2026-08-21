@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { numericImdbId, pickBestSubtitle } from '../../netlify/functions/lib/opensubtitles.mjs';
+import {
+  numericImdbId, pickBestSubtitle, osCredentials, login, downloadSubtitle, TOKEN_TTL_MS,
+} from '../../netlify/functions/lib/opensubtitles.mjs';
 
 test('numericImdbId strips the tt prefix', () => {
   assert.equal(numericImdbId('tt0103064'), '103064');
@@ -26,4 +28,45 @@ test('pickBestSubtitle prefers English, human, trusted, downloaded, srt', () => 
 test('pickBestSubtitle returns null when nothing is usable', () => {
   assert.equal(pickBestSubtitle([]), null);
   assert.equal(pickBestSubtitle(null), null);
+});
+
+// ---- two credentials, not one ----
+
+test('canDownload needs the key AND a login', () => {
+  // Search is happy with the key alone; download is not. Sending only the key
+  // meant every search succeeded, every download 401'd, and every quote came
+  // back with a guessed timecode — a total failure that read as a bad matcher.
+  const full = { OpenSubtitles: 'k', OPENSUBTITLES_USERNAME: 'u', OPENSUBTITLES_PASSWORD: 'p' };
+  assert.equal(osCredentials(full).canDownload, true);
+  for (const missing of ['OpenSubtitles', 'OPENSUBTITLES_USERNAME', 'OPENSUBTITLES_PASSWORD']) {
+    const env = { ...full };
+    delete env[missing];
+    assert.equal(osCredentials(env).canDownload, false, `${missing} was treated as optional`);
+  }
+  assert.equal(osCredentials({}).canDownload, false);
+});
+
+test('the key is read under either name', () => {
+  // The env var was set as "OpenSubtitles"; the conventional spelling should
+  // work too rather than silently reading as absent.
+  assert.equal(osCredentials({ OpenSubtitles: 'k' }).apiKey, 'k');
+  assert.equal(osCredentials({ OPENSUBTITLES_API_KEY: 'k' }).apiKey, 'k');
+});
+
+test('login says which piece is missing instead of failing at the far end', async () => {
+  await assert.rejects(() => login({}), /key missing/i);
+  await assert.rejects(
+    () => login({ apiKey: 'k' }),
+    /OPENSUBTITLES_USERNAME and OPENSUBTITLES_PASSWORD/,
+  );
+});
+
+test('downloadSubtitle refuses to try without a token', async () => {
+  // Better a named error than a bare 401 that reads as "no subtitles exist".
+  await assert.rejects(() => downloadSubtitle('123', { apiKey: 'k' }), /login token/i);
+  await assert.rejects(() => downloadSubtitle('', { apiKey: 'k', token: 't' }), /Missing subtitle file/);
+});
+
+test('the token refresh window sits well inside the day the token lasts', () => {
+  assert.ok(TOKEN_TTL_MS > 0 && TOKEN_TTL_MS < 24 * 60 * 60 * 1000);
 });

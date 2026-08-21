@@ -874,6 +874,10 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
             </button>
           </div>
           <p id="slides-hint" class="text-[11px] leading-snug text-neutral-500"></p>
+          <div id="subs-note" class="hidden items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] leading-snug text-amber-200/90">
+            <span class="material-symbols-outlined mt-px flex-none text-[15px] leading-none">warning</span>
+            <span id="subs-note-text"></span>
+          </div>
           <ol id="slide-list" class="flex flex-col gap-2"></ol>
         </section>
       </main>
