@@ -12,7 +12,7 @@ import { publishSlideshow } from './publish.js';
 import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot, fetchQuotesPost, fetchImdbQuotes, fetchSubtitles, QUOTES_COUNT } from './autopilot.js';
 import { fontScaleForQuote } from './caption.js';
 import { parseMovieName } from './filename.js';
-import { composeToCanvas, composeSlide, captionFontReady } from './compose.js';
+import { composeToCanvas, composeSlide, captionFontReady, quoteStampReady } from './compose.js';
 import { clockTimecode } from './timecode.js';
 import {
   FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
@@ -384,6 +384,13 @@ function syncThumbsToCaptionFont() {
     if (!ok) return;
     if (project) redrawAllThumbs();
   }).catch((e) => console.warn('[tik] caption font sync failed:', e));
+  // The stamp arrives on its own schedule too, and a title slide drawn before
+  // it decodes is missing its badge until something else forces a redraw.
+  if (project?.format === 'quotes') {
+    quoteStampReady().then((ok) => {
+      if (ok && project?.format === 'quotes') redrawAllThumbs();
+    }).catch((e) => console.warn('[tik] quote stamp sync failed:', e));
+  }
 }
 
 function enterEditor() {
