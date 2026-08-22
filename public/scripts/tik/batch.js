@@ -24,7 +24,7 @@ import { initShoot, refreshShoot, isShooting } from './shoot.js';
 import { fetchTriviaPost, fetchQuotesPost, fetchSubtitles } from './autopilot.js';
 import { fontScaleForQuote } from './caption.js';
 import { makeProject, defaultPostFields, pickOutro } from './project.js';
-import { parseTitleList, pickBestMatch } from './movielist.js';
+import { parseTitleList, pickBestMatch, queueAdmission } from './movielist.js';
 import { houseSetAt } from './hashtags.js';
 import { putProject, listProjects } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
@@ -63,6 +63,14 @@ let batchFormat = 'trivia';
 // Bumped whenever queued pools are thrown out (format toggle, spoilers, …)
 // so an IMDb fetch that started before the bump cannot write a stale pool.
 let poolGeneration = 0;
+// The row a render should scroll to and flash, and when it arrived.
+//
+// A window rather than a one-shot flag: adding a film kicks off its IMDb pool
+// fetch, which re-renders the queue a beat later and throws away the very DOM
+// node that was just highlighted. Keyed on time, every render inside the window
+// re-applies the highlight to whichever node currently represents that row.
+let justAdded = { key: null, at: 0 };
+const FLASH_MS = 1200;
 
 export function initBatch({ onExit = () => {} } = {}) {
   exitTo = onExit;
@@ -223,7 +231,7 @@ async function suggestMovies() {
     const picks = await runQueueJob({ history, posted, count: 10, format: batchFormat });
 
     let added = 0;
-    for (const pick of picks) if (addToQueue(pick)) added++;
+    for (const pick of picks) if (addToQueue(pick) === 'added') added++;
     say(added
       ? `Queued ${added} movie${added === 1 ? '' : 's'}.`
       : 'Nothing new to add — all of those are already queued.', added ? 'good' : 'idle');
@@ -328,7 +336,9 @@ function renderResults(titles) {
     row.children[0].textContent = t.title;
     row.children[1].textContent = [t.year, t.rating ? `${t.rating}` : ''].filter(Boolean).join(' · ');
     row.addEventListener('click', () => {
-      if (addToQueue(t)) { render(); prefetchPools(); say(`Added ${t.title}.`, 'good'); }
+      const verdict = addToQueue(t);
+      if (verdict === 'added') { render(); prefetchPools(); say(`Added ${t.title}.`, 'good'); }
+      else if (verdict === 'full') say(`Queue is full (${MAX_QUEUE}) — remove one first.`, 'bad');
       else say(`${t.title} is already in the queue.`);
       els.search.value = '';
       hideResults();
@@ -403,9 +413,10 @@ async function matchPastedList() {
   let added = 0;
   const missed = [];
   for (const r of results) {
-    const ok = r.pick && addToQueue({ ...r.pick, why: r.row.raw });
+    const verdict = r.pick ? addToQueue({ ...r.pick, why: r.row.raw }) : 'nomatch';
+    const ok = verdict === 'added';
     if (ok) added++;
-    else if (r.pick) missed.push({ ...r, confidence: 'dupe' });
+    else if (r.pick) missed.push({ ...r, confidence: verdict });
     else missed.push(r);
     renderPasteRow(r, ok);
   }
@@ -430,6 +441,7 @@ const PASTE_TONE = {
   title: 'text-neutral-500',
   weak: 'text-amber-300',
   dupe: 'text-neutral-600',
+  full: 'text-amber-300',
   none: 'text-red-300',
   error: 'text-red-300',
 };
@@ -441,7 +453,9 @@ function renderPasteRow(r, added) {
   if (!r.pick) {
     li.textContent = r.confidence === 'error' ? `${asked} — lookup failed` : `${asked} — no match`;
   } else if (!added) {
-    li.textContent = `${asked} — already queued`;
+    li.textContent = r.confidence === 'full'
+      ? `${asked} — queue is full (${MAX_QUEUE})`
+      : `${asked} — already queued`;
   } else if (r.confidence === 'weak') {
     li.textContent = `${asked} → ${r.pick.title}${r.pick.year ? ` (${r.pick.year})` : ''} — check this one`;
   } else {
@@ -450,19 +464,22 @@ function renderPasteRow(r, added) {
   els.pasteReport.appendChild(li);
 }
 
+// Returns a reason, not a boolean: "already queued" and "queue is full" are
+// different things to be told, and callers used to conflate them.
 function addToQueue(pick) {
-  const title = String(pick?.title || '').trim();
-  if (!title || queue.length >= MAX_QUEUE) return false;
-  const key = `${title.toLowerCase()}|${pick.year || ''}`;
-  if (queue.some((q) => q.key === key)) return false;
+  const verdict = queueAdmission(pick, queue, MAX_QUEUE);
+  if (!verdict.ok) return verdict.reason;
   queue.push({
-    key, title, year: pick.year ?? null, why: pick.why || '',
+    key: verdict.key, title: String(pick.title).trim(), year: pick.year ?? null, why: pick.why || '',
     imdbId: pick.imdbId || pick.id || null,
     runtimeSeconds: pick.runtimeSeconds || null,
     pool: null, state: 'idle', error: '', draftId: null,
   });
-  if (!selectedKey) selectMovie(key);
-  return true;
+  // The list grows downward, so with a few films queued a new row lands well
+  // below the search box that was just clicked. renderQueue scrolls to this.
+  justAdded = { key: verdict.key, at: Date.now() };
+  if (!selectedKey) selectMovie(verdict.key);
+  return 'added';
 }
 
 function removeFromQueue(key) {
@@ -688,6 +705,7 @@ function render() {
 
 function renderQueue() {
   els.queue.innerHTML = '';
+  let fresh = null;
   els.queueEmpty.classList.toggle('hidden', queue.length > 0);
   els.queueCount.textContent = queue.length ? `${queue.length}${queue.length >= MAX_QUEUE ? ' (max)' : ''}` : '';
 
@@ -719,6 +737,22 @@ function renderQueue() {
 
     li.append(pick, del);
     els.queue.appendChild(li);
+    if (it.key === justAdded.key && Date.now() - justAdded.at < FLASH_MS) fresh = li;
+  }
+
+  // Show the row that just arrived.
+  //
+  // The queue grows downward and a new film is appended at the bottom, so with
+  // a handful already queued it lands hundreds of pixels below the search box
+  // that was just clicked — off-screen on a laptop. Everything worked; you
+  // simply could not see it happen, which is indistinguishable from a click
+  // that did nothing.
+  if (fresh) {
+    fresh.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // And a beat of colour, for when it was already on screen and scrolling
+    // into view moves nothing at all.
+    fresh.classList.add('ring-2', 'ring-emerald-400');
+    setTimeout(() => fresh.classList.remove('ring-2', 'ring-emerald-400'), FLASH_MS);
   }
 }
 
