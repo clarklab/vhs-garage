@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseTitleList, pickBestMatch, titleKey, MAX_PASTED,
+  parseTitleList, pickBestMatch, titleKey, MAX_PASTED, queueAdmission, queueKey,
 } from '../../public/scripts/tik/movielist.js';
 
 // ---- parsing a pasted list ----
@@ -260,4 +260,47 @@ test('pickOutro clamps a junk r instead of returning undefined', () => {
       assert.equal(typeof pickOutro('trivia', r), 'string', `broke on ${r}`);
     }
   });
+});
+
+// ---- why an add to the batch queue landed or didn't ----
+
+test('a fresh title is admitted, and carries the key it will be stored under', () => {
+  const got = queueAdmission({ title: 'The Goonies', year: '1985' }, []);
+  assert.equal(got.ok, true);
+  assert.equal(got.reason, 'added');
+  assert.equal(got.key, queueKey('The Goonies', '1985'));
+});
+
+test('a full queue reads as full, not as a duplicate', () => {
+  // The search box and the paste list used to share a boolean, so both
+  // reported a full queue as "already in the list" — which sends you hunting
+  // for a film that was never added.
+  const queue = Array.from({ length: 25 }, (_, i) => ({ key: queueKey(`Film ${i}`, 1980 + i) }));
+  const got = queueAdmission({ title: 'The Goonies', year: '1985' }, queue, 25);
+  assert.equal(got.ok, false);
+  assert.equal(got.reason, 'full');
+});
+
+test('a duplicate wins over a full queue — it is the more useful truth', () => {
+  const queue = Array.from({ length: 25 }, (_, i) => ({ key: queueKey(`Film ${i}`, 1980 + i) }));
+  queue[3] = { key: queueKey('The Goonies', '1985') };
+  assert.equal(queueAdmission({ title: 'The Goonies', year: '1985' }, queue, 25).reason, 'dupe');
+});
+
+test('the key ignores case and spacing but not the year', () => {
+  const queue = [{ key: queueKey('The Goonies', '1985') }];
+  assert.equal(queueAdmission({ title: '  the GOONIES ', year: '1985' }, queue).reason, 'dupe');
+  // A remake is a different film.
+  assert.equal(queueAdmission({ title: 'The Goonies', year: '2025' }, queue).reason, 'added');
+});
+
+test('a title-less pick is rejected as blank rather than queued as empty', () => {
+  for (const bad of [{}, { title: '   ' }, null, { title: null, year: 1985 }]) {
+    assert.equal(queueAdmission(bad, []).reason, 'blank', JSON.stringify(bad));
+  }
+});
+
+test('queueAdmission shrugs off a junk queue instead of throwing', () => {
+  assert.equal(queueAdmission({ title: 'X' }, null).ok, true);
+  assert.equal(queueAdmission({ title: 'X' }, [null, undefined, {}]).ok, true);
 });
