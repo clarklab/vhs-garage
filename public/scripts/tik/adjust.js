@@ -3,18 +3,29 @@
 // Pure — no DOM, no network. Unit-tested under node:test.
 //
 // Stored as multipliers on the slide rather than baked into the pixels, so a
-// nudge is reversible, repeatable and survives a save. Everything here maps
-// onto the three CSS filter functions canvas actually supports, which is why
-// there is no "gamma" preset: ctx.filter has no gamma, and a pixel-by-pixel
-// pass would have to re-run on every preview redraw.
+// nudge is reversible, repeatable and survives a save. The colour ones map onto
+// the three CSS filter functions canvas actually supports, which is why there is
+// no "gamma" preset: ctx.filter has no gamma, and a pixel-by-pixel pass would
+// have to re-run on every preview redraw.
+//
+// `zoom` is the odd one out and deliberately not a filter. It is a crop of the
+// SOURCE: take the middle 1/zoom of the frame and draw it into the same
+// destination rectangle, so the slide keeps its exact size and aspect and only
+// the framing changes. Filters cannot do that, and scaling the canvas would
+// move the caption with it.
+export const NEUTRAL = { brightness: 1, contrast: 1, saturate: 1, zoom: 1 };
 
-export const NEUTRAL = { brightness: 1, contrast: 1, saturate: 1 };
+// The three that resolve into a ctx.filter string. zoom is applied by drawImage.
+const FILTER_KEYS = ['brightness', 'contrast', 'saturate'];
 
 // Ceilings, because a frame pushed past these stops being the film.
 const LIMITS = {
   brightness: [0.5, 4],
   contrast: [0.5, 4],
   saturate: [0, 3],
+  // Never below 1: zooming out would ask for picture that is not in the frame.
+  // Past 3x a still is mostly compression blocks.
+  zoom: [1, 3],
 };
 
 // The steepest levels stretch Auto will apply. Past this it is amplifying
@@ -39,12 +50,32 @@ export function isNeutral(adjust) {
   return Object.keys(NEUTRAL).every((k) => a[k] === NEUTRAL[k]);
 }
 
-// The string handed to ctx.filter. Empty when nothing is set, so the common
-// case costs the compositor nothing at all.
+// The string handed to ctx.filter. Empty when no COLOUR change is set, so a
+// slide that is only zoomed costs the compositor nothing at all.
 export function filterString(adjust) {
   const a = normalizeAdjust(adjust);
-  if (isNeutral(a)) return '';
+  if (FILTER_KEYS.every((k) => a[k] === NEUTRAL[k])) return '';
   return `brightness(${a.brightness}) contrast(${a.contrast}) saturate(${a.saturate})`;
+}
+
+// How much of the middle of the source to draw, as a factor. 1 is the whole
+// frame.
+export function zoomOf(adjust) {
+  return normalizeAdjust(adjust).zoom;
+}
+
+// The source rectangle to read, given the frame's own pixel dimensions.
+//
+// Both axes are divided by the same factor, so the crop keeps the source's
+// aspect ratio and the composed slide comes out exactly the size it was.
+export function zoomSourceRect(adjust, width, height) {
+  const w = Math.max(1, Number(width) || 0);
+  const h = Math.max(1, Number(height) || 0);
+  const z = zoomOf(adjust);
+  if (z === 1) return { sx: 0, sy: 0, sw: w, sh: h };
+  const sw = w / z;
+  const sh = h / z;
+  return { sx: (w - sw) / 2, sy: (h - sh) / 2, sw, sh };
 }
 
 // The menu, in the order it is shown.
@@ -65,8 +96,10 @@ export const PRESETS = [
   { key: 'brighter20', label: 'Brighter +20%', hint: 'More gain, for a properly dark scene', step: { brightness: 1.2 } },
   { key: 'lift', label: 'Lift shadows', hint: 'Open up the murk without blowing the highlights', step: { brightness: 1.25, contrast: 0.92 } },
   { key: 'contrast', label: 'More contrast', hint: 'Put the punch back after a big lift', step: { contrast: 1.12 } },
-  { key: 'saturate', label: 'More colour', hint: 'Lifting drains colour; this puts it back', step: { saturate: 1.15 } },
-  { key: 'desaturate', label: 'Less colour', hint: 'For a frame that has gone lurid', step: { saturate: 0.88 } },
+  { key: 'saturate', label: 'More color', hint: 'Lifting drains colour; this puts it back', step: { saturate: 1.15 } },
+  { key: 'desaturate', label: 'Less color', hint: 'For a frame that has gone lurid', step: { saturate: 0.88 } },
+  { key: 'zoom20', label: 'Zoom center 20%', hint: 'Punch in on the middle; the slide keeps its size and shape', step: { zoom: 1.2 } },
+  { key: 'zoom35', label: 'Zoom center 35%', hint: 'Further in, for a small title card or a face', step: { zoom: 1.35 } },
   { key: 'reset', label: 'Reset', hint: 'Back to the frame as grabbed' },
 ];
 
@@ -120,6 +153,7 @@ export function describeAdjust(adjust) {
   const pct = (v) => `${v > 1 ? '+' : ''}${Math.round((v - 1) * 100)}%`;
   if (a.brightness !== 1) bits.push(`${pct(a.brightness)} bright`);
   if (a.contrast !== 1) bits.push(`${pct(a.contrast)} contrast`);
-  if (a.saturate !== 1) bits.push(`${pct(a.saturate)} colour`);
+  if (a.saturate !== 1) bits.push(`${pct(a.saturate)} color`);
+  if (a.zoom !== 1) bits.push(`${pct(a.zoom)} zoom`);
   return bits.join(', ');
 }

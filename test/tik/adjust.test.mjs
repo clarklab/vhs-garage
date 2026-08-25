@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   NEUTRAL, PRESETS, PRESET_KEYS, normalizeAdjust, isNeutral, filterString,
-  applyPreset, autoLevels, describeAdjust,
+  applyPreset, autoLevels, describeAdjust, zoomOf, zoomSourceRect,
 } from '../../public/scripts/tik/adjust.js';
 
 // ---- the stored shape ----
@@ -138,5 +138,79 @@ test('autoLevels survives junk and impossible ranges', () => {
 test('describeAdjust says what was done, and nothing when nothing was', () => {
   assert.equal(describeAdjust(NEUTRAL), '');
   assert.match(describeAdjust({ brightness: 1.2, contrast: 1, saturate: 1 }), /\+20% bright/);
-  assert.match(describeAdjust({ brightness: 1, contrast: 1, saturate: 0.88 }), /-12% colour/);
+  assert.match(describeAdjust({ brightness: 1, contrast: 1, saturate: 0.88 }), /-12% color/);
+});
+
+// ---- zoom ----
+
+test('zoom is a crop of the source, so the slide keeps its size and shape', () => {
+  // The whole requirement: punch in without the composed frame changing at all.
+  // Both axes divide by the same factor, so the aspect ratio is untouched and
+  // the destination rectangle in compose.js never moves.
+  const a = applyPreset(NEUTRAL, 'zoom20');
+  const r = zoomSourceRect(a, 1920, 1080);
+  assert.ok(Math.abs(r.sw / r.sh - 1920 / 1080) < 1e-9, 'the crop changed the aspect ratio');
+  assert.ok(Math.abs(r.sw - 1920 / 1.2) < 1e-9);
+  assert.ok(Math.abs(r.sh - 1080 / 1.2) < 1e-9);
+});
+
+test('the crop is centred — equal margins on every side', () => {
+  const r = zoomSourceRect(applyPreset(NEUTRAL, 'zoom35'), 1920, 1080);
+  assert.ok(Math.abs(r.sx - (1920 - r.sw) / 2) < 1e-9, 'not centred horizontally');
+  assert.ok(Math.abs(r.sy - (1080 - r.sh) / 2) < 1e-9, 'not centred vertically');
+  // Same margin left and right, top and bottom.
+  assert.ok(Math.abs(r.sx - (1920 - r.sw - r.sx)) < 1e-9);
+  assert.ok(Math.abs(r.sy - (1080 - r.sh - r.sy)) < 1e-9);
+});
+
+test('no zoom reads the whole frame, with no needless crop maths', () => {
+  const r = zoomSourceRect(NEUTRAL, 1920, 1080);
+  assert.deepEqual(r, { sx: 0, sy: 0, sw: 1920, sh: 1080 });
+  assert.equal(zoomOf(null), 1);
+});
+
+test('zoom alone costs the compositor nothing', () => {
+  // A slide that is only punched in has no colour change, so no filter string.
+  assert.equal(filterString(applyPreset(NEUTRAL, 'zoom20')), '');
+  // But it is not "neutral" — Reset still has something to undo.
+  assert.ok(!isNeutral(applyPreset(NEUTRAL, 'zoom20')));
+});
+
+test('zoom compounds like the rest of the menu, and stops at the ceiling', () => {
+  const twice = applyPreset(applyPreset(NEUTRAL, 'zoom20'), 'zoom20');
+  assert.ok(Math.abs(twice.zoom - 1.44) < 0.02, `got ${twice.zoom}`);
+  let a = NEUTRAL;
+  for (let i = 0; i < 20; i++) a = applyPreset(a, 'zoom35');
+  assert.ok(a.zoom <= 3, `ran to ${a.zoom}`);
+});
+
+test('zoom never goes below 1 — there is no picture outside the frame', () => {
+  assert.equal(normalizeAdjust({ zoom: 0.5 }).zoom, 1);
+  assert.equal(normalizeAdjust({ zoom: -2 }).zoom, 1);
+  assert.equal(normalizeAdjust({ zoom: 'x' }).zoom, 1);
+});
+
+test('zoom survives a junk frame size instead of producing NaN', () => {
+  for (const [w, h] of [[0, 0], [NaN, 100], [-5, -5], [undefined, undefined]]) {
+    const r = zoomSourceRect(applyPreset(NEUTRAL, 'zoom20'), w, h);
+    for (const v of Object.values(r)) assert.ok(Number.isFinite(v), `${w}x${h} gave ${JSON.stringify(r)}`);
+  }
+});
+
+test('reset clears the zoom along with everything else', () => {
+  const messed = applyPreset(applyPreset(NEUTRAL, 'zoom35'), 'brighter20');
+  assert.ok(messed.zoom > 1 && messed.brightness > 1);
+  assert.ok(isNeutral(applyPreset(messed, 'reset')));
+});
+
+test('the button says how far it is punched in', () => {
+  assert.match(describeAdjust(applyPreset(NEUTRAL, 'zoom20')), /\+20% zoom/);
+});
+
+test('both zoom presets are on the menu, worded as asked for', () => {
+  assert.ok(PRESET_KEYS.includes('zoom20'));
+  assert.ok(PRESET_KEYS.includes('zoom35'));
+  const labels = PRESETS.map((p) => p.label);
+  assert.ok(labels.includes('Zoom center 20%'), labels.join(' | '));
+  assert.ok(labels.includes('Zoom center 35%'), labels.join(' | '));
 });
