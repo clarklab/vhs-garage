@@ -5,6 +5,7 @@
 // canvas you own (live preview thumbs); composeSlide() renders → JPEG Blob.
 import { computeSlideLayout, containFrame } from './layout.js';
 import { wrapLines, fitFontSize } from './caption.js';
+import { filterString } from './adjust.js';
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
@@ -170,7 +171,7 @@ export function wantsLeftAlign({ format, kind, lines } = {}) {
   return (Array.isArray(lines) ? lines : []).filter((l) => String(l || '').trim()).length > 1;
 }
 
-export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null, format, kind } = {}) {
+export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null, format, kind, adjust = null } = {}) {
   const fs = Math.min(Math.max(Number(fontScale) || 1, 0.5), 1.6);
   const heightRatio = Number.isFinite(maxFrameHeightRatio)
     ? Math.min(Math.max(maxFrameHeightRatio, 0.05), 1)
@@ -246,7 +247,18 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   const groupH = F.h + (textH ? GAP + textH : 0);
   const frameX = Math.round((CANVAS_W - F.w) / 2);
   const frameY = Math.max(0, Math.round((CANVAS_H - groupH) / 2));
-  ctx.drawImage(bitmap, frameX, frameY, F.w, F.h);
+  // Correction rides on the frame only. Filtering the whole context would drag
+  // the caption pills and the stamp along with it, and a brightened white pill
+  // is just a blown-out white pill.
+  const correction = filterString(adjust);
+  if (correction) {
+    ctx.save();
+    ctx.filter = correction;
+    ctx.drawImage(bitmap, frameX, frameY, F.w, F.h);
+    ctx.restore();
+  } else {
+    ctx.drawImage(bitmap, frameX, frameY, F.w, F.h);
+  }
   if (wantsQuoteStamp({ format, kind })) drawQuoteStamp(ctx, frameX, frameY, F.w, F.h);
 
   // Caption pills: white rounded pill per line, bold black centered text.

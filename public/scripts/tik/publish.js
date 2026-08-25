@@ -24,7 +24,7 @@ export async function publishSlideshow(slides, opts = {}) {
   const photoUrls = [];
   for (let i = 0; i < slides.length; i++) {
     onProgress(`Rendering slide ${i + 1}/${slides.length}…`);
-    const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio, format, kind: slides[i].kind });
+    const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio, format, kind: slides[i].kind, adjust: slides[i].adjust });
     onProgress(`Uploading slide ${i + 1}/${slides.length}…`);
     photoUrls.push(await uploadJpeg(blob));
   }

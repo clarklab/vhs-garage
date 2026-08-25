@@ -678,13 +678,24 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
                 <button data-frames="5" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">+5fr</button>
                 <button data-seconds="1" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">+1s</button>
                 <button data-seconds="5" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">+5s</button>
-                <button id="grab-btn" class="ml-auto flex items-center gap-1 rounded-lg bg-red-600 px-4 py-2 font-bold text-white hover:bg-red-500 disabled:opacity-40">
+                <div class="ml-auto flex items-center gap-2">
+                <div class="relative">
+                  <button id="adjust-btn" disabled title="Brighten or correct the grabbed frame"
+                          class="flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-2 text-sm font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
+                    <span class="material-symbols-outlined text-[18px] leading-none">exposure</span>
+                    <span id="adjust-label">Adjust</span>
+                    <span class="material-symbols-outlined text-[16px] leading-none">expand_more</span>
+                  </button>
+                  <div id="adjust-menu" class="absolute right-0 z-30 mt-1 hidden w-64 overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 py-1 shadow-xl"></div>
+                </div>
+                <button id="grab-btn" class="flex items-center gap-1 rounded-lg bg-red-600 px-4 py-2 font-bold text-white hover:bg-red-500 disabled:opacity-40">
                   <span id="grab-icon" class="material-symbols-outlined text-[20px] leading-none">photo_camera</span>
                   <span id="grab-label">Grab frame</span>
                 </button>
                 <button id="cancel-edit" class="hidden rounded-lg bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700">
                   <span class="material-symbols-outlined align-middle text-[18px] leading-none">close</span> Cancel
                 </button>
+                </div>
               </div>
             </div>
 
