@@ -5,7 +5,7 @@
 // canvas you own (live preview thumbs); composeSlide() renders → JPEG Blob.
 import { computeSlideLayout, containFrame } from './layout.js';
 import { wrapLines, fitFontSize } from './caption.js';
-import { filterString } from './adjust.js';
+import { filterString, zoomSourceRect } from './adjust.js';
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
@@ -250,14 +250,21 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   // Correction rides on the frame only. Filtering the whole context would drag
   // the caption pills and the stamp along with it, and a brightened white pill
   // is just a blown-out white pill.
+  //
+  // Zoom is the SOURCE rectangle, never the destination: the middle of the
+  // frame is read and drawn into the same F.w by F.h box it always occupied, so
+  // the slide keeps its size and shape and only the framing moves. Scaling the
+  // destination instead would resize the picture and shove the caption down.
   const correction = filterString(adjust);
+  const { sx, sy, sw, sh } = zoomSourceRect(adjust, bitmap.width, bitmap.height);
+  const drawFrame = () => ctx.drawImage(bitmap, sx, sy, sw, sh, frameX, frameY, F.w, F.h);
   if (correction) {
     ctx.save();
     ctx.filter = correction;
-    ctx.drawImage(bitmap, frameX, frameY, F.w, F.h);
+    drawFrame();
     ctx.restore();
   } else {
-    ctx.drawImage(bitmap, frameX, frameY, F.w, F.h);
+    drawFrame();
   }
   if (wantsQuoteStamp({ format, kind })) drawQuoteStamp(ctx, frameX, frameY, F.w, F.h);
 
