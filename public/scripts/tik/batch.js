@@ -102,7 +102,36 @@ export function initBatch({ onExit = () => {} } = {}) {
   els.search.addEventListener('input', onSearchInput);
   els.pasteMatch.addEventListener('click', matchPastedList);
   els.paste.addEventListener('input', updatePasteNote);
-  els.search.addEventListener('blur', () => setTimeout(hideResults, 150));
+  // Closing the dropdown must never race the click that is closing it.
+  //
+  // This used to be blur + setTimeout(hideResults, 150), and hideResults wipes
+  // innerHTML. Pressing the mouse on a result blurs the input, so a click held
+  // longer than 150ms had its row deleted out of the tree between mousedown and
+  // mouseup — and a click only fires when both land on the same, still-attached
+  // element. The film was silently not added, with no error to show for it,
+  // and whether it happened came down to how fast you let go of the button.
+  //
+  // focusout with relatedTarget replaces the timer outright: focus moving INTO
+  // the list is not focus leaving the widget, so there is nothing to time.
+  // Listened for on BOTH halves of the widget. focusout fires on whatever is
+  // losing focus, so a handler on the input alone never hears you tab from a
+  // RESULT to somewhere else, and the list would hang open for good.
+  const leftTheSearch = (e) => {
+    const to = e.relatedTarget;
+    if (to && (to === els.search || els.results.contains(to))) return;
+    hideResults();
+  };
+  els.search.addEventListener('focusout', leftTheSearch);
+  els.results.addEventListener('focusout', leftTheSearch);
+  // And a pointer anywhere outside closes it too. focusout covers the keyboard,
+  // but a dropdown that will not go away is its own bug, and this path does not
+  // depend on focus behaving. pointerdown fires before mousedown, so a press on
+  // a result is recognised as inside and left alone.
+  document.addEventListener('pointerdown', (e) => {
+    if (els.results.classList.contains('hidden')) return;
+    if (e.target === els.search || els.results.contains(e.target)) return;
+    hideResults();
+  });
   els.build.addEventListener('click', buildAll);
   els.size.addEventListener('change', onSizeChange);
   els.spoilers.addEventListener('change', onSpoilersChange);
@@ -335,6 +364,9 @@ function renderResults(titles) {
     row.innerHTML = `<span class="font-semibold"></span><span class="text-xs text-neutral-500"></span>`;
     row.children[0].textContent = t.title;
     row.children[1].textContent = [t.year, t.rating ? `${t.rating}` : ''].filter(Boolean).join(' · ');
+    // Belt to the focusout braces: swallowing mousedown keeps focus in the
+    // input, so picking a result never blurs it in the first place.
+    row.addEventListener('mousedown', (e) => e.preventDefault());
     row.addEventListener('click', () => {
       const verdict = addToQueue(t);
       if (verdict === 'added') { render(); prefetchPools(); say(`Added ${t.title}.`, 'good'); }

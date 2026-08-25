@@ -14,6 +14,7 @@ import { fontScaleForQuote } from './caption.js';
 import { parseMovieName } from './filename.js';
 import { composeToCanvas, composeSlide, captionFontReady, quoteStampReady } from './compose.js';
 import { clockTimecode } from './timecode.js';
+import { PRESETS, applyPreset, autoLevels, describeAdjust, isNeutral, NEUTRAL } from './adjust.js';
 import {
   FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, renumberYearEntries,
@@ -59,6 +60,7 @@ const els = {
   back: $('back-btn'), formatChip: $('format-chip'), projectName: $('project-name'),
   download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
   statusChip: $('status-chip'), toast: $('toast'), toastBody: $('toast-body'),
+  adjustBtn: $('adjust-btn'), adjustMenu: $('adjust-menu'), adjustLabel: $('adjust-label'),
   subsNote: $('subs-note'), subsNoteText: $('subs-note-text'),
   cadenceCard: $('cadence-card'), cadenceGhost: $('cadence-ghost'), cadenceLive: $('cadence-live'),
   cadenceIcon: $('cadence-icon'), cadenceHeadline: $('cadence-headline'),
@@ -217,7 +219,7 @@ async function makeThumbBlob(slide) {
   composeToCanvas(c, slide.bitmap, slide.caption, {
     titleLine: currentTitleLine(), scale: 0.12, fontScale: slide.fontScale || 1,
     maxFrameHeightRatio: frameHeightRatio(),
-    format: project.format, kind: slide.kind,
+    format: project.format, kind: slide.kind, adjust: slide.adjust,
   });
   return await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.7));
 }
@@ -232,6 +234,8 @@ async function serializeProject() {
       // Present only when the subtitle matcher placed this line. Its absence is
       // meaningful: the timecode was estimated, and the slide says so.
       cue: s.cue || null,
+      // Correction is stored, never baked, so it stays reversible.
+      adjust: s.adjust || null,
       frame: await frameBlobFor(s),
     });
   }
@@ -399,6 +403,7 @@ function enterEditor() {
   applyFormatUI();
   renderStatusChip();
   renderSubsNote();
+  syncAdjustButton();
   els.projectName.value = project.name || '';
   els.postTitleInput.value = project.postTitle || '';
   els.postDescInput.value = project.postDesc || '';
@@ -477,6 +482,7 @@ async function openProject(id) {
         caption: s.caption || '', timecode: s.timecode, grabHint: s.grabHint || '',
         fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
         entry: s.entry || null, section: s.section || null, cue: s.cue || null,
+        adjust: s.adjust || null,
       });
     } catch (e) {
       console.error('[tik] could not decode a saved frame; slide dropped', e);
@@ -970,6 +976,119 @@ async function offerRememberedReload() {
 els.file.addEventListener('change', () => els.videoReload.classList.add('hidden'));
 els.triviaSeedShow.addEventListener('click', () => { seedForced = !seedForced; syncSeedControls(); });
 
+// ================= Frame correction =================
+//
+// Films are dark. A grabbed still often needs a lift before a caption sits on
+// it legibly, and doing that here beats re-grabbing and hoping.
+//
+// The target is whichever slide the editor is pointed at: the one being
+// re-framed if you clicked its preview, otherwise the one Grab frame just
+// appended. Correction is stored on the slide as multipliers rather than baked
+// into the pixels, so every step is reversible and repeatable.
+function adjustTarget() {
+  if (editingId) return slides.find((s) => s.id === editingId) || null;
+  return slides.length ? slides[slides.length - 1] : null;
+}
+
+// Measure the frame so Auto has something to stretch against.
+//
+// Sampled small and on a stride: a full 1080p read is two million pixels for a
+// number that only needs to be roughly right, and this runs on a click.
+function measureLevels(bitmap) {
+  const W = 160;
+  const H = Math.max(1, Math.round((bitmap.height / bitmap.width) * W));
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0, W, H);
+  const d = ctx.getImageData(0, 0, W, H).data;
+  const hist = new Array(256).fill(0);
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    // Rec. 601 luma is close enough for deciding how dark a frame is.
+    hist[(d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0]++;
+    n++;
+  }
+  // Percentiles, not min and max: one specular highlight or one crushed pixel
+  // would otherwise decide the stretch for the whole frame.
+  const at = (p) => {
+    let seen = 0;
+    const want = n * p;
+    for (let v = 0; v < 256; v++) { seen += hist[v]; if (seen >= want) return v / 255; }
+    return 1;
+  };
+  return { black: at(0.01), white: at(0.99) };
+}
+
+function syncAdjustButton() {
+  const target = adjustTarget();
+  const movieFormat = isMovieFileFormat();
+  els.adjustBtn.disabled = !movieFormat || !target;
+  const summary = target ? describeAdjust(target.adjust) : '';
+  els.adjustLabel.textContent = summary || 'Adjust';
+  els.adjustBtn.classList.toggle('text-amber-300', !!summary);
+  els.adjustBtn.title = !movieFormat || !target
+    ? 'Grab a frame first'
+    : summary
+      ? `This frame: ${summary}. Reset from the menu.`
+      : 'Brighten or correct this frame';
+}
+
+function closeAdjustMenu() { els.adjustMenu.classList.add('hidden'); }
+
+function renderAdjustMenu() {
+  els.adjustMenu.innerHTML = '';
+  const target = adjustTarget();
+  for (const preset of PRESETS) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'block w-full px-3 py-2 text-left hover:bg-neutral-800';
+    const label = document.createElement('span');
+    label.className = 'block text-sm font-semibold text-neutral-100';
+    label.textContent = preset.label;
+    const hint = document.createElement('span');
+    hint.className = 'block text-[11px] leading-snug text-neutral-500';
+    hint.textContent = preset.hint;
+    item.append(label, hint);
+    if (preset.key === 'reset' && target && isNeutral(target.adjust)) item.disabled = true;
+    if (item.disabled) item.classList.add('opacity-40');
+    else item.addEventListener('click', () => applyAdjust(preset.key));
+    els.adjustMenu.appendChild(item);
+  }
+}
+
+function applyAdjust(key) {
+  const target = adjustTarget();
+  if (!target) return;
+  // Auto is the only one that has to look at the picture.
+  const levels = key === 'auto' ? autoLevels(measureLevels(target.bitmap)) : null;
+  const next = applyPreset(target.adjust || NEUTRAL, key, levels);
+  slides = slides.map((s) => (s.id === target.id ? { ...s, adjust: next, blob: null } : s));
+  closeAdjustMenu();
+  render();
+  syncAdjustButton();
+  markDirty();
+  const summary = describeAdjust(next);
+  els.status.textContent = summary
+    ? `Frame corrected: ${summary}.`
+    : 'Frame back to how it was grabbed.';
+}
+
+els.adjustBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (els.adjustBtn.disabled) return;
+  const open = els.adjustMenu.classList.contains('hidden');
+  if (open) { renderAdjustMenu(); els.adjustMenu.classList.remove('hidden'); }
+  else closeAdjustMenu();
+});
+// Same lesson as the batch search box: a menu that will not close is its own
+// bug, and pointerdown does not depend on focus behaving.
+document.addEventListener('pointerdown', (e) => {
+  if (els.adjustMenu.classList.contains('hidden')) return;
+  if (els.adjustMenu.contains(e.target) || els.adjustBtn.contains(e.target)) return;
+  closeAdjustMenu();
+});
+
 // ================= Full-slide preview =================
 // The thumbnail is 72px wide, which is enough to spot a missing frame and not
 // enough to judge a line break. This renders the same composed slide big, from
@@ -982,7 +1101,7 @@ function openSlidePreview(slide) {
       scale: PREVIEW_MODAL_SCALE,
       fontScale: slide.fontScale || 1,
       maxFrameHeightRatio: frameHeightRatio(),
-      format: project.format, kind: slide.kind,
+      format: project.format, kind: slide.kind, adjust: slide.adjust,
     });
     const idx = slides.findIndex((s) => s.id === slide.id);
     const scale = Math.round((slide.fontScale || 1) * 100);
@@ -1370,6 +1489,7 @@ els.grab.addEventListener('click', async () => {
       if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
       slides = addSlide(slides, { id: String(nextId++), bitmap, blob: null, caption: '', timecode: els.video.currentTime, fontScale: 1 });
       render();
+      syncAdjustButton();
     }
     markDirty();
   } catch (err) { console.error('[tik] grab failed:', err); els.status.textContent = err.message; }
@@ -2097,6 +2217,7 @@ async function enterEdit(id) {
   els.grabLabel.textContent = 'Save frame';
   els.cancelEdit.classList.remove('hidden');
   render(); // apply the highlight
+  syncAdjustButton(); // the menu now points at this slide
   if (isMovieFileFormat()) {
     els.status.textContent = slide.grabHint
       ? `Editing — GRAB: ${slide.grabHint}  (or paste/drop an image)`
@@ -2114,6 +2235,8 @@ function resetEditState() {
   els.grabIcon.textContent = 'photo_camera';
   els.grabLabel.textContent = 'Grab frame';
   els.cancelEdit.classList.add('hidden');
+  closeAdjustMenu();
+  syncAdjustButton();
 }
 function exitEdit() { resetEditState(); render(); }
 els.cancelEdit.addEventListener('click', () => { exitEdit(); els.status.textContent = 'Edit cancelled.'; });
@@ -2239,7 +2362,7 @@ function frameHeightRatio() {
 function redrawAllThumbs() {
   slides.forEach((slide) => {
     const thumb = els.list.querySelector(`canvas[data-thumb="${slide.id}"]`);
-    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slide.kind });
+    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slide.kind, adjust: slide.adjust });
   });
 }
 
@@ -2291,7 +2414,7 @@ function renderSlide(slide, index) {
   const redrawThumb = () => composeToCanvas(thumb, slide.bitmap, ta.value, {
     titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1,
     maxFrameHeightRatio: frameHeightRatio(),
-    format: project.format, kind: slide.kind,
+    format: project.format, kind: slide.kind, adjust: slide.adjust,
   });
   redrawThumb();
 
@@ -2613,7 +2736,7 @@ els.download.addEventListener('click', async () => {
     const titleLine = currentTitleLine();
     for (let i = 0; i < slides.length; i++) {
       els.status.textContent = `Rendering slide ${i + 1}/${slides.length}…`;
-      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slides[i].kind });
+      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slides[i].kind, adjust: slides[i].adjust });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `${slug}-${String(i + 1).padStart(2, '0')}.jpg`;
