@@ -9,7 +9,7 @@ import { addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLID
 // used it (the hashtag panel) now goes through reports.js loadPosts().
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory } from './auth.js';
 import { publishSlideshow } from './publish.js';
-import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot, fetchQuotesPost, fetchImdbQuotes, fetchSubtitles, QUOTES_COUNT } from './autopilot.js';
+import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot, fetchQuotesPost, fetchImdbQuotes, fetchSubtitles, fetchFreeform, QUOTES_COUNT } from './autopilot.js';
 import { fontScaleForQuote } from './caption.js';
 import { parseMovieName } from './filename.js';
 import { composeToCanvas, composeSlide, captionFontReady, quoteStampReady } from './compose.js';
@@ -18,7 +18,7 @@ import { PRESETS, applyPreset, autoLevels, describeAdjust, isNeutral, NEUTRAL } 
 import {
   FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, renumberYearEntries,
-  relativeTime, projectDisplayName, pickOutro, nextOutro, isIntroSlide, isOutroSlide, matchesSearch,
+  relativeTime, projectDisplayName, pickOutro, nextOutro, isIntroSlide, isOutroSlide, matchesSearch, captionForFreeform,
   STATUSES, statusOf, statusLabel, statusAfterOutroEdit, toggleReady,
 } from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
@@ -52,6 +52,9 @@ const els = {
   reports: $('screen-reports'),
   // home
   newTrivia: $('new-trivia'), newQuotes: $('new-quotes'), newGuys: $('new-guys'), newYear: $('new-year'),
+  newFreeform: $('new-freeform'),
+  paneFreeform: $('pane-freeform'), freeformTopic: $('freeform-topic'),
+  freeformCount: $('freeform-count'), freeformWrite: $('freeform-write'), freeformWriteLabel: $('freeform-write-label'),
   newBatch: $('new-batch'),
   grid: $('project-grid'), libraryEmpty: $('library-empty'),
   statsCard: $('stats-card'), statsCount: $('stats-count'), statsDelta: $('stats-delta'),
@@ -234,6 +237,8 @@ async function serializeProject() {
       // Present only when the subtitle matcher placed this line. Its absence is
       // meaningful: the timecode was estimated, and the slide says so.
       cue: s.cue || null,
+      // Freeform writes an image-search term per slide; it is the whole point.
+      search: s.search || '',
       // Correction is stored, never baked, so it stays reversible.
       adjust: s.adjust || null,
       frame: await frameBlobFor(s),
@@ -412,6 +417,8 @@ function enterEditor() {
   els.movieTitle.value = project.titleLine || '';
   els.movieTitle.disabled = !project.titleOn;
   els.actorInput.value = project.actor || '';
+  els.freeformTopic.value = project.topic || '';
+  syncFreeformCount();
   els.yearInput.value = project.year || '';
   els.minVotes.value = project.minVotes ?? DEFAULT_MIN_VOTES;
   els.imdbPaste.value = project.imdbPaste || '';
@@ -482,7 +489,7 @@ async function openProject(id) {
         caption: s.caption || '', timecode: s.timecode, grabHint: s.grabHint || '',
         fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
         entry: s.entry || null, section: s.section || null, cue: s.cue || null,
-        adjust: s.adjust || null,
+        search: s.search || '', adjust: s.adjust || null,
       });
     } catch (e) {
       console.error('[tik] could not decode a saved frame; slide dropped', e);
@@ -506,7 +513,7 @@ async function openProject(id) {
 // ---- Format-specific UI wiring ----
 // One source pane per format; only the active one is shown (panes are flex
 // columns, so "hidden" has to be swapped for "flex", not just removed).
-const PANES = { trivia: els.paneTrivia, quotes: els.paneTrivia, guys: els.paneGuys, year: els.paneYear };
+const PANES = { trivia: els.paneTrivia, quotes: els.paneTrivia, freeform: els.paneFreeform, guys: els.paneGuys, year: els.paneYear };
 const TRIVIA_PASTE_PLACEHOLDER = 'Optional starter prompt — paste trivia you found (IMDb, Reddit, anywhere) or give a direction; autopilot verifies and riffs on it';
 const QUOTES_PASTE_PLACEHOLDER = 'Optional — paste quotes you want, or a direction';
 function applyFormatUI() {
@@ -902,6 +909,7 @@ async function renderLibrary() {
 els.newTrivia.addEventListener('click', () => { newProject('trivia').catch((e) => console.error('[tik] new project failed:', e)); });
 els.newQuotes.addEventListener('click', () => { newProject('quotes').catch((e) => console.error('[tik] new project failed:', e)); });
 els.newGuys.addEventListener('click', () => { newProject('guys').catch((e) => console.error('[tik] new project failed:', e)); });
+els.newFreeform.addEventListener('click', () => { newProject('freeform').catch((e) => console.error('[tik] new project failed:', e)); });
 els.newYear.addEventListener('click', () => { newProject('year').catch((e) => console.error('[tik] new project failed:', e)); });
 
 // ---- Batch mode (beta) ----
@@ -1370,7 +1378,10 @@ async function refreshTagReport() {
 // hand in the app while finishing the draft.
 function renderSongPicks() {
   const songs = project?.postMeta?.songs || [];
-  const show = project?.format === 'trivia' && songs.length > 0;
+  // Any format whose writing call returns song picks, not just trivia. The
+  // panel is driven by whether there ARE picks, so a format that does not ask
+  // for them simply never shows it.
+  const show = songs.length > 0;
   els.songPicks.classList.toggle('hidden', !show);
   // Picks buried in a collapsed panel are picks nobody uses: badge the summary
   // so they are visible without expanding, and open it once when they arrive.
@@ -1792,6 +1803,91 @@ els.writeBlurbs.addEventListener('click', async () => {
     els.status.textContent = 'Slides ready — the opener takes 2–4 photos as a mosaic; other slides take one photo of the guy. Click a slide, then paste, drop, or pick. Captions are editable.';
   } catch (err) {
     console.error('[tik] write blurbs failed:', err);
+    els.status.textContent = err.message;
+  } finally {
+    setAiBusy(false);
+  }
+});
+
+// ================= Freeform =================
+//
+// One brief, one call, a whole set. Some Guys needs two rounds because IMDb
+// supplies the roles and the user picks among them; here the prompt IS the
+// brief, so there is nothing to choose between and nothing to wait for twice.
+//
+// Every slide lands as a placeholder card carrying its own image-search term,
+// because on this format the pictures are the whole job.
+const FREEFORM_ACCENT = '#a3e635';
+const FREEFORM_MIN = 3;
+const FREEFORM_MAX = 15;
+const FREEFORM_DEFAULT = 8;
+
+function syncFreeformCount() {
+  const want = Number(project?.freeformCount) || FREEFORM_DEFAULT;
+  if (!els.freeformCount.options.length) {
+    for (let n = FREEFORM_MIN; n <= FREEFORM_MAX; n++) {
+      els.freeformCount.appendChild(new Option(`${n}`, String(n)));
+    }
+  }
+  els.freeformCount.value = String(Math.min(FREEFORM_MAX, Math.max(FREEFORM_MIN, want)));
+}
+
+els.freeformWrite.addEventListener('click', async () => {
+  if (aiBusy || !project) return;
+  const topic = els.freeformTopic.value.trim();
+  if (!topic) { els.status.textContent = 'Say what the set is about first.'; els.freeformTopic.focus(); return; }
+  const count = Number(els.freeformCount.value) || FREEFORM_DEFAULT;
+  setAiBusy(true);
+  const ticket = project.id; // bail if the user opens another project mid-job
+  try {
+    els.status.textContent = `Writing ${count} slides…`;
+    const { title, intro, items, meta } = await fetchFreeform({
+      topic, count, includeMeta: true,
+      onProgress: (m) => { els.status.textContent = `Writing the set — ${m}`; },
+    });
+    if (project?.id !== ticket) return;
+
+    project.topic = topic;
+    project.freeformCount = count;
+    // The agent names the set; the brief is the fallback so a project is never
+    // called "Untitled" in the library.
+    if (!project.name?.trim()) project.name = title || topic.slice(0, 60);
+    els.projectName.value = project.name;
+    if (meta) { project.postMeta = meta; syncPostDefaults(); renderSongPicks(); }
+
+    resetEditState();  // the selected slide is about to be replaced wholesale
+    pickTargetId = null;
+    slides.forEach((s) => s.bitmap?.close?.());
+    const next = [];
+    next.push({
+      id: String(nextId++), bitmap: await makeCardBitmap({
+        heading: title || project.name, sub: 'VHS Garage', hint: 'Paste 2–4 images for a mosaic', accent: FREEFORM_ACCENT,
+      }), blob: null,
+      caption: `${title || project.name}\n${intro || ''}`.trim(),
+      grabHint: '', fontScale: 1, kind: 'title',
+      // The opener searches for the subject itself.
+      search: title || topic.slice(0, 80),
+    });
+    for (let i = 0; i < items.length && next.length < MAX_SLIDES - 1; i++) {
+      const it = items[i];
+      next.push({
+        id: String(nextId++), bitmap: await makeCardBitmap({
+          heading: it.heading, sub: it.sub || '', accent: FREEFORM_ACCENT,
+        }), blob: null,
+        caption: captionForFreeform(it),
+        grabHint: '', fontScale: 1,
+        // What photoQueryFor reads for this slide's image-search button.
+        search: it.search,
+      });
+    }
+    try { next.push(await makeOutroSlide()); }
+    catch (e) { console.error('[tik] outro slide failed:', e); }
+    slides = next;
+    render();
+    markDirty();
+    els.status.textContent = `${items.length} slides ready — click a slide, hit Find images, and drop the picture in. Captions are editable.`;
+  } catch (err) {
+    console.error('[tik] freeform write failed:', err);
     els.status.textContent = err.message;
   } finally {
     setAiBusy(false);

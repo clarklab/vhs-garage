@@ -78,6 +78,22 @@ export const CALLS = [
     why: 'Same call as the trivia writer, same reason: the captions are the product. Its input is roughly three times bigger because the subtitle context travels with it.',
   },
   {
+    id: 'freeform',
+    group: 'Writing a set',
+    what: 'Writes a Freeform set from a prompt',
+    detail: 'Takes your brief ("the 8 scariest practical-effects monsters") and returns the opener, every slide, an image-search term per slide, the post copy and a song pick. One call, no picking round.',
+    model: 'claude-opus-5',
+    thinking: true,
+    budget: 8192,
+    budgetKey: 'DEFAULT_MAX_TOKENS',
+    // A short brief in, a whole set out: light on input, heavy on output.
+    inTokens: 900,
+    outTokens: 1600,
+    perSlideshow: 1,
+    formats: ['freeform'],
+    why: 'Nothing grounds this one but the model itself, so the difference between tiers shows up directly in whether the picks are the right picks.',
+  },
+  {
     id: 'curate',
     group: 'Batch mode',
     formats: ['trivia'],

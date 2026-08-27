@@ -19,6 +19,7 @@ test('every documented model is the one the function really defaults to', () => 
   const declared = [
     ['autopilot', 'tik-autopilot-job-background.mjs', 'TIK_AUTOPILOT_MODEL'],
     ['quotes-autopilot', 'tik-autopilot-job-background.mjs', 'TIK_AUTOPILOT_MODEL'],
+    ['freeform', 'tik-autopilot-job-background.mjs', 'TIK_AUTOPILOT_MODEL'],
     ['autopilot-sync', 'tik-autopilot.mjs', 'TIK_AUTOPILOT_SYNC_MODEL'],
     ['curate', 'tik-curate-background.mjs', 'TIK_CURATE_MODEL'],
     ['queue', 'tik-queue-background.mjs', 'TIK_QUEUE_MODEL'],
@@ -172,4 +173,15 @@ test('the page shows both bills, not just the trivia one', () => {
   assert.ok(html.includes('Boils the Quote-a-long captions'));
   // And it explains why one of them has no frame-checking line.
   assert.match(html, /subtitle file/i);
+});
+
+test('Freeform is costed on its own, not inside a batch', () => {
+  // Batch mode writes trivia or quotes; Freeform is a one-off from a prompt,
+  // so it must not turn up in either batch bill.
+  for (const format of ['trivia', 'quotes']) {
+    assert.ok(!batchEstimate({ movies: 10, format }).lines.some((l) => l.id === 'freeform'), format);
+  }
+  const own = batchEstimate({ movies: 1, format: 'freeform' });
+  assert.ok(own.lines.some((l) => l.id === 'freeform'));
+  assert.ok(own.total > 0);
 });

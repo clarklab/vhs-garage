@@ -26,6 +26,15 @@ export const FORMATS = {
     chip: 'bg-rose-400/15 text-rose-300',
     editorHint: 'Click a slide’s preview to re-grab its frame, or paste/drop/pick a custom image while it’s selected. Drag to reorder.',
   },
+  freeform: {
+    key: 'freeform',
+    label: 'Freeform',
+    tagline: 'Any list you can describe, written from a prompt',
+    icon: 'auto_stories',
+    accent: 'lime',
+    chip: 'bg-lime-400/15 text-lime-300',
+    editorHint: 'Click a slide, then paste, drop, or pick an image. Each slide carries its own image search. Drag to reorder.',
+  },
   guys: {
     key: 'guys',
     label: 'Remembering Some Guys',
@@ -116,6 +125,9 @@ export function makeProject({ id, format, now }) {
     movie: null,               // { title, year, query } parsed from the filename
     titleOn: false,
     titleLine: '',
+    // Freeform:
+    topic: '',                 // the brief the whole set was written from
+    freeformCount: null,       // how many slides were asked for
     // Remembering Some Guys:
     actor: '',
     roles: [],                 // [{ movie, year, role, hook, picked }]
@@ -181,13 +193,29 @@ export function defaultPostFields(format, name = '', { meta = null, projectId = 
       ].join(' '),
     };
   }
+  if (format === 'freeform') {
+    const houseSet = houseSetByKey(houseSetKey) || pickHouseSet(projectId || name);
+    const hashtags = buildHashtags({ filmTags: meta?.filmTags || [], houseSet });
+    return {
+      title: name || 'VHS Garage',
+      description: buildDescription({
+        hook: meta?.hook || '', movie: name, hashtags,
+        ask: POST_ASK.freeform, more: OUTRO_MORE.freeform,
+      }),
+      hashtags,
+      hashtagSet: houseSet.key,
+    };
+  }
   if (format === 'quotes') {
     const movie = name;
     const houseSet = houseSetByKey(houseSetKey) || pickHouseSet(projectId || movie);
     const hashtags = buildHashtags({ filmTags: meta?.filmTags || [], houseSet });
     return {
       title: movie ? `${movie} — movie quotes` : 'Movie quotes',
-      description: buildDescription({ hook: meta?.hook || '', movie, hashtags }),
+      description: buildDescription({
+        hook: meta?.hook || '', movie, hashtags,
+        ask: POST_ASK.quotes, more: OUTRO_MORE.quotes,
+      }),
       hashtags,
       hashtagSet: houseSet.key,
     };
@@ -235,8 +263,16 @@ const OUTRO_TEMPLATES = [
 ];
 
 // What "more" means per format, so one pool of templates serves all three.
+// What each format's post copy asks for, and what it promises more of. Trivia
+// is absent on purpose: buildDescription already defaults to its wording.
+const POST_ASK = {
+  quotes: 'Which line do you quote most? Drop it in the comments.',
+  freeform: 'Who did we miss? Drop it in the comments.',
+};
+
 const OUTRO_MORE = {
   trivia: 'more movie trivia',
+  freeform: 'more from the video store',
   quotes: 'more movie quotes',
   guys: 'more forgotten legends',
   year: 'more trips back',
@@ -321,6 +357,19 @@ export function matchesSearch(rec, query) {
 
 // Slide caption for a picked role: "Movie (Year)" heading line + the blurb
 // (falling back to the picker hook when the model dropped one).
+// Freeform: the heading line, then what the viewer reads.
+//
+// A middot rather than parentheses, because `sub` is free text the agent wrote
+// and it usually already carries its own — "Michael Myers (Halloween (1978))"
+// is what wrapping it produced.
+export function captionForFreeform(item) {
+  const heading = String(item?.heading || '').trim();
+  const sub = String(item?.sub || '').trim();
+  const caption = String(item?.caption || '').trim();
+  const head = [heading, sub].filter(Boolean).join(' · ');
+  return [head, caption].filter(Boolean).join('\n');
+}
+
 export function captionForRole(role, blurb = '') {
   const year = role.year ? ` (${role.year})` : '';
   const body = (blurb || role.hook || role.role || '').trim();
@@ -384,6 +433,9 @@ export function renumberYearEntries(slides) {
 // one click out to find artwork, one paste back in.
 export function photoQueryFor(project, slide) {
   if (!project || !slide) return '';
+  // Freeform writes its own search term per slide, because the pictures are the
+  // work and only the model knows what each entry actually is.
+  if (project.format === 'freeform') return String(slide.search || '').trim();
   if (project.format === 'guys') {
     if (slide.role) return [project.actor, slide.role.movie].filter(Boolean).join(' ').trim();
     return slide.kind === 'title' ? String(project.actor || '').trim() : '';
