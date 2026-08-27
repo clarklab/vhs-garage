@@ -1134,6 +1134,11 @@ document.addEventListener('keydown', (e) => {
 // Current count from TikTok when signed in (snapshotted at most hourly);
 // the accumulated series renders as a line chart once it has 2+ days.
 let lastStatsSeries = null;
+// When each post went out, in ms, for the dots on the follower line. Cached
+// alongside the series so a redraw (style toggle, resize) does not re-ask
+// TikTok — and stays an empty list when the history is not connected, which
+// simply means no dots rather than a broken chart.
+let lastPostTimes = [];
 
 // 'history' (what happened, with the fitted trend) or 'forecast' (both paces
 // extended into dated future). The milestone table only belongs to the latter.
@@ -1146,6 +1151,7 @@ function drawStats(series, { animate = false } = {}) {
   if (!series?.length) return;
   renderFollowerChart(els.statsChart, series, els.statsTip, {
     mode: statsMode, style: statsStyle, legendEl: els.statsLegend, animate,
+    posts: lastPostTimes,
   });
   for (const btn of els.statsStyles.querySelectorAll('button')) {
     const on = btn.dataset.style === statsStyle;
@@ -1176,6 +1182,23 @@ els.statsModes.addEventListener('click', (e) => {
   statsMode = btn.dataset.mode;
   drawStats(lastStatsSeries, { animate: true });
 });
+// Post dates for the chart's dots. Shares loadPosts()'s cache with the tag
+// report and the cadence row, so this is not a third call to TikTok. A failure
+// is not fatal: no dots is a fine chart.
+async function loadPostTimes() {
+  if (!isSignedIn() || tagReportScopeMissing) return [];
+  try {
+    const data = await loadPosts();
+    if (data.scope === 'missing') return [];
+    return (data.posts || [])
+      .map((p) => Number(p?.created) * 1000)
+      .filter((t) => Number.isFinite(t) && t > 0);
+  } catch (e) {
+    console.warn('[tik] post dates for the chart unavailable:', e);
+    return [];
+  }
+}
+
 async function refreshStatsCard() {
   refreshTagReport(); // non-blocking, separate scope, handles its own errors
   try {
@@ -1201,6 +1224,13 @@ async function refreshStatsCard() {
       // Render on the next frame so layout reflects the just-unhidden plot —
       // measuring too early bakes a 0-width fallback into the raster.
       requestAnimationFrame(() => drawStats(series, { animate: true }));
+      // The dots arrive on their own schedule; redraw when they do rather than
+      // holding the whole chart behind a TikTok call.
+      loadPostTimes().then((times) => {
+        if (!times.length || lastStatsSeries !== series) return;
+        lastPostTimes = times;
+        drawStats(series);
+      });
     } else {
       els.statsPlot.classList.add('hidden');
       lastStatsSeries = null;
@@ -1403,7 +1433,9 @@ let statsResizeTimer = null;
 window.addEventListener('resize', () => {
   if (!lastStatsSeries || els.home.classList.contains('hidden')) return;
   clearTimeout(statsResizeTimer);
-  statsResizeTimer = setTimeout(() => renderFollowerChart(els.statsChart, lastStatsSeries, els.statsTip), 150);
+  statsResizeTimer = setTimeout(() => renderFollowerChart(els.statsChart, lastStatsSeries, els.statsTip, {
+    mode: statsMode, style: statsStyle, legendEl: els.statsLegend, posts: lastPostTimes,
+  }), 150);
 });
 
 // A drop that misses a slide card must not navigate the tab away to the
