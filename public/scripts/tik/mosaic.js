@@ -1,13 +1,19 @@
-// Photo mosaic for the "Remembering Some Guys" title slide: 1–4 pasted photos
+// Photo mosaic for the "Remembering Some Guys" title slide: 2–4 pasted photos
 // tiled into a single SQUARE frame (1080×1080, matching makeCardBitmap) so it
 // flows through the normal slide pipeline as one bitmap.
-//   1 photo  → full frame
+//   1 photo  → returned untouched; see below
 //   2 photos → two columns side by side
 //   3 photos → three columns side by side
 //   4 photos → 2×2 grid
 // Cells are cover-cropped so they always fill (no letterboxing, no background
 // ever showing through), and adjacent cells cross-dissolve over a soft
 // overlapping fade at each internal seam. Browser-only (canvas → ImageBitmap).
+//
+// ONE photo is not a mosaic, so it does not get the square treatment. Tiling a
+// single image into a 1080×1080 cell meant cover-cropping it, which quietly ate
+// the top and bottom of a portrait photo or the sides of a wide one. Handed
+// back at its own size, the slide composer contain-fits it like every other
+// single-photo slide and the whole picture survives.
 
 const S = 1080;              // square canvas edge
 const OVERLAP = Math.round(S * 0.02); // how far each cell bleeds past a seam (~22px)
@@ -17,8 +23,7 @@ export const MOSAIC_MAX = 4;
 
 // cols/rows for a given photo count (the "square" arrangements Clark asked for).
 function gridFor(n) {
-  if (n <= 1) return { cols: 1, rows: 1 };
-  if (n === 2) return { cols: 2, rows: 1 };
+  if (n <= 2) return { cols: 2, rows: 1 };
   if (n === 3) return { cols: 3, rows: 1 };
   return { cols: 2, rows: 2 }; // 4
 }
@@ -69,6 +74,13 @@ export async function composeMosaic(sources) {
     imgs.push(s instanceof ImageBitmap ? s : await createImageBitmap(s));
   }
   if (!imgs.length) throw new Error('composeMosaic needs at least one photo');
+
+  if (imgs.length === 1) {
+    // A copy when the caller passed a bitmap it still owns: the slide's frame
+    // gets closed when it is replaced, and that must never destroy a source
+    // photo the mosaic might be rebuilt from.
+    return picked[0] instanceof ImageBitmap ? await createImageBitmap(imgs[0]) : imgs[0];
+  }
 
   const { cols, rows } = gridFor(imgs.length);
   const cellW = S / cols;

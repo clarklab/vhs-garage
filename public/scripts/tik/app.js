@@ -1773,7 +1773,7 @@ els.writeBlurbs.addEventListener('click', async () => {
     const next = [];
     // Title slide: the actor's name card; paste a good photo of the guy over it.
     const titleBitmap = await makeCardBitmap({
-      heading: project.actor, sub: 'Remembering some guys', hint: 'Paste 2–4 photos for a mosaic', accent: GUYS_ACCENT,
+      heading: project.actor, sub: 'Remembering some guys', hint: 'Paste one photo, or 2–4 to tile them', accent: GUYS_ACCENT,
     });
     next.push({
       id: String(nextId++), bitmap: titleBitmap, blob: null,
@@ -1800,7 +1800,7 @@ els.writeBlurbs.addEventListener('click', async () => {
     slides = next;
     render();
     markDirty();
-    els.status.textContent = 'Slides ready — the opener takes 2–4 photos as a mosaic; other slides take one photo of the guy. Click a slide, then paste, drop, or pick. Captions are editable.';
+    els.status.textContent = 'Slides ready — the opener takes one photo whole, or 2–4 tiled; other slides take one photo of the guy. Click a slide, then paste, drop, or pick. Captions are editable.';
   } catch (err) {
     console.error('[tik] write blurbs failed:', err);
     els.status.textContent = err.message;
@@ -1861,7 +1861,7 @@ els.freeformWrite.addEventListener('click', async () => {
     const next = [];
     next.push({
       id: String(nextId++), bitmap: await makeCardBitmap({
-        heading: title || project.name, sub: 'VHS Garage', hint: 'Paste 2–4 images for a mosaic', accent: FREEFORM_ACCENT,
+        heading: title || project.name, sub: 'VHS Garage', hint: 'Paste, drop, or pick an image', accent: FREEFORM_ACCENT,
       }), blob: null,
       caption: `${title || project.name}\n${intro || ''}`.trim(),
       grabHint: '', fontScale: 1, kind: 'title',
@@ -2320,7 +2320,7 @@ async function enterEdit(id) {
       : 'Editing this slide — scrub to a new frame and Save, or paste/drop an image. Esc cancels.';
     if (videoReady && Number.isFinite(slide.timecode)) await seekAndSettle(els.video, slide.timecode);
   } else if (isMosaicSlide(slide)) {
-    els.status.textContent = 'Opener selected — paste, drop, or pick 2–4 images for a mosaic. Esc cancels.';
+    els.status.textContent = 'Opener selected — paste, drop, or pick one photo to show it whole, or 2–4 to tile them. Esc cancels.';
   } else {
     els.status.textContent = 'Slide selected — paste, drop, or pick an image for it. Esc cancels.';
   }
@@ -2375,7 +2375,7 @@ async function setMosaicPhotos(id, blobs) {
     markDirty();
     const n = next.length;
     els.status.textContent = n === 1
-      ? 'Mosaic: 1 photo. Paste, drop, or pick up to 3 more for a side-by-side or 2×2.'
+      ? 'One photo, shown whole. Paste, drop, or pick up to 3 more to tile them instead.'
       : `Mosaic: ${n} photos ${n === 4 ? 'in a 2×2 grid' : 'side by side'}. ` +
         (n < MOSAIC_MAX ? 'Paste another to add one, or a fresh set to restart.'
                         : 'Paste a new photo to start the mosaic over.');
