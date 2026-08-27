@@ -48,6 +48,11 @@ const SERIES = {
   recent: '#3987e5',    // blue  — the recent pace
 };
 const LINE = SERIES.history;
+// Post markers are an ANNOTATION on the follower line, not a fourth series, so
+// they take an ink tone rather than a fourth hue. Adding one would have had to
+// clear the categorical checks against the three already there, and would have
+// read as another thing being measured rather than as events on the one line.
+const POST_MARK = '#e7e5e4';
 const GRID = '#262626';       // neutral-800
 const INK_MUTED = '#737373';  // neutral-500
 const INK_DIM = '#525252';    // neutral-600
@@ -68,13 +73,21 @@ function rgba(hex, a) {
 
 // Legend as real HTML: selectable, screen-readable, and present whenever there
 // is more than one series — identity is never carried by colour alone.
+// `dot: true` draws the swatch as a marker rather than a line. A key has to
+// show the mark it is keying: a line swatch beside "Posts" says the posts are
+// another series running across the chart, which is not what is on it.
 function renderLegend(el, entries) {
   if (!el) return;
-  el.innerHTML = entries.map((e) => `
+  el.innerHTML = entries.map((e) => {
+    const swatch = e.dot
+      ? `<span class="inline-block h-2 w-2 rounded-full" style="background:${e.color}"></span>`
+      : `<span class="inline-block h-0.5 w-4 rounded-full" style="background:${e.color};${e.dashed ? 'mask-image:repeating-linear-gradient(90deg,#000 0 4px,transparent 4px 7px);-webkit-mask-image:repeating-linear-gradient(90deg,#000 0 4px,transparent 4px 7px)' : ''}"></span>`;
+    return `
     <span class="inline-flex items-center gap-1.5 text-[11px] text-neutral-400">
-      <span class="inline-block h-0.5 w-4 rounded-full" style="background:${e.color};${e.dashed ? 'mask-image:repeating-linear-gradient(90deg,#000 0 4px,transparent 4px 7px);-webkit-mask-image:repeating-linear-gradient(90deg,#000 0 4px,transparent 4px 7px)' : ''}"></span>
+      ${swatch}
       ${e.label}
-    </span>`).join('');
+    </span>`;
+  }).join('');
 }
 
 // Draw the series onto `canvas` (dpr-aware) and wire a crosshair + tooltip.
@@ -90,8 +103,60 @@ function renderLegend(el, entries) {
 //
 // Everything right of "now" is dashed and differently coloured in every style.
 // Nothing there is a measurement and the chart never lets that blur.
+// Where each post sits on the follower line.
+//
+// Pure, so the placement is testable without a canvas.
+//
+// A post lands on the line rather than on the axis: the question the dots
+// answer is "what was growth doing when I posted", and that reading only works
+// if the mark is at the value for that moment. The chart draws straight
+// segments between daily points, so interpolating between the two surrounding
+// days puts the dot exactly on the stroke rather than near it.
+//
+// Posts are grouped by day and carry a count, because four a day would
+// otherwise stack into one dot that silently claims to be one post.
+export function postMarkers(series, posts) {
+  const s = (Array.isArray(series) ? series : []).filter((p) => p?.d && Number.isFinite(Number(p.c)));
+  if (!s.length) return [];
+  const at = (d) => Date.parse(`${d}T00:00:00Z`);
+  const first = at(s[0].d);
+  const last = at(s[s.length - 1].d);
+
+  const byDay = new Map();
+  for (const raw of Array.isArray(posts) ? posts : []) {
+    const t = typeof raw === 'number' ? raw : Date.parse(raw);
+    if (!Number.isFinite(t)) continue;
+    const day = new Date(t).toISOString().slice(0, 10);
+    byDay.set(day, (byDay.get(day) || 0) + 1);
+  }
+
+  // The follower count on a given day, read off the line the chart draws.
+  const countAt = (t) => {
+    if (t <= first) return Number(s[0].c);
+    if (t >= last) return Number(s[s.length - 1].c);
+    for (let i = 1; i < s.length; i++) {
+      const b = at(s[i].d);
+      if (b < t) continue;
+      const a = at(s[i - 1].d);
+      const span = b - a;
+      const k = span > 0 ? (t - a) / span : 0;
+      return Number(s[i - 1].c) + k * (Number(s[i].c) - Number(s[i - 1].c));
+    }
+    return Number(s[s.length - 1].c);
+  };
+
+  const out = [];
+  for (const [d, count] of byDay) {
+    const t = at(d);
+    // A post from before the chart starts has nowhere honest to sit.
+    if (!Number.isFinite(t) || t < first || t > last) continue;
+    out.push({ d, count, c: countAt(t) });
+  }
+  return out.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
+}
+
 export function renderFollowerChart(canvas, series, tipEl, {
-  mode = 'history', style = 'area', legendEl = null, animate = false,
+  mode = 'history', style = 'area', legendEl = null, animate = false, posts = [],
 } = {}) {
   // A canvas measured while (an ancestor is) hidden reads 0 wide; falling back
   // blind stretches the raster AND breaks hover hit-testing. Prefer the parent.
@@ -152,11 +217,14 @@ export function renderFollowerChart(canvas, series, tipEl, {
     ...p, px: isHistory && s.length === 1 ? PAD.left + plotW / 2 : xAt(p.d), py: y(p.c),
   }));
   const pts = place(s, true);
+  // One dot per DAY that had posts, sitting on the line at that day's value.
+  const marks = place(postMarkers(s, posts));
   const trendPts = place(trend);
   const projPts = projections.map((p) => ({ ...p, pts: place(p.pts) }));
 
   renderLegend(legendEl, [
     { label: 'Followers', color: SERIES.history },
+    ...(marks.length ? [{ label: 'Posts', color: POST_MARK, dot: true }] : []),
     ...(mode === 'history' && trendPts.length
       ? [{ label: 'All-time trend', color: INK_MUTED, dashed: true }] : []),
     ...projPts.map((p) => ({ label: p.label, color: SERIES[p.key] || INK_MUTED, dashed: true })),
@@ -322,6 +390,12 @@ export function renderFollowerChart(canvas, series, tipEl, {
       const end = p.pts[p.pts.length - 1];
       if (reveal >= 1) ringDot(end, SERIES[p.key] || INK_MUTED, 3);
     }
+    // Drawn over the line so a dot is never half-buried under the stroke, and
+    // only once the line has finished drawing itself in.
+    if (reveal >= 1) {
+      for (const m of marks) ringDot(m, POST_MARK, m.count > 1 ? 5 : 4);
+    }
+
     const head = pts[Math.max(0, Math.ceil(pts.length * reveal) - 1)] || pts[pts.length - 1];
     ringDot(head, SERIES.history, 4);
 
@@ -345,7 +419,13 @@ export function renderFollowerChart(canvas, series, tipEl, {
     draw();
   }
 
+  // Markers go FIRST, and the hit-test keeps the first of equal distances, so a
+  // post on a day the studio was opened deterministically beats that day's own
+  // point — they sit at the same pixel. That means the marker's tooltip has to
+  // carry the follower count too, or hovering a post day would lose the number
+  // the chart is actually about.
   const hoverable = [
+    ...marks.map((m) => ({ ...m, kind: 'post' })),
     ...pts.map((p, i) => ({ ...p, kind: 'real', idx: i })),
     ...projPts.flatMap((p) => p.pts.slice(1).map((q) => ({ ...q, kind: p.key, label: p.label }))),
   ];
@@ -361,9 +441,11 @@ export function renderFollowerChart(canvas, series, tipEl, {
     }
     draw(best.kind === 'real' ? best.idx : -1);
     if (tipEl) {
-      tipEl.innerHTML = best.kind === 'real'
-        ? `<span class="text-neutral-500">${fmtDate(best.d)}</span> <span class="font-semibold text-neutral-100">${fmtCount(best.c)}</span>`
-        : `<span class="text-neutral-500">${fmtDate(best.d)}</span> <span class="font-semibold text-neutral-100">~${fmtCount(best.c)}</span> <span class="text-neutral-500">${best.label}</span>`;
+      tipEl.innerHTML = best.kind === 'post'
+        ? `<span class="text-neutral-500">${fmtDate(best.d)}</span> <span class="font-semibold text-neutral-100">${fmtCount(Math.round(best.c))}</span> <span class="text-neutral-400">· ${best.count} post${best.count === 1 ? '' : 's'}</span>`
+        : best.kind === 'real'
+          ? `<span class="text-neutral-500">${fmtDate(best.d)}</span> <span class="font-semibold text-neutral-100">${fmtCount(best.c)}</span>`
+          : `<span class="text-neutral-500">${fmtDate(best.d)}</span> <span class="font-semibold text-neutral-100">~${fmtCount(best.c)}</span> <span class="text-neutral-500">${best.label}</span>`;
       tipEl.classList.remove('hidden');
       const tw = tipEl.offsetWidth;
       tipEl.style.left = `${Math.min(Math.max(best.px - tw / 2, 0), cssW - tw)}px`;
