@@ -138,6 +138,31 @@ export async function fetchTitleSlide(opts = {}) {
   return scene;
 }
 
+// Freeform: one brief in, a whole set out. No picking round — the prompt is
+// the brief, so this is a single call.
+//
+// opts: { topic, count?, exclude?, includeMeta?, model?, onProgress? }
+// Returns { title, intro, items: [{ heading, sub, caption, search }], meta }.
+export async function fetchFreeform(opts = {}) {
+  const data = await runJob({
+    kind: 'freeform',
+    topic: opts.topic,
+    count: opts.count,
+    exclude: opts.exclude || [],
+    includeMeta: opts.includeMeta !== false,
+    model: opts.model,
+  }, opts.onProgress);
+  if (!data.items?.length) {
+    throw new Error(data.error || 'The AI couldn’t write that set — try rewording the prompt.');
+  }
+  return {
+    title: data.title || '',
+    intro: data.intro || '',
+    items: data.items,
+    meta: data.meta || null,
+  };
+}
+
 // opts: { actor, count?, exclude?, model?, onProgress? }
 // Returns [{ movie, year, role, hook }]. Throws a clear message on failure.
 export async function fetchRoles(opts = {}) {

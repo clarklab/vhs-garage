@@ -15,6 +15,7 @@
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, buildTitleSlidePrompt, buildQuotesPrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, QUOTES_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
 import { quoteHints, applyCueTimes } from './lib/srt.mjs';
+import { buildFreeformPrompt, normalizeFreeform, FREEFORM_COUNT } from './lib/freeform.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
@@ -56,7 +57,7 @@ export default async (req) => {
 
   let {
     jobId, kind = 'trivia',
-    title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta, titleOnly,
+    title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta, titleOnly, topic,
     actor, roles,
     minVotes, ratedGiven, boxofficeGiven,
     quotes, cues, hints,
@@ -79,6 +80,7 @@ export default async (req) => {
     if ((kind === 'roles' || kind === 'blurbs') && !actor) throw new Error('Missing actor name');
     if (kind === 'blurbs' && !(Array.isArray(roles) && roles.length)) throw new Error('No roles picked');
     if (kind === 'year' && normalizeYearInput(year) === null) throw new Error('Enter a four digit year');
+    if (kind === 'freeform' && !String(topic || '').trim()) throw new Error('Describe what the slideshow is about');
 
     // Start marker: lets the poller distinguish "running" from "never started",
     // so the client can bail early instead of polling a dead job for minutes.
@@ -88,10 +90,12 @@ export default async (req) => {
     // Blurbs run on already-picked roles; no grounding needed there.
     // Blurbs need no grounding; an intro rewrite needs none either (it is
     // written from the film itself, not from production research).
-    const source = (kind === 'blurbs' || titleOnly) ? null : await fetchSource(kind, { title, year, actor }, jobId);
+    const source = (kind === 'blurbs' || kind === 'freeform' || titleOnly) ? null : await fetchSource(kind, { title, year, actor }, jobId);
 
     let prompt;
-    if (kind === 'roles') {
+    if (kind === 'freeform') {
+      prompt = buildFreeformPrompt({ topic, count, exclude, includeMeta: includeMeta !== false });
+    } else if (kind === 'roles') {
       prompt = buildRolesPrompt({
         actor, count: Number(count) || ROLES_COUNT, exclude,
         sourceMaterial: source?.text || '', sourceName: source?.pageTitle || '',
@@ -147,6 +151,15 @@ export default async (req) => {
       result = hasAnyEntries(snapshot)
         ? { ok: true, model, year: normalizeYearInput(year), ...snapshot }
         : { ok: false, model, error: yearFailureReason(raw, parsed) };
+    } else if (kind === 'freeform') {
+      const parsed = parseModelJson(raw);
+      const set = normalizeFreeform(parsed);
+      // Meta is a bonus, never a gate — same as trivia: a malformed one costs
+      // the post copy, not the slides we just paid for.
+      const meta = includeMeta !== false ? normalizeMeta(parsed) : null;
+      result = set.items.length
+        ? { ok: true, model, ...set, meta }
+        : { ok: false, model, error: 'The AI returned no usable slides — try again.' };
     } else {
       const base = titleOnly ? 1 : (Number(count) || (kind === 'quotes' ? QUOTES_COUNT : AUTOPILOT_COUNT));
       const max = (kind === 'quotes' ? includeTitleSlide !== false : includeTitleSlide) ? base + 1 : base;

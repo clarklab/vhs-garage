@@ -120,7 +120,17 @@ export function formatHashtags(tags) {
 // The post body. Line one is the agent's hook, which is where the searchable
 // keywords live (title, year, director, cast) and which is explicitly forbidden
 // from spoiling a fact that appears on a slide. The rest is house template.
-export function buildDescription({ hook = '', movie = '', hashtags = [] } = {}) {
+// `ask` and `more` default to the Tape Trivia wording, which is what every
+// caller sent before they existed. Both are worth passing: a Quote-a-long
+// asking for "your favorite quote from the movie" is asking for the thing the
+// slides just showed, and a list of slasher villains promising "more movie
+// trivia" is promising the wrong account.
+//
+// The LEAD line is deliberately not parameterised. parsePostedMovie() in
+// netlify/functions/lib/queue.mjs reads the film back out of "hidden details
+// from X" when a post title has been hand-edited, so its trivia wording is
+// load-bearing; a caller with its own hook replaces it anyway.
+export function buildDescription({ hook = '', movie = '', hashtags = [], ask = '', more = '' } = {}) {
   const film = String(movie || '').trim();
   const lead = String(hook || '').trim()
     || (film
@@ -128,8 +138,8 @@ export function buildDescription({ hook = '', movie = '', hashtags = [] } = {}) 
       : 'Behind-the-scenes movie facts and hidden details.');
   return [
     lead,
-    'What’s your favorite quote from the movie? Drop it in the comments.',
-    'Follow VHS Garage for more movie trivia.',
+    String(ask || '').trim() || 'What’s your favorite quote from the movie? Drop it in the comments.',
+    `Follow VHS Garage for ${String(more || '').trim() || 'more movie trivia'}.`,
     formatHashtags(hashtags),
   ].filter(Boolean).join('\n');
 }
