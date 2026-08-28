@@ -692,6 +692,11 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
                 <button data-seconds="5" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">+5s</button>
                 <button data-seconds="10" class="rounded-md bg-neutral-800 px-2 py-1 text-xs tabular-nums hover:bg-neutral-700">+10s</button>
                 <div class="ml-auto flex items-center gap-2">
+                <label id="pair-arm-wrap" class="hidden cursor-pointer select-none items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-2 text-xs font-semibold text-neutral-300 hover:bg-neutral-800"
+                       title="Keep this slide's current frame and add the next grab beside it">
+                  <input id="pair-arm" type="checkbox" class="accent-rose-500" />
+                  <span id="pair-arm-label">Add 2nd frame</span>
+                </label>
                 <div class="relative">
                   <button id="adjust-btn" disabled title="Brighten or correct the grabbed frame"
                           class="flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-2 text-sm font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
