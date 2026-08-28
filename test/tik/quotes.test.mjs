@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  wantsQuoteStamp, wantsLeftAlign, clampStampNudge, stampCenterY, stampTravel, canNudgeStamp,
+  wantsQuoteStamp, wantsLeftAlign, clampStampNudge, stampTravel, canNudgeStamp,
   STAMP_NUDGE_MIN, STAMP_NUDGE_MAX, STAMP_NUDGE_STEP,
 } from '../../public/scripts/tik/compose.js';
 import { fontScaleForQuote } from '../../public/scripts/tik/caption.js';
@@ -137,57 +137,69 @@ test('wantsLeftAlign shrugs off junk and blank lines', () => {
 
 // ---- Nudging the badge off the poster's own title ----
 
+// A 2:3 poster contained on the 1080x1920 slide, and the badge on it.
+const POSTER = { frameY: 150, frameH: 1620, canvasH: 1920, half: 190 };
+// A 2.39:1 scope frame: a shallow band with a lot of black above and below.
+const SCOPE = { frameY: 734, frameH: 452, canvasH: 1920, half: 158 };
+
+const yAt = (n, geo) => stampTravel(n, geo).y;
+
 test('an unnudged badge sits exactly where it always did', () => {
-  const base = stampCenterY(0);
-  assert.equal(stampCenterY(), base);
-  assert.equal(stampCenterY(null), base);
-  assert.equal(stampCenterY('junk'), base);
-  assert.ok(base > 0.3 && base < 0.45, `default height moved: ${base}`);
+  const base = yAt(0, POSTER);
+  assert.equal(yAt(undefined, POSTER), base);
+  assert.equal(yAt(null, POSTER), base);
+  assert.equal(yAt('junk', POSTER), base);
+  // High on the frame — well above its middle.
+  assert.ok(base < POSTER.frameY + POSTER.frameH / 2, `badge should sit high: ${base}`);
 });
 
-test('each step moves the badge by one step of the frame height', () => {
-  assert.ok(Math.abs(stampCenterY(1) - stampCenterY(0) - STAMP_NUDGE_STEP) < 1e-9);
-  assert.ok(Math.abs(stampCenterY(0) - stampCenterY(-1) - STAMP_NUDGE_STEP) < 1e-9);
-  assert.ok(stampCenterY(3) > stampCenterY(0), 'positive is DOWN the frame');
-  assert.ok(stampCenterY(-3) < stampCenterY(0), 'negative is UP the frame');
+test('a step is a share of the SLIDE, so it moves the same distance on any frame', () => {
+  const step = STAMP_NUDGE_STEP * 1920;
+  assert.ok(Math.abs(yAt(1, POSTER) - yAt(0, POSTER) - step) < 1e-9);
+  assert.ok(Math.abs(yAt(1, SCOPE) - yAt(0, SCOPE) - step) < 1e-9);
+  assert.ok(yAt(3, POSTER) > yAt(0, POSTER), 'positive is DOWN the slide');
+  assert.ok(yAt(-3, POSTER) < yAt(0, POSTER), 'negative is UP the slide');
 });
 
-test('the step range reaches both edges of any frame', () => {
-  // The step count must not be what stops the badge — the frame is. Even a
-  // badge that takes up nearly half the frame can be driven to either edge.
-  const half = 0.24;
-  assert.equal(stampCenterY(STAMP_NUDGE_MIN, half), half, 'can reach the top edge');
-  assert.equal(stampCenterY(STAMP_NUDGE_MAX, half), 1 - half, 'can reach the bottom edge');
-  // And on a frame where the badge is small, the whole frame is reachable.
-  assert.ok(stampCenterY(STAMP_NUDGE_MIN, 0.05) <= 0.05 + 1e-9);
-  assert.ok(stampCenterY(STAMP_NUDGE_MAX, 0.05) >= 0.95 - 1e-9);
+test('the badge may hang over the bottom of the picture', () => {
+  // The whole point: a badge is a sticker, and half off the frame is a real
+  // placement. Nothing about the frame stops it.
+  const frameBottom = POSTER.frameY + POSTER.frameH;
+  const low = yAt(STAMP_NUDGE_MAX, POSTER);
+  assert.ok(low + POSTER.half > frameBottom, 'badge overlaps the bottom of the frame');
+  // And on a scope band it can be taken right off the picture onto the black.
+  const scopeBottom = SCOPE.frameY + SCOPE.frameH;
+  assert.ok(yAt(STAMP_NUDGE_MAX, SCOPE) - SCOPE.half > scopeBottom, 'clear of the scope frame entirely');
+  assert.ok(yAt(STAMP_NUDGE_MIN, SCOPE) + SCOPE.half < SCOPE.frameY, 'and off the top of it');
 });
 
-test('the arrows die at the frame edge, not at a step count', () => {
-  const half = 0.12;              // a badge on a poster
-  const down = (n) => canNudgeStamp(n, 1, stampTravel(n, half));
-  // Walk down until it stops, the way the button does.
+test('the only stop is the edge of the slide', () => {
+  for (const geo of [POSTER, SCOPE]) {
+    const bottom = stampTravel(STAMP_NUDGE_MAX, geo);
+    const top = stampTravel(STAMP_NUDGE_MIN, geo);
+    assert.ok(bottom.y + geo.half <= geo.canvasH + 1e-9, 'never past the bottom of the slide');
+    assert.ok(top.y - geo.half >= -1e-9, 'never past the top of the slide');
+    assert.equal(bottom.atBottom, true);
+    assert.equal(top.atTop, true);
+  }
+});
+
+test('the arrows die at the slide edge, not at a step count', () => {
+  const down = (n) => canNudgeStamp(n, 1, stampTravel(n, SCOPE));
   let n = 0;
-  while (down(n) && n < 100) n++;
-  assert.ok(n < STAMP_NUDGE_MAX, `stopped at the frame edge (step ${n}), not the range`);
-  assert.ok(stampTravel(n, half).atBottom, 'and it stopped because it is against the edge');
-  assert.ok(stampTravel(n, half).y > 0.85, 'having travelled to the bottom of the frame');
-  // The other arrow is still live all the way down.
-  assert.equal(canNudgeStamp(n, -1, stampTravel(n, half)), true);
+  while (down(n) && n < 200) n++;
+  assert.ok(stampTravel(n, SCOPE).atBottom, 'stopped because it reached the slide edge');
+  assert.ok(stampTravel(n, SCOPE).y > SCOPE.frameY + SCOPE.frameH, 'having gone past the picture');
+  assert.equal(canNudgeStamp(n, -1, stampTravel(n, SCOPE)), true, 'the other arrow stays live');
 });
 
-test('a step that still moves the badge keeps its arrow live', () => {
-  const half = 0.12;
-  assert.equal(canNudgeStamp(0, 1, stampTravel(0, half)), true);
-  assert.equal(canNudgeStamp(0, -1, stampTravel(0, half)), true);
-});
-
-test('without a placement the arrows stay live', () => {
-  // The badge image may not have decoded on the first paint; enabled is the
-  // harmless way to be wrong, since the nudge itself is still clamped.
-  assert.equal(canNudgeStamp(0, 1), true);
-  assert.equal(canNudgeStamp(0, -1, null), true);
-  assert.equal(canNudgeStamp(STAMP_NUDGE_MAX, 1), false, 'the step range is still a backstop');
+test('an ordinary nudge is never clamped', () => {
+  for (const n of [-6, -2, 0, 3, 7, 10]) {
+    const p = stampTravel(n, POSTER);
+    assert.equal(p.atTop, false);
+    assert.equal(p.atBottom, false);
+    assert.equal(p.y, POSTER.frameY + POSTER.frameH * 0.38 + n * STAMP_NUDGE_STEP * 1920);
+  }
 });
 
 test('clampStampNudge holds the ends and takes whole steps only', () => {
@@ -199,35 +211,28 @@ test('clampStampNudge holds the ends and takes whole steps only', () => {
   assert.equal(clampStampNudge('3'), 3);
 });
 
-test('canNudgeStamp goes false only at the end it has reached', () => {
-  assert.equal(canNudgeStamp(0, -1), true);
-  assert.equal(canNudgeStamp(0, 1), true);
-  assert.equal(canNudgeStamp(STAMP_NUDGE_MIN, -1), false);
-  assert.equal(canNudgeStamp(STAMP_NUDGE_MIN, 1), true);  // can always come back
-  assert.equal(canNudgeStamp(STAMP_NUDGE_MAX, 1), false);
-  assert.equal(canNudgeStamp(STAMP_NUDGE_MAX, -1), true);
-});
-
-test('the badge stops at the frame edge instead of shrinking', () => {
-  // A 16:9 title frame is short and the badge is a big share of it, so the full
-  // upward nudge would push it off the top; it parks against the edge instead.
-  const half = 0.31; // half the tilted badge, as a fraction of the frame height
-  assert.equal(stampCenterY(STAMP_NUDGE_MIN, half), half, 'held off the top edge');
-  assert.ok(stampCenterY(STAMP_NUDGE_MAX, half) <= 1 - half, 'never past the bottom edge');
-  assert.equal(stampCenterY(STAMP_NUDGE_MAX, 0.4), 0.6);
-});
-
-test('an ordinary nudge lands exactly where it was asked to', () => {
-  const half = 0.12; // the badge on a 2:3 poster
-  for (const n of [-4, -1, 0, 2, 5, 8]) {
-    assert.equal(stampCenterY(n, half), stampCenterY(n), `step ${n} is unclamped`);
-    assert.equal(stampTravel(n, half).atTop, false);
-    assert.equal(stampTravel(n, half).atBottom, false);
+test('the step range reaches both edges of the slide from any frame', () => {
+  // If the range ran out first, the arrows would die mid-slide again.
+  for (const geo of [POSTER, SCOPE]) {
+    assert.equal(stampTravel(STAMP_NUDGE_MAX - 1, geo).atBottom, true, 'bottom edge reachable with a step to spare');
+    assert.equal(stampTravel(STAMP_NUDGE_MIN + 1, geo).atTop, true, 'top edge reachable with a step to spare');
   }
 });
 
-test('a junk half-height is ignored rather than moving the badge', () => {
-  assert.equal(stampCenterY(2, NaN), stampCenterY(2));
-  assert.equal(stampCenterY(2, -1), stampCenterY(2));
-  assert.equal(stampCenterY(2, 99), 0.5, 'a badge taller than the frame centres');
+test('without a placement the arrows stay live', () => {
+  // The badge image may not have decoded on the first paint; enabled is the
+  // harmless way to be wrong, since the nudge itself is still clamped.
+  assert.equal(canNudgeStamp(0, 1), true);
+  assert.equal(canNudgeStamp(0, -1, null), true);
+  assert.equal(canNudgeStamp(STAMP_NUDGE_MAX, 1), false, 'the step range is still a backstop');
+});
+
+test('junk geometry places the badge rather than throwing', () => {
+  const p = stampTravel(2, {});
+  assert.equal(Number.isFinite(p.y), true);
+  assert.equal(p.atTop, false);
+  assert.equal(p.atBottom, false);
+  // A badge taller than the whole slide has nowhere to be clamped to.
+  const huge = stampTravel(0, { ...POSTER, half: 5000 });
+  assert.equal(Number.isFinite(huge.y), true);
 });
