@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_SLIDES, addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, updateSlideFrame,
+  MAX_SLIDES, addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, canAddSlide, updateSlideFrame,
 } from '../../public/scripts/tik/slides.js';
+import { isOutroSlide } from '../../public/scripts/tik/project.js';
 
 const s = (id, caption = '') => ({ id, caption });
 
@@ -57,4 +58,56 @@ test('updateSlideFrame replaces bitmap+timecode for the matching slide only, imm
   assert.equal(b[0].caption, 'c1');  // caption preserved
   assert.equal(b[1].bitmap, 'b2');   // other slide untouched
   assert.equal(a[0].bitmap, 'b1');   // original untouched
+});
+
+
+// ---- addSlideBeforeOutro: a hand-added slide belongs ahead of the sign-off ----
+
+const outro = (id = 'out') => ({ id, caption: 'Follow VHS Garage for more', kind: 'outro' });
+
+test('addSlideBeforeOutro slips the slide in ahead of a trailing outro', () => {
+  const set = [s('1'), s('2'), outro()];
+  const next = addSlideBeforeOutro(set, s('new'), isOutroSlide);
+  assert.deepEqual(next.map(x => x.id), ['1', '2', 'new', 'out']);
+});
+
+test('addSlideBeforeOutro appends when the set has no outro yet', () => {
+  const next = addSlideBeforeOutro([s('1'), s('2')], s('new'), isOutroSlide);
+  assert.deepEqual(next.map(x => x.id), ['1', '2', 'new']);
+});
+
+test('addSlideBeforeOutro appends to an empty set', () => {
+  assert.deepEqual(addSlideBeforeOutro([], s('new'), isOutroSlide).map(x => x.id), ['new']);
+});
+
+test('addSlideBeforeOutro only looks at the LAST slide', () => {
+  // An outro dragged into the middle is the user's arrangement, not a reason to
+  // insert in front of it; the new slide still goes at the end.
+  const set = [s('1'), outro('moved'), s('2')];
+  const next = addSlideBeforeOutro(set, s('new'), isOutroSlide);
+  assert.deepEqual(next.map(x => x.id), ['1', 'moved', '2', 'new']);
+});
+
+test('addSlideBeforeOutro recognizes an unmarked outro by its follow line', () => {
+  // Older projects predate `kind`, so the caption is the only marker.
+  const legacy = { id: 'legacy', caption: 'Follow VHS Garage for more bad movies' };
+  const next = addSlideBeforeOutro([s('1'), legacy], s('new'), isOutroSlide);
+  assert.deepEqual(next.map(x => x.id), ['1', 'new', 'legacy']);
+});
+
+test('addSlideBeforeOutro respects the cap and never mutates', () => {
+  let arr = [];
+  for (let i = 0; i < MAX_SLIDES - 1; i++) arr = addSlide(arr, s(String(i)));
+  arr = addSlide(arr, outro());
+  const same = addSlideBeforeOutro(arr, s('overflow'), isOutroSlide);
+  assert.equal(same.length, MAX_SLIDES);
+  assert.equal(same.at(-1).id, 'out'); // rejected outright, outro untouched
+  const before = [s('1'), outro()];
+  addSlideBeforeOutro(before, s('new'), isOutroSlide);
+  assert.deepEqual(before.map(x => x.id), ['1', 'out']);
+});
+
+test('addSlideBeforeOutro without a predicate behaves like addSlide', () => {
+  const set = [s('1'), outro()];
+  assert.deepEqual(addSlideBeforeOutro(set, s('new')).map(x => x.id), ['1', 'out', 'new']);
 });

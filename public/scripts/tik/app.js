@@ -4,7 +4,7 @@
 // itself can't persist (browser limitation), but every slide's frame does.
 import { loadVideoFile, grabFrame, awaitSeekSettled, seekAndSettle } from './capture.js';
 import { initScrubber } from './scrubber.js';
-import { addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame } from './slides.js';
+import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame } from './slides.js';
 // getRefreshToken is no longer needed here: the only fetch in this file that
 // used it (the hashtag panel) now goes through reports.js loadPosts().
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory } from './auth.js';
@@ -12,7 +12,7 @@ import { publishSlideshow } from './publish.js';
 import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot, fetchQuotesPost, fetchImdbQuotes, fetchSubtitles, fetchFreeform, QUOTES_COUNT } from './autopilot.js';
 import { fontScaleForQuote } from './caption.js';
 import { parseMovieName } from './filename.js';
-import { composeToCanvas, composeSlide, captionFontReady, quoteStampReady } from './compose.js';
+import { composeToCanvas, composeSlide, captionFontReady, quoteStampReady, wantsQuoteStamp, clampStampNudge, canNudgeStamp } from './compose.js';
 import { clockTimecode } from './timecode.js';
 import { PRESETS, applyPreset, autoLevels, describeAdjust, isNeutral, NEUTRAL } from './adjust.js';
 import {
@@ -110,6 +110,7 @@ const els = {
   homeNav: $('home-nav'), homeLink: $('home-link'), tabPosts: $('tab-posts'), tabStats: $('tab-stats'), tabModels: $('tab-models'),
   // slides pane
   count: $('slide-count'), list: $('slide-list'), addScene: $('add-scene'), slidesHint: $('slides-hint'),
+  addManual: $('add-manual'), addManualLabel: $('add-manual-label'),
   imgFile: $('img-file-input'),
 };
 
@@ -224,7 +225,7 @@ async function makeThumbBlob(slide) {
   composeToCanvas(c, slide.bitmap, slide.caption, {
     titleLine: currentTitleLine(), scale: 0.12, fontScale: slide.fontScale || 1,
     maxFrameHeightRatio: frameHeightRatio(),
-    format: project.format, kind: slide.kind, adjust: slide.adjust,
+    format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0,
   });
   return await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.7));
 }
@@ -247,6 +248,8 @@ async function serializeProject() {
       pairLayout: s.pairFrames?.length === 2 ? pairLayoutOf(s.pairLayout) : null,
       // Correction is stored, never baked, so it stays reversible.
       adjust: s.adjust || null,
+      // Where the Quote-a-long badge was nudged to on this title card.
+      stampNudge: clampStampNudge(s.stampNudge),
       frame: await frameBlobFor(s),
     });
   }
@@ -496,6 +499,7 @@ async function openProject(id) {
         fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
         entry: s.entry || null, section: s.section || null, cue: s.cue || null,
         search: s.search || '', adjust: s.adjust || null,
+        stampNudge: clampStampNudge(s.stampNudge),
         pairFrames: s.pairFrames?.length === 2 ? s.pairFrames : null,
         pairLayout: s.pairFrames?.length === 2 ? pairLayoutOf(s.pairLayout) : null,
       });
@@ -535,6 +539,16 @@ function applyFormatUI() {
     pane.classList.toggle('flex', on);
   }
   els.addScene.classList.toggle('hidden', f.key !== 'trivia');
+  // Hand-written slide: for a quote you already know, or a fact the agent
+  // missed. Both movie-file formats get it — the frame comes from the playhead,
+  // which only those two have.
+  const manual = isMovieFileFormat(f.key);
+  els.addManual.classList.toggle('hidden', !manual);
+  els.addManual.classList.toggle('flex', manual);
+  els.addManualLabel.textContent = f.key === 'quotes' ? 'Add quote' : 'Add slide';
+  els.addManual.title = f.key === 'quotes'
+    ? 'Add a slide at this frame and type the quote yourself'
+    : 'Add a slide at this frame and write it yourself';
   els.formatChip.textContent = f.label;
   els.formatChip.className = `rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${f.chip}`;
   els.slidesHint.textContent = f.editorHint;
@@ -1191,7 +1205,7 @@ function openSlidePreview(slide) {
       scale: PREVIEW_MODAL_SCALE,
       fontScale: slide.fontScale || 1,
       maxFrameHeightRatio: frameHeightRatio(),
-      format: project.format, kind: slide.kind, adjust: slide.adjust,
+      format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0,
     });
     const idx = slides.findIndex((s) => s.id === slide.id);
     const scale = Math.round((slide.fontScale || 1) * 100);
@@ -1636,7 +1650,8 @@ els.grab.addEventListener('click', async () => {
       els.status.textContent = 'Frame updated.';
     } else {
       if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
-      slides = addSlide(slides, { id: String(nextId++), bitmap, blob: null, caption: '', timecode: els.video.currentTime, fontScale: 1 });
+      // Same rule as the Add button: a new frame belongs before the sign-off.
+      slides = addSlideBeforeOutro(slides, { id: String(nextId++), bitmap, blob: null, caption: '', timecode: els.video.currentTime, fontScale: 1 }, isOutroSlide);
       render();
       syncAdjustButton();
     }
@@ -1756,6 +1771,46 @@ els.autopilot.addEventListener('click', async () => {
     setAiBusy(false);
   }
 });
+
+// ---- Add one slide by hand, at the current frame ----
+//
+// The agent is not always the one who knows the quote. This grabs the playhead
+// frame, drops the slide in ahead of the sign-off, and puts the cursor in its
+// caption box so the line can be typed straight away.
+els.addManual.addEventListener('click', async () => {
+  if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
+  if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
+  const quotes = project?.format === 'quotes';
+  try {
+    if (editingId) exitEdit(); // a hand-added slide is a new one, never a re-grab
+    await awaitSeekSettled(els.video); // don't grab a stale frame mid-seek
+    const bitmap = await grabFrame(els.video);
+    const id = String(nextId++);
+    slides = addSlideBeforeOutro(slides, {
+      id, bitmap, blob: null, caption: '', timecode: els.video.currentTime, grabHint: '', fontScale: 1,
+    }, isOutroSlide);
+    render();
+    syncAdjustButton();
+    markDirty();
+    focusSlideCaption(id);
+    els.status.textContent = quotes
+      ? 'Blank slide added at this frame — type the quote.'
+      : 'Blank slide added at this frame — write it.';
+  } catch (err) {
+    console.error('[tik] manual add failed:', err);
+    els.status.textContent = err.message;
+  }
+});
+
+// Put the cursor in a slide's caption box and bring the row into view. A new
+// blank slide is added to be typed into, and on a long set it lands off-screen.
+function focusSlideCaption(id) {
+  const thumb = els.list.querySelector(`canvas[data-thumb="${CSS.escape(String(id))}"]`);
+  const ta = thumb?.closest('li')?.querySelector('textarea');
+  if (!ta) return;
+  ta.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  ta.focus();
+}
 
 // ---- Add one more AI scene (with context so it doesn't repeat) ----
 els.addScene.addEventListener('click', async () => {
@@ -2576,6 +2631,7 @@ function render() {
   els.count.textContent = String(slides.length);
   els.grab.disabled = !editingId && !canAddSlide(slides); // Save stays enabled at the cap
   els.addScene.disabled = aiBusy || !videoReady || !canAddSlide(slides);
+  els.addManual.disabled = !videoReady || !canAddSlide(slides); // no model involved, so aiBusy is irrelevant
   els.download.disabled = slides.length === 0;
   els.list.innerHTML = '';
   slides.forEach((slide, index) => els.list.appendChild(renderSlide(slide, index)));
@@ -2596,7 +2652,7 @@ function frameHeightRatio() {
 function redrawAllThumbs() {
   slides.forEach((slide) => {
     const thumb = els.list.querySelector(`canvas[data-thumb="${slide.id}"]`);
-    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slide.kind, adjust: slide.adjust });
+    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0 });
   });
 }
 
@@ -2648,7 +2704,7 @@ function renderSlide(slide, index) {
   const redrawThumb = () => composeToCanvas(thumb, slide.bitmap, ta.value, {
     titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1,
     maxFrameHeightRatio: frameHeightRatio(),
-    format: project.format, kind: slide.kind, adjust: slide.adjust,
+    format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0,
   });
   redrawThumb();
 
@@ -2746,6 +2802,38 @@ function renderSlide(slide, index) {
   fontDown.addEventListener('click', () => nudgeFont(-0.1));
   fontUp.addEventListener('click', () => nudgeFont(0.1));
 
+  // Quote-a-long title card: slide the badge up or down the poster.
+  //
+  // The badge sits high by default, and posters put their own lettering
+  // wherever they like — on plenty of them the wordmark lands right on the
+  // film's title. Nothing here can guess that, so it is a pair of arrows.
+  let stampUp = null;
+  let stampDown = null;
+  if (wantsQuoteStamp({ format: project?.format, kind: slide.kind })) {
+    const at = () => clampStampNudge(slide.stampNudge);
+    stampUp = tbBtn('keyboard_arrow_up', '', 'Move the Quote-a-long badge up', 'text-amber-300');
+    stampDown = tbBtn('keyboard_arrow_down', '', 'Move the Quote-a-long badge down', 'text-amber-300');
+    const syncArrows = () => {
+      stampUp.disabled = !canNudgeStamp(at(), -1);
+      stampDown.disabled = !canNudgeStamp(at(), 1);
+      stampUp.classList.toggle('opacity-40', stampUp.disabled);
+      stampDown.classList.toggle('opacity-40', stampDown.disabled);
+    };
+    const nudgeStamp = (delta) => {
+      const next = clampStampNudge(at() + delta);
+      if (next === at()) return;
+      slide.stampNudge = next; // keep the closure current for redraws
+      slides = slides.map((x) => (x.id === slide.id ? { ...x, stampNudge: next } : x));
+      redrawThumb();
+      syncArrows();
+      markDirty();
+      els.status.textContent = next === 0 ? 'Badge back at its default height.' : 'Badge moved.';
+    };
+    stampUp.addEventListener('click', () => nudgeStamp(-1));
+    stampDown.addEventListener('click', () => nudgeStamp(1));
+    syncArrows();
+  }
+
   // Bring-your-own-image formats get a one-tap link to a Google image search for
   // this slide's subject — the actor or "actor + movie" for Some Guys, the film
   // and year for a Year Snapshot entry — so grabbing real artwork and coming
@@ -2789,7 +2877,7 @@ function renderSlide(slide, index) {
     });
   }
 
-  toolbar.append(pickBtn, ...(photoSearch ? [photoSearch] : []), ...(pairBtn ? [pairBtn] : []), ...(insertBtn ? [insertBtn] : []), fontDown, fontUp);
+  toolbar.append(pickBtn, ...(photoSearch ? [photoSearch] : []), ...(pairBtn ? [pairBtn] : []), ...(insertBtn ? [insertBtn] : []), ...(stampUp ? [stampUp, stampDown] : []), fontDown, fontUp);
 
   // The sign-off is house copy and format-agnostic (nextOutro knows what
   // "more" means per format), so Quote-a-long gets the swap too even though it
@@ -2986,7 +3074,7 @@ els.download.addEventListener('click', async () => {
     const titleLine = currentTitleLine();
     for (let i = 0; i < slides.length; i++) {
       els.status.textContent = `Rendering slide ${i + 1}/${slides.length}…`;
-      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slides[i].kind, adjust: slides[i].adjust });
+      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slides[i].kind, adjust: slides[i].adjust, stampNudge: slides[i].stampNudge || 0 });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `${slug}-${String(i + 1).padStart(2, '0')}.jpg`;

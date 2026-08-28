@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { wantsQuoteStamp, wantsLeftAlign } from '../../public/scripts/tik/compose.js';
+import {
+  wantsQuoteStamp, wantsLeftAlign, clampStampNudge, stampCenterY, canNudgeStamp,
+  STAMP_NUDGE_MIN, STAMP_NUDGE_MAX, STAMP_NUDGE_STEP,
+} from '../../public/scripts/tik/compose.js';
 import { fontScaleForQuote } from '../../public/scripts/tik/caption.js';
 import { defaultPostFields } from '../../public/scripts/tik/project.js';
 import { buildQuotesPrompt } from '../../netlify/functions/lib/autopilot.mjs';
@@ -129,4 +132,67 @@ test('wantsLeftAlign shrugs off junk and blank lines', () => {
   assert.equal(wantsLeftAlign({ format: 'quotes', lines: null }), false);
   // A blank paragraph is spacing, not a second speaker.
   assert.equal(wantsLeftAlign({ format: 'quotes', lines: ['one line', '', '   '] }), false);
+});
+
+
+// ---- Nudging the badge off the poster's own title ----
+
+test('an unnudged badge sits exactly where it always did', () => {
+  const base = stampCenterY(0);
+  assert.equal(stampCenterY(), base);
+  assert.equal(stampCenterY(null), base);
+  assert.equal(stampCenterY('junk'), base);
+  assert.ok(base > 0.3 && base < 0.45, `default height moved: ${base}`);
+});
+
+test('each step moves the badge by one step of the frame height', () => {
+  assert.ok(Math.abs(stampCenterY(1) - stampCenterY(0) - STAMP_NUDGE_STEP) < 1e-9);
+  assert.ok(Math.abs(stampCenterY(0) - stampCenterY(-1) - STAMP_NUDGE_STEP) < 1e-9);
+  assert.ok(stampCenterY(3) > stampCenterY(0), 'positive is DOWN the frame');
+  assert.ok(stampCenterY(-3) < stampCenterY(0), 'negative is UP the frame');
+});
+
+test('the range keeps the badge well inside the picture', () => {
+  assert.ok(stampCenterY(STAMP_NUDGE_MIN) > 0.1, 'top of the range still on the frame');
+  assert.ok(stampCenterY(STAMP_NUDGE_MAX) < 0.75, 'bottom of the range still on the frame');
+});
+
+test('clampStampNudge holds the ends and takes whole steps only', () => {
+  assert.equal(clampStampNudge(STAMP_NUDGE_MAX + 50), STAMP_NUDGE_MAX);
+  assert.equal(clampStampNudge(STAMP_NUDGE_MIN - 50), STAMP_NUDGE_MIN);
+  assert.equal(clampStampNudge(2.4), 2);
+  assert.equal(clampStampNudge(undefined), 0);
+  assert.equal(clampStampNudge(NaN), 0);
+  assert.equal(clampStampNudge('3'), 3);
+});
+
+test('canNudgeStamp goes false only at the end it has reached', () => {
+  assert.equal(canNudgeStamp(0, -1), true);
+  assert.equal(canNudgeStamp(0, 1), true);
+  assert.equal(canNudgeStamp(STAMP_NUDGE_MIN, -1), false);
+  assert.equal(canNudgeStamp(STAMP_NUDGE_MIN, 1), true);  // can always come back
+  assert.equal(canNudgeStamp(STAMP_NUDGE_MAX, 1), false);
+  assert.equal(canNudgeStamp(STAMP_NUDGE_MAX, -1), true);
+});
+
+test('the badge stops at the frame edge instead of shrinking', () => {
+  // A 16:9 title frame is short and the badge is a big share of it, so the full
+  // upward nudge would push it off the top; it parks against the edge instead.
+  const half = 0.31; // half the tilted badge, as a fraction of the frame height
+  assert.equal(stampCenterY(STAMP_NUDGE_MIN, half), half, 'held off the top edge');
+  assert.ok(stampCenterY(STAMP_NUDGE_MAX, half) <= 1 - half, 'never past the bottom edge');
+  // Bottom edge, on a frame short enough for the downward nudge to reach it.
+  assert.equal(stampCenterY(STAMP_NUDGE_MAX, 0.4), 0.6);
+});
+
+test('a tall poster frame never triggers the edge clamp', () => {
+  const half = 0.12; // the badge on a 2:3 poster
+  assert.equal(stampCenterY(3, half), stampCenterY(3), 'nudge lands exactly where asked');
+  assert.equal(stampCenterY(STAMP_NUDGE_MIN, half), stampCenterY(STAMP_NUDGE_MIN));
+});
+
+test('a junk half-height is ignored rather than moving the badge', () => {
+  assert.equal(stampCenterY(2, NaN), stampCenterY(2));
+  assert.equal(stampCenterY(2, -1), stampCenterY(2));
+  assert.equal(stampCenterY(2, 99), 0.5, 'a badge taller than the frame centres');
 });
