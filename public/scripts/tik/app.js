@@ -24,6 +24,7 @@ import {
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
+import { composePair, pairLayoutOf, otherLayout, PAIR_LAYOUT_LABELS } from './pair.js';
 import {
   parseImdbList, toRatedEntries, imdbSearchUrl, formatVotes,
   parseGrossList, toGrossEntries, boxOfficeMojoUrl, formatGross,
@@ -64,6 +65,7 @@ const els = {
   download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
   statusChip: $('status-chip'), toast: $('toast'), toastBody: $('toast-body'),
   adjustBtn: $('adjust-btn'), adjustMenu: $('adjust-menu'), adjustLabel: $('adjust-label'),
+  pairArmWrap: $('pair-arm-wrap'), pairArm: $('pair-arm'), pairArmLabel: $('pair-arm-label'),
   subsNote: $('subs-note'), subsNoteText: $('subs-note-text'),
   cadenceCard: $('cadence-card'), cadenceGhost: $('cadence-ghost'), cadenceLive: $('cadence-live'),
   cadenceIcon: $('cadence-icon'), cadenceHeadline: $('cadence-headline'),
@@ -239,6 +241,10 @@ async function serializeProject() {
       cue: s.cue || null,
       // Freeform writes an image-search term per slide; it is the whole point.
       search: s.search || '',
+      // The two source frames behind a paired slide, kept so switching layout
+      // rebuilds rather than asking for the grabs again.
+      pairFrames: s.pairFrames?.length === 2 ? s.pairFrames : null,
+      pairLayout: s.pairFrames?.length === 2 ? pairLayoutOf(s.pairLayout) : null,
       // Correction is stored, never baked, so it stays reversible.
       adjust: s.adjust || null,
       frame: await frameBlobFor(s),
@@ -490,6 +496,8 @@ async function openProject(id) {
         fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
         entry: s.entry || null, section: s.section || null, cue: s.cue || null,
         search: s.search || '', adjust: s.adjust || null,
+        pairFrames: s.pairFrames?.length === 2 ? s.pairFrames : null,
+        pairLayout: s.pairFrames?.length === 2 ? pairLayoutOf(s.pairLayout) : null,
       });
     } catch (e) {
       console.error('[tik] could not decode a saved frame; slide dropped', e);
@@ -984,6 +992,79 @@ async function offerRememberedReload() {
 els.file.addEventListener('change', () => els.videoReload.classList.add('hidden'));
 els.triviaSeedShow.addEventListener('click', () => { seedForced = !seedForced; syncSeedControls(); });
 
+// ================= Two frames on one slide =================
+//
+// A Quote-a-long middle slide can hold two grabs, for the setup and the payoff
+// of an exchange. Only the middle ones: the opener is a title card and the
+// sign-off is house art, and neither has a second half.
+//
+// The two source frames live on the slide and the composite is rebuilt from
+// them, so switching layout is not a re-grab. Same shape as the Some Guys
+// mosaic, and for the same reason.
+function canPairSlide(slide) {
+  return project?.format === 'quotes' && slide && slide.kind !== 'title' && !isOutroSlide(slide);
+}
+
+// The grab button REPLACES by default and always has; that is the muscle
+// memory. Adding is opt-in per grab, and disarms itself the moment it fires so
+// the next grab behaves the way every other grab in the app does.
+let pairArmed = false;
+
+function syncPairArm() {
+  const slide = adjustTarget();
+  const usable = !!(project?.format === 'quotes' && slide && canPairSlide(slide) && slide.bitmap);
+  els.pairArmWrap.classList.toggle('hidden', !usable);
+  els.pairArmWrap.classList.toggle('flex', usable);
+  if (!usable && pairArmed) { pairArmed = false; els.pairArm.checked = false; }
+  const paired = !!slide?.pairFrames?.length;
+  els.pairArmLabel.textContent = paired ? 'Replace 2nd frame' : 'Add 2nd frame';
+  els.pairArmWrap.title = paired
+    ? 'The next grab replaces the second frame instead of the whole slide'
+    : 'Keep this slide’s current frame and add the next grab beside it';
+}
+
+els.pairArm.addEventListener('change', () => {
+  pairArmed = els.pairArm.checked;
+  const slide = adjustTarget();
+  if (pairArmed) {
+    els.status.textContent = slide?.pairFrames?.length
+      ? 'Next grab replaces the second frame.'
+      : 'Next grab lands beside this slide’s frame. Grab as normal.';
+  }
+});
+
+// Build (or rebuild) a slide's composite from its two source frames.
+async function applyPair(id, frames, layout) {
+  const slide = slides.find((s) => s.id === id);
+  if (!slide || frames.length < 2) return false;
+  const ticket = project?.id;
+  try {
+    const bitmap = await composePair(frames, layout);
+    if (project?.id !== ticket) return false;
+    const old = slide.bitmap;
+    slides = slides.map((sl) => (sl.id === id
+      ? { ...sl, bitmap, blob: null, pairFrames: frames, pairLayout: pairLayoutOf(layout) }
+      : sl));
+    old?.close?.();
+    return true;
+  } catch (e) {
+    console.error('[tik] pairing the frames failed:', e);
+    els.status.textContent = 'Couldn’t put the two frames together.';
+    return false;
+  }
+}
+
+async function togglePairLayout(id) {
+  const slide = slides.find((s) => s.id === id);
+  if (!slide?.pairFrames?.length) return;
+  const next = otherLayout(slide.pairLayout);
+  if (await applyPair(id, slide.pairFrames, next)) {
+    render();
+    markDirty();
+    els.status.textContent = `${PAIR_LAYOUT_LABELS[next]}.`;
+  }
+}
+
 // ================= Frame correction =================
 //
 // Films are dark. A grabbed still often needs a lift before a caption sits on
@@ -1029,6 +1110,7 @@ function measureLevels(bitmap) {
 }
 
 function syncAdjustButton() {
+  syncPairArm();
   const target = adjustTarget();
   const movieFormat = isMovieFileFormat();
   els.adjustBtn.disabled = !movieFormat || !target;
@@ -1523,10 +1605,34 @@ els.grab.addEventListener('click', async () => {
   try {
     await awaitSeekSettled(els.video); // don't grab a stale frame mid-seek
     const bitmap = await grabFrame(els.video);
+
+    // Opted in for this grab only: keep what is there and put this beside it.
+    const pairTarget = pairArmed ? adjustTarget() : null;
+    if (pairTarget && canPairSlide(pairTarget) && pairTarget.bitmap) {
+      pairArmed = false;
+      els.pairArm.checked = false;
+      const shot = await bitmapToBlob(bitmap);
+      bitmap.close?.();
+      // Already a pair? This replaces its SECOND frame, so a bad second grab
+      // costs one grab rather than the whole slide.
+      const first = pairTarget.pairFrames?.[0] || await frameBlobFor(pairTarget);
+      const layout = pairLayoutOf(pairTarget.pairLayout);
+      if (await applyPair(pairTarget.id, [first, shot], layout)) {
+        if (editingId === pairTarget.id) exitEdit(); else render();
+        syncAdjustButton();
+        markDirty();
+        els.status.textContent = `Two frames on this slide, ${PAIR_LAYOUT_LABELS[layout].toLowerCase()}. Use the slide's own button to switch.`;
+      }
+      return;
+    }
+
     if (editingId) {
       slides = updateSlideFrame(slides, editingId, bitmap, els.video.currentTime);
-      slides = slides.map((s) => (s.id === editingId ? { ...s, blob: null } : s));
+      // A replace is a replace: whatever pairing was on this slide is gone,
+      // which is also the only way back to a single frame.
+      slides = slides.map((s) => (s.id === editingId ? { ...s, blob: null, pairFrames: null, pairLayout: null } : s));
       exitEdit();
+      syncAdjustButton();
       els.status.textContent = 'Frame updated.';
     } else {
       if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
@@ -2667,7 +2773,23 @@ function renderSlide(slide, index) {
     insertBtn.addEventListener('click', () => openInsertForm(li, index));
   }
 
-  toolbar.append(pickBtn, ...(photoSearch ? [photoSearch] : []), ...(insertBtn ? [insertBtn] : []), fontDown, fontUp);
+  // A paired slide can flip between the two arrangements from its own row,
+  // which is where the slide is and where its other controls already live.
+  let pairBtn = null;
+  if (slide.pairFrames?.length === 2) {
+    const layout = pairLayoutOf(slide.pairLayout);
+    pairBtn = tbBtn(
+      layout === 'stack' ? 'vertical_split' : 'horizontal_split',
+      PAIR_LAYOUT_LABELS[otherLayout(layout)],
+      `Two frames, ${PAIR_LAYOUT_LABELS[layout].toLowerCase()} — switch to ${PAIR_LAYOUT_LABELS[otherLayout(layout)].toLowerCase()}`,
+      'text-rose-300',
+    );
+    pairBtn.addEventListener('click', () => {
+      togglePairLayout(slide.id).catch((e) => console.error('[tik] layout switch failed:', e));
+    });
+  }
+
+  toolbar.append(pickBtn, ...(photoSearch ? [photoSearch] : []), ...(pairBtn ? [pairBtn] : []), ...(insertBtn ? [insertBtn] : []), fontDown, fontUp);
 
   // The sign-off is house copy and format-agnostic (nextOutro knows what
   // "more" means per format), so Quote-a-long gets the swap too even though it
