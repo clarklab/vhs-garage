@@ -3,8 +3,11 @@
 import { seekTime } from './srt.mjs';
 
 export const AUTOPILOT_COUNT = 5;
-export const QUOTES_COUNT = 8;
-export const QUOTES_POOL = 20;
+// A Quote-a-long is twelve quotes, plus the title card and the sign-off: 14
+// slides. Quotes carry a post further than facts do — people scroll a set of
+// lines they already know — and the pool is deep enough to feed it.
+export const QUOTES_COUNT = 12;
+export const QUOTES_POOL = 30;
 
 // Two numbers per field, not one:
 //

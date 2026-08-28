@@ -218,7 +218,12 @@ export async function fetchBlurbs(opts = {}) {
   return { intro: data.intro || '', blurbs: data.blurbs };
 }
 
-export const QUOTES_COUNT = 8;
+// Twelve quotes + title card + sign-off = 14 slides.
+// MUST MATCH QUOTES_COUNT in netlify/functions/lib/autopilot.mjs.
+export const QUOTES_COUNT = 12;
+// How many ranked IMDb quotes the model gets to choose from.
+// MUST MATCH QUOTES_POOL in netlify/functions/lib/autopilot.mjs.
+export const QUOTES_POOL = 30;
 
 export async function fetchImdbQuotes({ imdbId, query, year, includeSpoilers = true } = {}) {
   const res = await fetch('/.netlify/functions/tik-imdb', {

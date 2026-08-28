@@ -48,6 +48,12 @@ export function editCaption(slides, id, caption) {
 
 // Replace a slide's grabbed frame (and the timecode it came from), leaving its
 // caption and everything else intact. Used by the "re-grab this frame" flow.
+//
+// The colour/zoom correction does NOT survive. It was measured against the
+// pixels that just went away: a brighten set for a night scene, or a 35% zoom
+// framed on one shot's title card, is nonsense applied to a different picture —
+// pasting a fresh image into a zoomed slide came back zoomed, which reads as
+// the app doing something of its own accord.
 export function updateSlideFrame(slides, id, bitmap, timecode) {
-  return slides.map(x => (x.id === id ? { ...x, bitmap, timecode } : x));
+  return slides.map(x => (x.id === id ? { ...x, bitmap, timecode, adjust: null } : x));
 }
