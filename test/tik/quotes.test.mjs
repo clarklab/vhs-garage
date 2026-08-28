@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  wantsQuoteStamp, wantsLeftAlign, clampStampNudge, stampCenterY, canNudgeStamp,
+  wantsQuoteStamp, wantsLeftAlign, clampStampNudge, stampCenterY, stampTravel, canNudgeStamp,
   STAMP_NUDGE_MIN, STAMP_NUDGE_MAX, STAMP_NUDGE_STEP,
 } from '../../public/scripts/tik/compose.js';
 import { fontScaleForQuote } from '../../public/scripts/tik/caption.js';
@@ -152,9 +152,42 @@ test('each step moves the badge by one step of the frame height', () => {
   assert.ok(stampCenterY(-3) < stampCenterY(0), 'negative is UP the frame');
 });
 
-test('the range keeps the badge well inside the picture', () => {
-  assert.ok(stampCenterY(STAMP_NUDGE_MIN) > 0.1, 'top of the range still on the frame');
-  assert.ok(stampCenterY(STAMP_NUDGE_MAX) < 0.75, 'bottom of the range still on the frame');
+test('the step range reaches both edges of any frame', () => {
+  // The step count must not be what stops the badge — the frame is. Even a
+  // badge that takes up nearly half the frame can be driven to either edge.
+  const half = 0.24;
+  assert.equal(stampCenterY(STAMP_NUDGE_MIN, half), half, 'can reach the top edge');
+  assert.equal(stampCenterY(STAMP_NUDGE_MAX, half), 1 - half, 'can reach the bottom edge');
+  // And on a frame where the badge is small, the whole frame is reachable.
+  assert.ok(stampCenterY(STAMP_NUDGE_MIN, 0.05) <= 0.05 + 1e-9);
+  assert.ok(stampCenterY(STAMP_NUDGE_MAX, 0.05) >= 0.95 - 1e-9);
+});
+
+test('the arrows die at the frame edge, not at a step count', () => {
+  const half = 0.12;              // a badge on a poster
+  const down = (n) => canNudgeStamp(n, 1, stampTravel(n, half));
+  // Walk down until it stops, the way the button does.
+  let n = 0;
+  while (down(n) && n < 100) n++;
+  assert.ok(n < STAMP_NUDGE_MAX, `stopped at the frame edge (step ${n}), not the range`);
+  assert.ok(stampTravel(n, half).atBottom, 'and it stopped because it is against the edge');
+  assert.ok(stampTravel(n, half).y > 0.85, 'having travelled to the bottom of the frame');
+  // The other arrow is still live all the way down.
+  assert.equal(canNudgeStamp(n, -1, stampTravel(n, half)), true);
+});
+
+test('a step that still moves the badge keeps its arrow live', () => {
+  const half = 0.12;
+  assert.equal(canNudgeStamp(0, 1, stampTravel(0, half)), true);
+  assert.equal(canNudgeStamp(0, -1, stampTravel(0, half)), true);
+});
+
+test('without a placement the arrows stay live', () => {
+  // The badge image may not have decoded on the first paint; enabled is the
+  // harmless way to be wrong, since the nudge itself is still clamped.
+  assert.equal(canNudgeStamp(0, 1), true);
+  assert.equal(canNudgeStamp(0, -1, null), true);
+  assert.equal(canNudgeStamp(STAMP_NUDGE_MAX, 1), false, 'the step range is still a backstop');
 });
 
 test('clampStampNudge holds the ends and takes whole steps only', () => {
@@ -181,14 +214,16 @@ test('the badge stops at the frame edge instead of shrinking', () => {
   const half = 0.31; // half the tilted badge, as a fraction of the frame height
   assert.equal(stampCenterY(STAMP_NUDGE_MIN, half), half, 'held off the top edge');
   assert.ok(stampCenterY(STAMP_NUDGE_MAX, half) <= 1 - half, 'never past the bottom edge');
-  // Bottom edge, on a frame short enough for the downward nudge to reach it.
   assert.equal(stampCenterY(STAMP_NUDGE_MAX, 0.4), 0.6);
 });
 
-test('a tall poster frame never triggers the edge clamp', () => {
+test('an ordinary nudge lands exactly where it was asked to', () => {
   const half = 0.12; // the badge on a 2:3 poster
-  assert.equal(stampCenterY(3, half), stampCenterY(3), 'nudge lands exactly where asked');
-  assert.equal(stampCenterY(STAMP_NUDGE_MIN, half), stampCenterY(STAMP_NUDGE_MIN));
+  for (const n of [-4, -1, 0, 2, 5, 8]) {
+    assert.equal(stampCenterY(n, half), stampCenterY(n), `step ${n} is unclamped`);
+    assert.equal(stampTravel(n, half).atTop, false);
+    assert.equal(stampTravel(n, half).atBottom, false);
+  }
 });
 
 test('a junk half-height is ignored rather than moving the badge', () => {
