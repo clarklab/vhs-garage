@@ -111,3 +111,29 @@ test('addSlideBeforeOutro without a predicate behaves like addSlide', () => {
   const set = [s('1'), outro()];
   assert.deepEqual(addSlideBeforeOutro(set, s('new')).map(x => x.id), ['1', 'out', 'new']);
 });
+
+
+// ---- A replaced frame is a different picture ----
+
+test('updateSlideFrame drops the correction with the old pixels', () => {
+  // A brighten set for a night scene, or a zoom framed on one shot's title
+  // card, is nonsense on the picture that replaces it — pasting an image into
+  // a zoomed slide came back zoomed, which reads as the app acting on its own.
+  const set = [{ id: '1', caption: 'a', adjust: { brightness: 1.2, zoom: 1.35 } }];
+  const next = updateSlideFrame(set, '1', 'newBitmap', 12.5);
+  assert.equal(next[0].adjust, null);
+  assert.equal(next[0].bitmap, 'newBitmap');
+  assert.equal(next[0].timecode, 12.5);
+  assert.equal(next[0].caption, 'a', 'everything else survives');
+  assert.deepEqual(set[0].adjust, { brightness: 1.2, zoom: 1.35 }, 'input untouched');
+});
+
+test('updateSlideFrame leaves other slides alone', () => {
+  const set = [
+    { id: '1', adjust: { zoom: 1.2 } },
+    { id: '2', adjust: { zoom: 1.35 } },
+  ];
+  const next = updateSlideFrame(set, '1', 'bmp', 1);
+  assert.equal(next[0].adjust, null);
+  assert.deepEqual(next[1].adjust, { zoom: 1.35 }, 'the slide that was not re-framed keeps its own');
+});

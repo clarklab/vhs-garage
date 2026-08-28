@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  AUTOPILOT_COUNT, QUOTES_COUNT, buildAutopilotPrompt, buildQuotesPrompt, buildTitleSlidePrompt,
+  AUTOPILOT_COUNT, QUOTES_COUNT, QUOTES_POOL, buildAutopilotPrompt, buildQuotesPrompt, buildTitleSlidePrompt,
   normalizeSuggestions, applyCueSeek, normalizeMeta, META_HOOK_MAX,
   clampText, CAPTION_TARGET, CAPTION_MAX, META_HOOK_TARGET,
 } from '../../netlify/functions/lib/autopilot.mjs';
@@ -487,4 +487,27 @@ test('normalizeSuggestions keeps seek times when durationSeconds is 0', () => {
     suggestions: [{ caption: "I'll be back.", timecode: 0, start: 72, end: 76 }],
   }, 0, 8);
   assert.equal(out[0].timecode, 73);
+});
+
+
+// ---- A Quote-a-long is twelve quotes between a title card and a sign-off ----
+
+test('a default Quote-a-long asks for 12 quotes plus a title slide', () => {
+  const p = buildQuotesPrompt({
+    title: 'The Princess Bride', year: 1987, durationSeconds: 5000,
+    quotes: [{ text: 'Inconceivable!', votes: 900 }],
+    includeTitleSlide: true,
+  });
+  assert.equal(QUOTES_COUNT, 12);
+  assert.match(p, /12 quote slides/, 'the title-slide rule counts the quotes');
+  // 12 quotes + title card + the sign-off the client appends = 14 slides.
+  assert.ok(QUOTES_COUNT + 2 <= 35, 'still inside the TikTok slide cap');
+});
+
+test('the quote pool is deeper than the number of quotes asked for', () => {
+  // Picking 12 of 12 is not picking. The model needs room to leave the weak
+  // ones behind.
+  assert.ok(QUOTES_POOL >= QUOTES_COUNT * 2, `pool ${QUOTES_POOL} vs count ${QUOTES_COUNT}`);
+  const p = buildQuotesPrompt({ title: 'X', quotes: [{ text: 'a', votes: 1 }] });
+  assert.match(p, new RegExp(`top ${QUOTES_POOL}`), 'and the prompt says how deep it is');
 });

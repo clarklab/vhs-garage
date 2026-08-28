@@ -697,15 +697,6 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
                   <input id="pair-arm" type="checkbox" class="accent-rose-500" />
                   <span id="pair-arm-label">Add 2nd frame</span>
                 </label>
-                <div class="relative">
-                  <button id="adjust-btn" disabled title="Brighten or correct the grabbed frame"
-                          class="flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-2 text-sm font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
-                    <span class="material-symbols-outlined text-[18px] leading-none">exposure</span>
-                    <span id="adjust-label">Adjust</span>
-                    <span class="material-symbols-outlined text-[16px] leading-none">expand_more</span>
-                  </button>
-                  <div id="adjust-menu" class="absolute right-0 z-30 mt-1 hidden w-64 overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 py-1 shadow-xl"></div>
-                </div>
                 <button id="grab-btn" class="flex items-center gap-1 rounded-lg bg-red-600 px-4 py-2 font-bold text-white hover:bg-red-500 disabled:opacity-40">
                   <span id="grab-icon" class="material-symbols-outlined text-[20px] leading-none">photo_camera</span>
                   <span id="grab-label">Grab frame</span>
@@ -940,6 +931,11 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
             <span id="subs-note-text"></span>
           </div>
           <ol id="slide-list" class="flex flex-col gap-2"></ol>
+          <!-- Correction menu. Moved into the slide row that opens it, so it can
+               only ever act on the slide you can see it hanging off. -->
+          <div id="adjust-home" class="hidden">
+            <div id="adjust-menu" class="absolute left-0 z-30 mt-1 hidden w-64 overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 py-1 shadow-xl"></div>
+          </div>
         </section>
       </main>
 

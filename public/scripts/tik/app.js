@@ -9,7 +9,7 @@ import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, 
 // used it (the hashtag panel) now goes through reports.js loadPosts().
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory } from './auth.js';
 import { publishSlideshow } from './publish.js';
-import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot, fetchQuotesPost, fetchImdbQuotes, fetchSubtitles, fetchFreeform, QUOTES_COUNT } from './autopilot.js';
+import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot, fetchQuotesPost, fetchImdbQuotes, fetchSubtitles, fetchFreeform, QUOTES_COUNT, QUOTES_POOL } from './autopilot.js';
 import { fontScaleForQuote } from './caption.js';
 import { parseMovieName } from './filename.js';
 import { composeToCanvas, composeSlide, captionFontReady, quoteStampReady, wantsQuoteStamp, clampStampNudge, canNudgeStamp } from './compose.js';
@@ -64,7 +64,7 @@ const els = {
   back: $('back-btn'), formatChip: $('format-chip'), projectName: $('project-name'),
   download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
   statusChip: $('status-chip'), toast: $('toast'), toastBody: $('toast-body'),
-  adjustBtn: $('adjust-btn'), adjustMenu: $('adjust-menu'), adjustLabel: $('adjust-label'),
+  adjustMenu: $('adjust-menu'), adjustHome: $('adjust-home'),
   pairArmWrap: $('pair-arm-wrap'), pairArm: $('pair-arm'), pairArmLabel: $('pair-arm-label'),
   subsNote: $('subs-note'), subsNoteText: $('subs-note-text'),
   cadenceCard: $('cadence-card'), cadenceGhost: $('cadence-ghost'), cadenceLive: $('cadence-live'),
@@ -417,7 +417,7 @@ function enterEditor() {
   applyFormatUI();
   renderStatusChip();
   renderSubsNote();
-  syncAdjustButton();
+  syncGrabControls();
   els.projectName.value = project.name || '';
   els.postTitleInput.value = project.postTitle || '';
   els.postDescInput.value = project.postDesc || '';
@@ -1025,7 +1025,7 @@ function canPairSlide(slide) {
 let pairArmed = false;
 
 function syncPairArm() {
-  const slide = adjustTarget();
+  const slide = grabTarget();
   const usable = !!(project?.format === 'quotes' && slide && canPairSlide(slide) && slide.bitmap);
   els.pairArmWrap.classList.toggle('hidden', !usable);
   els.pairArmWrap.classList.toggle('flex', usable);
@@ -1039,7 +1039,7 @@ function syncPairArm() {
 
 els.pairArm.addEventListener('change', () => {
   pairArmed = els.pairArm.checked;
-  const slide = adjustTarget();
+  const slide = grabTarget();
   if (pairArmed) {
     els.status.textContent = slide?.pairFrames?.length
       ? 'Next grab replaces the second frame.'
@@ -1084,11 +1084,15 @@ async function togglePairLayout(id) {
 // Films are dark. A grabbed still often needs a lift before a caption sits on
 // it legibly, and doing that here beats re-grabbing and hoping.
 //
-// The target is whichever slide the editor is pointed at: the one being
-// re-framed if you clicked its preview, otherwise the one Grab frame just
-// appended. Correction is stored on the slide as multipliers rather than baked
-// into the pixels, so every step is reversible and repeatable.
-function adjustTarget() {
+// Correction is stored on the slide as multipliers rather than baked into the
+// pixels, so every step is reversible and repeatable — and it is applied from
+// the slide's own row, never from a toolbar that has to guess which slide is
+// meant. Guessing is what made a zoom land on a slide the user was not looking
+// at, and made the reset appear not to work: both hit the last slide in the set.
+//
+// This one still guesses, and has to: it answers "which slide will the next
+// GRAB act on", which is a question about a button that has no slide of its own.
+function grabTarget() {
   if (editingId) return slides.find((s) => s.id === editingId) || null;
   return slides.length ? slides[slides.length - 1] : null;
 }
@@ -1123,26 +1127,29 @@ function measureLevels(bitmap) {
   return { black: at(0.01), white: at(0.99) };
 }
 
-function syncAdjustButton() {
+// The pair checkbox is the only frame control left in the video toolbar, and it
+// is about the NEXT grab, not about a slide. Correction moved to the slides.
+function syncGrabControls() {
   syncPairArm();
-  const target = adjustTarget();
-  const movieFormat = isMovieFileFormat();
-  els.adjustBtn.disabled = !movieFormat || !target;
-  const summary = target ? describeAdjust(target.adjust) : '';
-  els.adjustLabel.textContent = summary || 'Adjust';
-  els.adjustBtn.classList.toggle('text-amber-300', !!summary);
-  els.adjustBtn.title = !movieFormat || !target
-    ? 'Grab a frame first'
-    : summary
-      ? `This frame: ${summary}. Reset from the menu.`
-      : 'Brighten or correct this frame';
 }
 
-function closeAdjustMenu() { els.adjustMenu.classList.add('hidden'); }
+// Which slide the open correction menu belongs to. Set when a slide's own
+// Adjust button opens it, and null the rest of the time — there is no such
+// thing as adjusting without a slide in hand.
+let adjustSlideId = null;
+let adjustOpenBtn = null;
 
-function renderAdjustMenu() {
+function closeAdjustMenu() {
+  els.adjustMenu.classList.add('hidden');
+  // Back to its home before the next render tears the slide list down and
+  // takes the menu with it.
+  if (els.adjustMenu.parentElement !== els.adjustHome) els.adjustHome.appendChild(els.adjustMenu);
+  adjustSlideId = null;
+  adjustOpenBtn = null;
+}
+
+function renderAdjustMenu(target) {
   els.adjustMenu.innerHTML = '';
-  const target = adjustTarget();
   for (const preset of PRESETS) {
     const item = document.createElement('button');
     item.type = 'button';
@@ -1154,42 +1161,49 @@ function renderAdjustMenu() {
     hint.className = 'block text-[11px] leading-snug text-neutral-500';
     hint.textContent = preset.hint;
     item.append(label, hint);
-    if (preset.key === 'reset' && target && isNeutral(target.adjust)) item.disabled = true;
+    if (preset.key === 'reset' && isNeutral(target.adjust)) item.disabled = true;
     if (item.disabled) item.classList.add('opacity-40');
-    else item.addEventListener('click', () => applyAdjust(preset.key));
+    else item.addEventListener('click', () => applyAdjust(target.id, preset.key));
     els.adjustMenu.appendChild(item);
   }
 }
 
-function applyAdjust(key) {
-  const target = adjustTarget();
+function applyAdjust(id, key) {
+  const target = slides.find((s) => s.id === id);
   if (!target) return;
   // Auto is the only one that has to look at the picture.
   const levels = key === 'auto' ? autoLevels(measureLevels(target.bitmap)) : null;
   const next = applyPreset(target.adjust || NEUTRAL, key, levels);
-  slides = slides.map((s) => (s.id === target.id ? { ...s, adjust: next, blob: null } : s));
+  slides = slides.map((s) => (s.id === id ? { ...s, adjust: next, blob: null } : s));
   closeAdjustMenu();
   render();
-  syncAdjustButton();
   markDirty();
   const summary = describeAdjust(next);
+  const which = `Slide ${slides.findIndex((s) => s.id === id) + 1}`;
   els.status.textContent = summary
-    ? `Frame corrected: ${summary}.`
-    : 'Frame back to how it was grabbed.';
+    ? `${which} corrected: ${summary}.`
+    : `${which} back to how it was grabbed.`;
 }
 
-els.adjustBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  if (els.adjustBtn.disabled) return;
-  const open = els.adjustMenu.classList.contains('hidden');
-  if (open) { renderAdjustMenu(); els.adjustMenu.classList.remove('hidden'); }
-  else closeAdjustMenu();
-});
+// Hang the menu off this slide's own button. One menu element, moved to
+// whichever row asked for it, so it can only ever act on the slide it is
+// visibly attached to.
+function openAdjustMenu(target, btn, wrap) {
+  const reopen = adjustSlideId === target.id && !els.adjustMenu.classList.contains('hidden');
+  closeAdjustMenu();
+  if (reopen) return;
+  adjustSlideId = target.id;
+  adjustOpenBtn = btn;
+  renderAdjustMenu(target);
+  wrap.appendChild(els.adjustMenu);
+  els.adjustMenu.classList.remove('hidden');
+}
+
 // Same lesson as the batch search box: a menu that will not close is its own
 // bug, and pointerdown does not depend on focus behaving.
 document.addEventListener('pointerdown', (e) => {
   if (els.adjustMenu.classList.contains('hidden')) return;
-  if (els.adjustMenu.contains(e.target) || els.adjustBtn.contains(e.target)) return;
+  if (els.adjustMenu.contains(e.target) || adjustOpenBtn?.contains(e.target)) return;
   closeAdjustMenu();
 });
 
@@ -1621,7 +1635,7 @@ els.grab.addEventListener('click', async () => {
     const bitmap = await grabFrame(els.video);
 
     // Opted in for this grab only: keep what is there and put this beside it.
-    const pairTarget = pairArmed ? adjustTarget() : null;
+    const pairTarget = pairArmed ? grabTarget() : null;
     if (pairTarget && canPairSlide(pairTarget) && pairTarget.bitmap) {
       pairArmed = false;
       els.pairArm.checked = false;
@@ -1633,7 +1647,7 @@ els.grab.addEventListener('click', async () => {
       const layout = pairLayoutOf(pairTarget.pairLayout);
       if (await applyPair(pairTarget.id, [first, shot], layout)) {
         if (editingId === pairTarget.id) exitEdit(); else render();
-        syncAdjustButton();
+        syncGrabControls();
         markDirty();
         els.status.textContent = `Two frames on this slide, ${PAIR_LAYOUT_LABELS[layout].toLowerCase()}. Use the slide's own button to switch.`;
       }
@@ -1646,14 +1660,14 @@ els.grab.addEventListener('click', async () => {
       // which is also the only way back to a single frame.
       slides = slides.map((s) => (s.id === editingId ? { ...s, blob: null, pairFrames: null, pairLayout: null } : s));
       exitEdit();
-      syncAdjustButton();
+      syncGrabControls();
       els.status.textContent = 'Frame updated.';
     } else {
       if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
       // Same rule as the Add button: a new frame belongs before the sign-off.
       slides = addSlideBeforeOutro(slides, { id: String(nextId++), bitmap, blob: null, caption: '', timecode: els.video.currentTime, fontScale: 1 }, isOutroSlide);
       render();
-      syncAdjustButton();
+      syncGrabControls();
     }
     markDirty();
   } catch (err) { console.error('[tik] grab failed:', err); els.status.textContent = err.message; }
@@ -1683,7 +1697,7 @@ els.autopilot.addEventListener('click', async () => {
       // message overwrites. A whole set of guessed timecodes with no
       // explanation anywhere is how a broken install passes for a bad matcher.
       project.subsError = subMissing ? (subs.error || 'Subtitle lookup failed') : null;
-      const pool = pack.quotes.slice(0, 20);
+      const pool = pack.quotes.slice(0, QUOTES_POOL);
       const result = await fetchQuotesPost({
         title: movie.title || movie.query,
         year: movie.year,
@@ -1790,7 +1804,7 @@ els.addManual.addEventListener('click', async () => {
       id, bitmap, blob: null, caption: '', timecode: els.video.currentTime, grabHint: '', fontScale: 1,
     }, isOutroSlide);
     render();
-    syncAdjustButton();
+    syncGrabControls();
     markDirty();
     focusSlideCaption(id);
     els.status.textContent = quotes
@@ -2506,7 +2520,7 @@ async function enterEdit(id) {
   els.grabLabel.textContent = 'Save frame';
   els.cancelEdit.classList.remove('hidden');
   render(); // apply the highlight
-  syncAdjustButton(); // the menu now points at this slide
+  syncGrabControls(); // the menu now points at this slide
   if (isMovieFileFormat()) {
     els.status.textContent = slide.grabHint
       ? `Editing — GRAB: ${slide.grabHint}  (or paste/drop an image)`
@@ -2525,7 +2539,7 @@ function resetEditState() {
   els.grabLabel.textContent = 'Grab frame';
   els.cancelEdit.classList.add('hidden');
   closeAdjustMenu();
-  syncAdjustButton();
+  syncGrabControls();
 }
 function exitEdit() { resetEditState(); render(); }
 els.cancelEdit.addEventListener('click', () => { exitEdit(); els.status.textContent = 'Edit cancelled.'; });
@@ -2561,7 +2575,7 @@ async function setMosaicPhotos(id, blobs) {
     if (project?.id !== ticket) return; // navigated away mid-decode/compose
     const old = slide.bitmap;
     slides = slides.map((s) => (s.id === id
-      ? { ...s, bitmap, blob: null, grabHint: '', timecode: undefined, mosaicPhotos: next }
+      ? { ...s, bitmap, blob: null, grabHint: '', timecode: undefined, mosaicPhotos: next, adjust: null }
       : s));
     old?.close?.();
     if (id === editingId) exitEdit(); else render();
@@ -2788,6 +2802,28 @@ function renderSlide(slide, index) {
     els.imgFile.click();
   });
 
+  // Brightness / contrast / centre zoom for THIS slide's frame.
+  //
+  // It used to live up by Grab frame, where it had to guess which slide was
+  // meant and guessed the last one in the set — so a zoom landed on a slide the
+  // user was not looking at, and the reset looked broken because it reset that
+  // same wrong slide. Here there is nothing to guess.
+  let adjustWrap = null;
+  if (movieFile) {
+    adjustWrap = document.createElement('div');
+    adjustWrap.className = 'relative';
+    const summary = describeAdjust(slide.adjust);
+    const adjustBtn = tbBtn('exposure', summary || '', summary
+      ? `This slide: ${summary}. Reset from the menu.`
+      : 'Brighten or zoom this slide\u2019s frame', summary ? 'text-amber-300' : '');
+    adjustBtn.disabled = !slide.bitmap;
+    adjustBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openAdjustMenu(slide, adjustBtn, adjustWrap);
+    });
+    adjustWrap.append(adjustBtn);
+  }
+
   // Font sizing (per slide): scales the caption up/down for the amount of text.
   const fontDown = tbBtn('text_decrease', '', 'Smaller caption');
   const fontUp = tbBtn('text_increase', '', 'Bigger caption');
@@ -2881,7 +2917,7 @@ function renderSlide(slide, index) {
     });
   }
 
-  toolbar.append(pickBtn, ...(photoSearch ? [photoSearch] : []), ...(pairBtn ? [pairBtn] : []), ...(insertBtn ? [insertBtn] : []), ...(stampUp ? [stampUp, stampDown] : []), fontDown, fontUp);
+  toolbar.append(pickBtn, ...(adjustWrap ? [adjustWrap] : []), ...(photoSearch ? [photoSearch] : []), ...(pairBtn ? [pairBtn] : []), ...(insertBtn ? [insertBtn] : []), ...(stampUp ? [stampUp, stampDown] : []), fontDown, fontUp);
 
   // The sign-off is house copy and format-agnostic (nextOutro knows what
   // "more" means per format), so Quote-a-long gets the swap too even though it
