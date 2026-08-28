@@ -101,12 +101,17 @@ const STAMP_MAX_FRAME_WIDTH = 0.96;    // and the same either side
 
 // High on the frame is right for most posters, but a poster's own title sits
 // wherever its designer put it, and on some of them the badge lands straight on
-// top of the lettering. So the height is nudgeable per slide: one step is 3% of
-// the frame, and the range stops well short of either edge (the size guard
-// above would only start shrinking the badge past that anyway).
+// top of the lettering. So the height is nudgeable per slide, 3% of the frame
+// per step.
+//
+// The step COUNT is not the limit — the frame is. The count only has to be
+// generous enough to reach both edges of any frame (0.38 ± 0.6 covers a full
+// frame either way); where the badge actually stops is the edge clamp below,
+// which is the only limit that means anything, since how far the badge can
+// travel depends on how tall the frame is and how big the badge is on it.
 export const STAMP_NUDGE_STEP = 0.03;
-export const STAMP_NUDGE_MIN = -6;   // 18% of the frame higher
-export const STAMP_NUDGE_MAX = 8;    // 24% lower — past centre, under a title
+export const STAMP_NUDGE_MIN = -20;
+export const STAMP_NUDGE_MAX = 20;
 
 export function clampStampNudge(n) {
   const v = Math.round(Number(n) || 0);
@@ -114,21 +119,40 @@ export function clampStampNudge(n) {
   return Math.min(STAMP_NUDGE_MAX, Math.max(STAMP_NUDGE_MIN, v));
 }
 
-// Where the badge's centre sits, as a fraction of the frame height.
+// Where the badge ends up, and whether it is against an edge.
 //
 // `halfHeightRatio` is half the badge's TILTED height over the frame height,
 // and it holds the badge inside the picture. Moving it must not RESIZE it —
 // sizing off the nudged position shrank the badge by 40% when it was pushed up
 // a 16:9 frame, so the size is settled first and the position gives way here.
-export function stampCenterY(nudge = 0, halfHeightRatio = 0) {
+//
+// atTop / atBottom are what the arrows go by: an arrow is dead when the badge
+// is against that edge, not when some step counter has run out.
+export function stampTravel(nudge = 0, halfHeightRatio = 0) {
   const raw = STAMP_CY_RATIO + clampStampNudge(nudge) * STAMP_NUDGE_STEP;
   const half = Math.min(0.5, Math.max(0, Number(halfHeightRatio) || 0));
-  return Math.min(1 - half, Math.max(half, raw));
+  const E = 1e-9;
+  return {
+    y: Math.min(1 - half, Math.max(half, raw)),
+    atTop: raw <= half + E,
+    atBottom: raw >= 1 - half - E,
+  };
 }
 
-// Would another step in this direction do anything? Drives the arrow buttons'
-// disabled state, so a dead arrow looks dead instead of ignoring clicks.
-export function canNudgeStamp(nudge, delta) {
+// Where the badge's centre sits, as a fraction of the frame height.
+export function stampCenterY(nudge = 0, halfHeightRatio = 0) {
+  return stampTravel(nudge, halfHeightRatio).y;
+}
+
+// Would another step in this direction do anything?
+//
+// `placement` is the stampTravel result from the last draw, when there is one:
+// the badge stops at the frame edge long before the step count runs out, and an
+// arrow that keeps clicking without moving anything reads as broken. Without it
+// this falls back to the step range, which is the safe direction — enabled.
+export function canNudgeStamp(nudge, delta, placement = null) {
+  if (placement && delta < 0 && placement.atTop) return false;
+  if (placement && delta > 0 && placement.atBottom) return false;
   return clampStampNudge(nudge) !== clampStampNudge(clampStampNudge(nudge) + delta);
 }
 
@@ -186,12 +210,13 @@ function drawQuoteStamp(ctx, frameX, frameY, frameW, frameH, nudge = 0) {
   const w = Math.min(frameW * STAMP_WIDTH_RATIO, roomX / boxW, roomY / boxH);
   const h = w * aspect;
   // Now place it: the nudge, stopped at whichever edge it reaches first.
-  const cy = frameH * stampCenterY(nudge, (w * boxH) / 2 / frameH);
+  const placement = stampTravel(nudge, (w * boxH) / 2 / frameH);
   ctx.save();
-  ctx.translate(frameX + cx, frameY + cy);
+  ctx.translate(frameX + cx, frameY + placement.y * frameH);
   ctx.rotate(STAMP_TILT_DEG * Math.PI / 180);
   ctx.drawImage(stamp, -w / 2, -h / 2, w, h);
   ctx.restore();
+  return placement;
 }
 
 // Left-align the caption pills instead of centring them.
@@ -303,7 +328,11 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   } else {
     drawFrame();
   }
-  if (wantsQuoteStamp({ format, kind })) drawQuoteStamp(ctx, frameX, frameY, F.w, F.h, stampNudge);
+  // Where the badge landed, for whoever drew this: the nudge arrows go dead at
+  // the frame edge, and only the draw knows where that edge is.
+  const stampPlacement = wantsQuoteStamp({ format, kind })
+    ? drawQuoteStamp(ctx, frameX, frameY, F.w, F.h, stampNudge)
+    : null;
 
   // Caption pills: white rounded pill per line, bold black centered text.
   // Blank lines (blank paragraph in the textarea) get no pill — just space.
@@ -332,6 +361,7 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
       y += pillH + PILL_GAP;
     }
   }
+  return { stamp: stampPlacement };
 }
 
 // Render to an offscreen canvas and return a JPEG Blob for upload.

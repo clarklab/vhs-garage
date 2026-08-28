@@ -2813,9 +2813,11 @@ function renderSlide(slide, index) {
     const at = () => clampStampNudge(slide.stampNudge);
     stampUp = tbBtn('keyboard_arrow_up', '', 'Move the Quote-a-long badge up', 'text-amber-300');
     stampDown = tbBtn('keyboard_arrow_down', '', 'Move the Quote-a-long badge down', 'text-amber-300');
-    const syncArrows = () => {
-      stampUp.disabled = !canNudgeStamp(at(), -1);
-      stampDown.disabled = !canNudgeStamp(at(), 1);
+    // How far the badge can go depends on the frame it is on, so the arrows go
+    // by where the last draw actually put it, not by a step count.
+    const syncArrows = (placement) => {
+      stampUp.disabled = !canNudgeStamp(at(), -1, placement);
+      stampDown.disabled = !canNudgeStamp(at(), 1, placement);
       stampUp.classList.toggle('opacity-40', stampUp.disabled);
       stampDown.classList.toggle('opacity-40', stampDown.disabled);
     };
@@ -2824,14 +2826,16 @@ function renderSlide(slide, index) {
       if (next === at()) return;
       slide.stampNudge = next; // keep the closure current for redraws
       slides = slides.map((x) => (x.id === slide.id ? { ...x, stampNudge: next } : x));
-      redrawThumb();
-      syncArrows();
+      const drawn = redrawThumb();
+      syncArrows(drawn?.stamp);
       markDirty();
       els.status.textContent = next === 0 ? 'Badge back at its default height.' : 'Badge moved.';
     };
     stampUp.addEventListener('click', () => nudgeStamp(-1));
     stampDown.addEventListener('click', () => nudgeStamp(1));
-    syncArrows();
+    // The badge may not have decoded yet on a first paint; a null placement
+    // leaves both arrows live, which is the harmless way to be wrong.
+    syncArrows(redrawThumb()?.stamp);
   }
 
   // Bring-your-own-image formats get a one-tap link to a Google image search for
