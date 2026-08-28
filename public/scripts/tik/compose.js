@@ -99,6 +99,39 @@ const STAMP_CY_RATIO = 0.38;
 const STAMP_MAX_FRAME_HEIGHT = 0.92;   // of the room it has above and below, so it never touches an edge
 const STAMP_MAX_FRAME_WIDTH = 0.96;    // and the same either side
 
+// High on the frame is right for most posters, but a poster's own title sits
+// wherever its designer put it, and on some of them the badge lands straight on
+// top of the lettering. So the height is nudgeable per slide: one step is 3% of
+// the frame, and the range stops well short of either edge (the size guard
+// above would only start shrinking the badge past that anyway).
+export const STAMP_NUDGE_STEP = 0.03;
+export const STAMP_NUDGE_MIN = -6;   // 18% of the frame higher
+export const STAMP_NUDGE_MAX = 8;    // 24% lower — past centre, under a title
+
+export function clampStampNudge(n) {
+  const v = Math.round(Number(n) || 0);
+  if (!Number.isFinite(v)) return 0;
+  return Math.min(STAMP_NUDGE_MAX, Math.max(STAMP_NUDGE_MIN, v));
+}
+
+// Where the badge's centre sits, as a fraction of the frame height.
+//
+// `halfHeightRatio` is half the badge's TILTED height over the frame height,
+// and it holds the badge inside the picture. Moving it must not RESIZE it —
+// sizing off the nudged position shrank the badge by 40% when it was pushed up
+// a 16:9 frame, so the size is settled first and the position gives way here.
+export function stampCenterY(nudge = 0, halfHeightRatio = 0) {
+  const raw = STAMP_CY_RATIO + clampStampNudge(nudge) * STAMP_NUDGE_STEP;
+  const half = Math.min(0.5, Math.max(0, Number(halfHeightRatio) || 0));
+  return Math.min(1 - half, Math.max(half, raw));
+}
+
+// Would another step in this direction do anything? Drives the arrow buttons'
+// disabled state, so a dead arrow looks dead instead of ignoring clicks.
+export function canNudgeStamp(nudge, delta) {
+  return clampStampNudge(nudge) !== clampStampNudge(clampStampNudge(nudge) + delta);
+}
+
 let stampPromise = null;
 let stamp = null;
 
@@ -122,7 +155,7 @@ export function quoteStampReady() {
   return stampPromise;
 }
 
-function drawQuoteStamp(ctx, frameX, frameY, frameW, frameH) {
+function drawQuoteStamp(ctx, frameX, frameY, frameW, frameH, nudge = 0) {
   if (!stamp) return;   // not decoded yet; the caller redraws when it is
   const aspect = stamp.height / stamp.width;
   const tilt = STAMP_TILT_DEG * Math.PI / 180;
@@ -142,14 +175,18 @@ function drawQuoteStamp(ctx, frameX, frameY, frameW, frameH) {
   // against the full height is what let it hang off the top of a scope frame;
   // now it is near enough the full width for the same trap to exist sideways.
   const cx = frameW * STAMP_CX_RATIO;
-  const cy = frameH * STAMP_CY_RATIO;
+  // Size is measured from the DEFAULT height, so a nudge moves the badge and
+  // nothing else. (Sizing off the nudged height shrank it on short frames.)
+  const cy0 = frameH * STAMP_CY_RATIO;
   const roomX = 2 * Math.min(cx, frameW - cx) * STAMP_MAX_FRAME_WIDTH;
-  const roomY = 2 * Math.min(cy, frameH - cy) * STAMP_MAX_FRAME_HEIGHT;
+  const roomY = 2 * Math.min(cy0, frameH - cy0) * STAMP_MAX_FRAME_HEIGHT;
   // Width and height of the TILTED box, per unit of art width.
   const boxW = cos + aspect * sin;
   const boxH = sin + aspect * cos;
   const w = Math.min(frameW * STAMP_WIDTH_RATIO, roomX / boxW, roomY / boxH);
   const h = w * aspect;
+  // Now place it: the nudge, stopped at whichever edge it reaches first.
+  const cy = frameH * stampCenterY(nudge, (w * boxH) / 2 / frameH);
   ctx.save();
   ctx.translate(frameX + cx, frameY + cy);
   ctx.rotate(STAMP_TILT_DEG * Math.PI / 180);
@@ -171,7 +208,7 @@ export function wantsLeftAlign({ format, kind, lines } = {}) {
   return (Array.isArray(lines) ? lines : []).filter((l) => String(l || '').trim()).length > 1;
 }
 
-export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null, format, kind, adjust = null } = {}) {
+export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null, format, kind, adjust = null, stampNudge = 0 } = {}) {
   const fs = Math.min(Math.max(Number(fontScale) || 1, 0.5), 1.6);
   const heightRatio = Number.isFinite(maxFrameHeightRatio)
     ? Math.min(Math.max(maxFrameHeightRatio, 0.05), 1)
@@ -266,7 +303,7 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   } else {
     drawFrame();
   }
-  if (wantsQuoteStamp({ format, kind })) drawQuoteStamp(ctx, frameX, frameY, F.w, F.h);
+  if (wantsQuoteStamp({ format, kind })) drawQuoteStamp(ctx, frameX, frameY, F.w, F.h, stampNudge);
 
   // Caption pills: white rounded pill per line, bold black centered text.
   // Blank lines (blank paragraph in the textarea) get no pill — just space.

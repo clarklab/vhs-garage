@@ -922,10 +922,17 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
             <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">
               Slides <span class="text-neutral-600">(<span id="slide-count">0</span>/35)</span>
             </h2>
-            <button id="add-scene" disabled title="Load a video first"
-                    class="flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
-              <span class="material-symbols-outlined text-[18px] leading-none">add</span> Add AI scene
-            </button>
+            <div class="flex items-center gap-2">
+              <button id="add-manual" disabled title="Load a video first"
+                      class="hidden items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
+                <span class="material-symbols-outlined text-[18px] leading-none">add</span>
+                <span id="add-manual-label">Add slide</span>
+              </button>
+              <button id="add-scene" disabled title="Load a video first"
+                      class="flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
+                <span class="material-symbols-outlined text-[18px] leading-none">auto_awesome</span> Add AI scene
+              </button>
+            </div>
           </div>
           <p id="slides-hint" class="text-[11px] leading-snug text-neutral-500"></p>
           <div id="subs-note" class="hidden items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] leading-snug text-amber-200/90">

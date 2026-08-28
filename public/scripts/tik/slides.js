@@ -13,6 +13,23 @@ export function addSlide(slides, slide) {
   return [...slides, slide];
 }
 
+// Add a slide to the END OF THE SET — which is not the end of the array when a
+// branded sign-off is sitting there. A hand-added slide appended after the
+// outro reads as a mistake in the finished post, and nobody wants to drag a
+// slide up one place every single time.
+//
+// Only the last slide is tested, because that is the only place the sign-off
+// ever lives; a set with no outro yet appends exactly as before. `isOutro` is
+// passed in so this file stays free of format knowledge.
+export function addSlideBeforeOutro(slides, slide, isOutro = () => false) {
+  if (!canAddSlide(slides)) return slides;
+  const last = slides.length - 1;
+  if (last >= 0 && isOutro(slides[last])) {
+    return [...slides.slice(0, last), slide, slides[last]];
+  }
+  return [...slides, slide];
+}
+
 export function removeSlide(slides, id) {
   return slides.filter(x => x.id !== id);
 }
