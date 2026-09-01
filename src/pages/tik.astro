@@ -627,6 +627,8 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
               <input id="file-input" type="file" accept="video/*"
                      class="mt-1 block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-red-600 file:px-3 file:py-2 file:font-semibold file:text-white hover:file:bg-red-500" />
             </label>
+            <!-- Filled in by app.js when a picked file won't open at all. -->
+            <div id="file-fix" class="hidden"></div>
             <p id="video-note" class="hidden text-[11px] leading-snug text-amber-300/80">
               Slides intact. Re-pick the file to grab new frames.
             </p>
@@ -952,16 +954,9 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
             </div>
             <video id="clip-preview" class="hidden w-full max-w-[240px] self-start rounded-lg border border-neutral-800 bg-black" controls playsinline></video>
             <p id="clip-note" class="text-[11px] leading-snug text-neutral-500"></p>
-            <!-- Shown only when the film's audio won't decode: the one command
-                 that fixes it, with this film's actual name already in it. -->
-            <div id="clip-fix" class="hidden flex-col gap-1 rounded-lg border border-neutral-800 bg-black/50 p-2">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Re-encode the audio (the video is copied, so it's quick)</span>
-                <button id="clip-fix-copy" class="flex-none rounded-md bg-neutral-800 px-2 py-1 text-[11px] font-semibold text-neutral-200 hover:bg-neutral-700">Copy</button>
-              </div>
-              <code id="clip-fix-cmd" class="block overflow-x-auto whitespace-pre text-[11px] leading-relaxed text-emerald-300"></code>
-              <span class="text-[10px] text-neutral-600">No ffmpeg? <code class="text-neutral-500">brew install ffmpeg</code></span>
-            </div>
+            <!-- Filled in by app.js when the film's audio won't decode: the
+                 one command that fixes it, with this film's name in it. -->
+            <div id="clip-fix" class="hidden"></div>
           </div>
           <div id="subs-note" class="hidden items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] leading-snug text-amber-200/90">
             <span class="material-symbols-outlined mt-px flex-none text-[15px] leading-none">warning</span>

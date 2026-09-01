@@ -25,7 +25,9 @@ import { storageAvailable, putProject, getProject, listProjects, deleteProject }
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
 import { composePair, pairLayoutOf, otherLayout, PAIR_LAYOUT_LABELS } from './pair.js';
-import { planClip, recordClip, describePlan, silenceReason, probeFilmAudio, ffmpegAacCommand, NO_FILM_AUDIO_NOTE, CLIP_FPS } from './clip.js';
+import { planClip, recordClip, describePlan, silenceReason, probeFilmAudio, NO_FILM_AUDIO_NOTE, CLIP_FPS } from './clip.js';
+import { ffmpegAacCommand, ffmpegH264Command, NO_DECODE_NOTE } from './ffmpeg.js';
+import { fixNote } from './fixnote.js';
 import {
   parseImdbList, toRatedEntries, imdbSearchUrl, formatVotes,
   parseGrossList, toGrossEntries, boxOfficeMojoUrl, formatGross,
@@ -116,7 +118,7 @@ const els = {
   clipBar: $('clip-bar'), outSlides: $('out-slides'), outVideo: $('out-video'), clipPlan: $('clip-plan'),
   clipControls: $('clip-controls'), clipRender: $('clip-render'), clipCancel: $('clip-cancel'),
   clipDownload: $('clip-download'), clipPreview: $('clip-preview'), clipNote: $('clip-note'),
-  clipFix: $('clip-fix'), clipFixCmd: $('clip-fix-cmd'), clipFixCopy: $('clip-fix-copy'),
+  clipFix: $('clip-fix'), fileFix: $('file-fix'),
   imgFile: $('img-file-input'),
 };
 
@@ -1626,12 +1628,22 @@ els.file.addEventListener('change', async (e) => {
     els.projectName.value = movie.query;
   }
   syncPostDefaults();
+  showFix(els.fileFix, null); // a new pick clears the last file's complaint
   try {
     await loadVideoFile(file, els.video);
     els.status.textContent = `Loaded ${movie.query}. Scrub and grab frames, or run Autopilot.`;
   } catch (err) {
     console.error('[tik] failed to load video file:', err);
     els.status.textContent = err.message;
+    // Same deal as the Shoot page: a file the browser cannot open is a codec,
+    // not a mystery, so hand over the command that makes a copy it can read.
+    if (/can.t decode/i.test(err.message)) {
+      showFix(els.fileFix, {
+        note: NO_DECODE_NOTE,
+        label: 'Re-encode it (both streams, so give it a while)',
+        command: ffmpegH264Command(file.name),
+      });
+    }
   }
   markDirty();
 });
@@ -3220,6 +3232,15 @@ function releaseClip() {
   els.clipDownload.removeAttribute('href');
 }
 
+// Put a fix-up command in `host`, or clear it. `spec` is falsy when there is
+// nothing wrong, which is the common case.
+function showFix(host, spec) {
+  host.innerHTML = '';
+  host.classList.toggle('hidden', !spec);
+  if (!spec) return;
+  host.append(fixNote(spec));
+}
+
 function syncClipBar() {
   const quotes = project?.format === 'quotes';
   els.clipBar.classList.toggle('hidden', !quotes);
@@ -3240,8 +3261,7 @@ function syncClipBar() {
 
   if (!video) {
     els.clipNote.textContent = 'Slides: the usual photo post.';
-    els.clipFix.classList.add('hidden');
-    els.clipFix.classList.remove('flex');
+    showFix(els.clipFix, null);
     return;
   }
   if (clipAbort) return; // the recorder owns the note while it runs
@@ -3252,9 +3272,10 @@ function syncClipBar() {
   // before there are any slides to plan.
   const noAudio = filmAudio === 'no';
   if (noAudio) notes.push(NO_FILM_AUDIO_NOTE);
-  els.clipFix.classList.toggle('hidden', !noAudio);
-  els.clipFix.classList.toggle('flex', noAudio);
-  if (noAudio) els.clipFixCmd.textContent = ffmpegAacCommand(filmFileName);
+  showFix(els.clipFix, noAudio && {
+    label: 'Re-encode the audio (the video is copied, so it’s quick)',
+    command: ffmpegAacCommand(filmFileName),
+  });
   if (!videoReady) {
     notes.push('Load the movie file to cut the clip from it.');
     els.clipNote.textContent = notes.join(' ');
@@ -3363,31 +3384,6 @@ els.clipRender.addEventListener('click', async () => {
     els.clipCancel.classList.add('hidden');
     syncClipBar();
     updatePostButton();
-  }
-});
-
-els.clipFixCopy.addEventListener('click', async () => {
-  const cmd = els.clipFixCmd.textContent || '';
-  try {
-    await navigator.clipboard.writeText(cmd);
-    els.clipFixCopy.textContent = 'Copied';
-    setTimeout(() => { els.clipFixCopy.textContent = 'Copy'; }, 1600);
-  } catch (e) {
-    // Clipboard access can be refused (an unfocused tab, a permissions policy).
-    // Select the command instead, so the keyboard shortcut is one press away
-    // rather than a drag across a line of shell.
-    console.warn('[tik] clipboard refused the command; selecting it instead:', e);
-    try {
-      const range = document.createRange();
-      range.selectNodeContents(els.clipFixCmd);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-    } catch (e2) {
-      console.warn('[tik] could not select the command either:', e2);
-    }
-    els.clipFixCopy.textContent = 'Press ⌘C';
-    setTimeout(() => { els.clipFixCopy.textContent = 'Copy'; }, 2500);
   }
 });
 

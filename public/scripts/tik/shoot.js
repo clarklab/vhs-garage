@@ -18,6 +18,8 @@
 
 import { grabVerifiedFrame, grabSettledFrame } from './vision.js';
 import { loadVideoFile } from './capture.js';
+import { ffmpegH264Command, NO_DECODE_NOTE } from './ffmpeg.js';
+import { fixNote } from './fixnote.js';
 import {
   fsSupported, setMoviesFolder, getMoviesFolder, armHandle, pickMovieFile,
   indexFolder, invalidateFolderIndex, folderIndexInfo, loadFolderIndex,
@@ -171,6 +173,9 @@ async function loadDrafts() {
       state: old?.state === 'done' ? 'done' : (old?.state || 'idle'),
       file: old?.file || null,
       detail: old?.detail || '',
+      // Carried like `detail`: a rebuild of the list must not quietly drop the
+      // reason a row failed, and the fix-up command that goes with it.
+      undecodable: old?.undecodable || false,
       done: old?.done || 0,
     };
   });
@@ -211,6 +216,7 @@ async function pickFor(row) {
   row.state = 'picked';
   row.file = { name: picked.file.name, load: async () => picked.handle.getFile() };
   row.detail = `${picked.file.name} (remembered)`;
+  row.undecodable = false;
   render();
 }
 
@@ -244,6 +250,9 @@ async function shootAll() {
         console.error(`[tik-shoot] could not open ${row.name}: ${e.message}`, e);
         row.state = 'failed';
         row.detail = e.message;
+        // A file the browser cannot open is not a mystery and not the user's
+        // fault; the row carries the fix rather than just the complaint.
+        row.undecodable = /can.t decode/i.test(e.message);
         render();
         continue;
       }
@@ -432,6 +441,18 @@ function render() {
     detail.title = r.detail || '';
 
     li.append(dot, name, state, detail);
+
+    if (r.undecodable && r.file) {
+      // Full width under the row: why it would not open, and the command that
+      // makes a copy this browser can read.
+      const fix = fixNote({
+        note: NO_DECODE_NOTE,
+        label: 'Re-encode it (both streams, so give it a while)',
+        command: ffmpegH264Command(r.file.name),
+      });
+      fix.classList.add('mt-1');
+      li.append(fix);
+    }
 
     if (r.state !== 'done' && r.state !== 'shooting') {
       const pick = document.createElement('button');
