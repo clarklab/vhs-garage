@@ -125,6 +125,8 @@ export function makeProject({ id, format, now }) {
     movie: null,               // { title, year, query } parsed from the filename
     titleOn: false,
     titleLine: '',
+    // Quote-a-long:
+    output: 'slides',          // 'slides' | 'video' — a clip cut from the movie file
     // Freeform:
     topic: '',                 // the brief the whole set was written from
     freeformCount: null,       // how many slides were asked for

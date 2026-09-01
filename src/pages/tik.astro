@@ -607,7 +607,8 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
           <span class="material-symbols-outlined text-[18px] leading-none">download</span> Download
         </button>
         <button id="post-btn" disabled class="flex items-center gap-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-500 disabled:opacity-40">
-          <span class="material-symbols-outlined text-[18px] leading-none">upload</span> Post to TikTok
+          <span class="material-symbols-outlined text-[18px] leading-none">upload</span>
+          <span id="post-label">Post to TikTok</span>
         </button>
       </div>
       <p id="post-status" class="min-h-5 pb-2 text-xs text-neutral-400"></p>
@@ -926,6 +927,32 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
             </div>
           </div>
           <p id="slides-hint" class="text-[11px] leading-snug text-neutral-500"></p>
+
+          <!-- Quote-a-long only: post the set as slides, or as one clip cut
+               from the movie file at the same timecodes. -->
+          <div id="clip-bar" class="hidden flex-col gap-2 rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-[11px] font-semibold uppercase tracking-[0.15em] text-neutral-500">Post as</span>
+              <div class="inline-flex overflow-hidden rounded-lg border border-neutral-800">
+                <button id="out-slides" class="px-3 py-1.5 text-xs font-semibold">Slides</button>
+                <button id="out-video" class="px-3 py-1.5 text-xs font-semibold">Video</button>
+              </div>
+              <span id="clip-plan" class="text-[11px] tabular-nums text-neutral-500"></span>
+            </div>
+            <div id="clip-controls" class="hidden flex-wrap items-center gap-2">
+              <button id="clip-render"
+                      class="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-500 disabled:opacity-40">
+                <span class="material-symbols-outlined text-[16px] leading-none">movie</span> Render clip
+              </button>
+              <button id="clip-cancel" class="hidden rounded-lg bg-neutral-800 px-3 py-1.5 text-xs hover:bg-neutral-700">Cancel</button>
+              <a id="clip-download" download
+                 class="hidden items-center gap-1 rounded-lg border border-neutral-700 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800">
+                <span class="material-symbols-outlined text-[16px] leading-none">download</span> Download
+              </a>
+            </div>
+            <video id="clip-preview" class="hidden w-full max-w-[240px] self-start rounded-lg border border-neutral-800 bg-black" controls playsinline></video>
+            <p id="clip-note" class="text-[11px] leading-snug text-neutral-500"></p>
+          </div>
           <div id="subs-note" class="hidden items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] leading-snug text-amber-200/90">
             <span class="material-symbols-outlined mt-px flex-none text-[15px] leading-none">warning</span>
             <span id="subs-note-text"></span>
