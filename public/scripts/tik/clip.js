@@ -199,6 +199,50 @@ function peakNow(meter, scratch) {
   return peak;
 }
 
+// Does this browser decode the film's audio at all?
+//
+// Answered by playing a moment of it MUTED and watching the decoder's byte
+// counter. Muted playback needs no user gesture and makes no sound, and the
+// counter counts decoding rather than loudness — so a stretch of silence still
+// registers, and only an audio track the browser cannot decode reads as zero.
+// The playhead is put back where it was.
+//
+// Returns 'yes' | 'no' | 'unknown' ('unknown' when the browser keeps no such
+// counter, which is not the same as "no audio").
+export async function probeFilmAudio(video, { ms = 450 } = {}) {
+  if (!video || video.readyState < 2) return 'unknown';
+  if (typeof video.webkitAudioDecodedByteCount !== 'number') return 'unknown';
+  const wasMuted = video.muted;
+  const wasTime = video.currentTime;
+  const wasPaused = video.paused;
+  const before = video.webkitAudioDecodedByteCount;
+  try {
+    video.muted = true;
+    await video.play();
+    await new Promise((r) => setTimeout(r, ms));
+  } catch (e) {
+    console.warn('[tik] could not probe the film for audio:', e);
+    return 'unknown';
+  } finally {
+    if (wasPaused) { try { video.pause(); } catch { /* fine */ } }
+    try { video.currentTime = wasTime; } catch { /* fine */ }
+    video.muted = wasMuted;
+  }
+  const decoded = video.webkitAudioDecodedByteCount - before;
+  if (decoded > 0) return 'yes';
+  console.warn('[tik] this film decoded no audio in this browser; a clip cut from it will be silent', {
+    // The usual cause, and the one worth naming in the log for later.
+    likely: 'AC-3 / E-AC-3 / DTS audio, which Chrome does not decode',
+  });
+  return 'no';
+}
+
+// The line to show when a film will not give up its audio.
+export const NO_FILM_AUDIO_NOTE =
+  'Heads up: this browser decodes no audio from this film, so a clip cut from it will be silent — '
+  + 'the audio track is almost certainly AC-3, E-AC-3 or DTS, which Chrome can’t play even though the '
+  + 'film has perfectly good sound elsewhere. A copy with AAC audio records fine.';
+
 // Can this browser decode the film's audio at all?
 //
 // Most movie rips carry AC-3, E-AC-3 or DTS, and Chrome decodes none of them:

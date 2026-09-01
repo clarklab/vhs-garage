@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  sceneWindow, planClip, pickClipMime, extensionForMime, describePlan, silenceReason,
+  sceneWindow, planClip, pickClipMime, extensionForMime, describePlan, silenceReason, NO_FILM_AUDIO_NOTE,
   PAD_BEFORE, PAD_AFTER, MIN_SCENE, MAX_SCENE, GUESS_SCENE, STILL_SECONDS, CLIP_MIME_CANDIDATES,
 } from '../../public/scripts/tik/clip.js';
 
@@ -184,4 +184,14 @@ test('an unknown decoder state still says something useful', () => {
   assert.match(msg, /silent/);
   assert.equal(silenceReason({}), silenceReason({ sound: 'silent', filmDecodedAudio: null }));
   assert.ok(silenceReason().length > 0, 'and never throws on nothing');
+});
+
+
+test('the pre-flight warning names the codecs and the way out', () => {
+  // Shown the moment a film loads, before anyone spends a render on it.
+  assert.match(NO_FILM_AUDIO_NOTE, /AC-3/);
+  assert.match(NO_FILM_AUDIO_NOTE, /DTS/);
+  assert.match(NO_FILM_AUDIO_NOTE, /AAC/);
+  // And it must not imply the film itself is broken — it plays fine elsewhere.
+  assert.match(NO_FILM_AUDIO_NOTE, /this browser|Chrome/);
 });

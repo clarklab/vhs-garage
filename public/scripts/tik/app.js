@@ -25,7 +25,7 @@ import { storageAvailable, putProject, getProject, listProjects, deleteProject }
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
 import { composePair, pairLayoutOf, otherLayout, PAIR_LAYOUT_LABELS } from './pair.js';
-import { planClip, recordClip, describePlan, silenceReason, CLIP_FPS } from './clip.js';
+import { planClip, recordClip, describePlan, silenceReason, probeFilmAudio, NO_FILM_AUDIO_NOTE, CLIP_FPS } from './clip.js';
 import {
   parseImdbList, toRatedEntries, imdbSearchUrl, formatVotes,
   parseGrossList, toGrossEntries, boxOfficeMojoUrl, formatGross,
@@ -163,6 +163,13 @@ els.video.addEventListener('loadedmetadata', () => {
   els.autopilot.disabled = aiBusy; // stay disabled if a job is mid-flight
   els.autopilot.title = '';
   render(); // updates the Add-scene button state
+  // Find out NOW whether a clip cut from this film could have sound, rather
+  // than after someone has spent a minute rendering a silent one. It plays a
+  // muted moment and puts the playhead back.
+  filmAudio = 'unknown';
+  probeFilmAudio(els.video)
+    .then((verdict) => { filmAudio = verdict; syncClipBar(); })
+    .catch((e) => console.warn('[tik] film audio probe failed:', e));
 });
 
 // One AI action at a time. Background jobs can run for minutes, so ALL the
@@ -3182,6 +3189,7 @@ els.postReset.addEventListener('click', () => {
 // and everything below is inert while it says 'slides'.
 
 let clip = null;          // { blob, url, mimeType, seconds } once rendered
+let filmAudio = 'unknown'; // 'yes' | 'no' | 'unknown' — can this browser decode the film's audio
 let clipStale = false;    // the set changed after the render
 let clipAbort = null;     // AbortController while recording
 
@@ -3229,9 +3237,22 @@ function syncClipBar() {
 
   if (!video) { els.clipNote.textContent = 'Slides: the usual photo post.'; return; }
   if (clipAbort) return; // the recorder owns the note while it runs
-  if (!videoReady) { els.clipNote.textContent = 'Load the movie file to cut the clip from it.'; return; }
-  if (!plan?.scenes) { els.clipNote.textContent = 'No quote slide has a timecode yet — run autopilot first.'; return; }
+
   const notes = [];
+  // First, and before anything about the set: it decides whether rendering is
+  // worth doing at all, and it is known the moment the film loads — long
+  // before there are any slides to plan.
+  if (filmAudio === 'no') notes.push(NO_FILM_AUDIO_NOTE);
+  if (!videoReady) {
+    notes.push('Load the movie file to cut the clip from it.');
+    els.clipNote.textContent = notes.join(' ');
+    return;
+  }
+  if (!plan?.scenes) {
+    notes.push('No quote slide has a timecode yet — run autopilot first.');
+    els.clipNote.textContent = notes.join(' ');
+    return;
+  }
   if (plan.skipped.length) notes.push(`${plan.skipped.length} slide${plan.skipped.length === 1 ? '' : 's'} skipped for having no timecode.`);
   if (plan.overlaps) notes.push(`${plan.overlaps} scene${plan.overlaps === 1 ? '' : 's'} overlap the one before — same footage twice, on purpose or not.`);
   if (plan.long) notes.push('Over three minutes — worth trimming.');
