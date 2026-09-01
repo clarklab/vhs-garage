@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  sceneWindow, planClip, pickClipMime, extensionForMime, describePlan,
+  sceneWindow, planClip, pickClipMime, extensionForMime, describePlan, silenceReason,
   PAD_BEFORE, PAD_AFTER, MIN_SCENE, MAX_SCENE, GUESS_SCENE, STILL_SECONDS, CLIP_MIME_CANDIDATES,
 } from '../../public/scripts/tik/clip.js';
 
@@ -150,4 +150,38 @@ test('a browser that records nothing says so instead of guessing', () => {
 test('every candidate is a type the recorder could be asked for', () => {
   for (const t of CLIP_MIME_CANDIDATES) assert.match(t, /^video\/(mp4|webm)/);
   assert.equal(extensionForMime(undefined), 'webm', 'defaults to the safe container');
+});
+
+
+// ---- Telling a silent clip apart from a silent film ----
+
+test('a clip with sound says nothing', () => {
+  assert.equal(silenceReason({ sound: 'recorded', filmDecodedAudio: true }), '');
+});
+
+test('a film whose audio the browser cannot decode is named as the cause', () => {
+  // The common one by far: rips carry AC-3 or DTS, Chrome decodes neither, and
+  // the film plays silently in the editor too.
+  const msg = silenceReason({ sound: 'silent', filmDecodedAudio: false });
+  assert.match(msg, /AC-3|DTS/);
+  assert.match(msg, /AAC/, 'and says what fixes it');
+});
+
+test('a decoding film that still records silent is called a bug', () => {
+  // The two cases must not wear the same message: this one is ours.
+  const msg = silenceReason({ sound: 'silent', filmDecodedAudio: true });
+  assert.match(msg, /bug/);
+  assert.doesNotMatch(msg, /AC-3/);
+});
+
+test('an untapped film is its own answer', () => {
+  assert.match(silenceReason({ sound: 'untapped' }), /couldn’t be tapped/);
+});
+
+test('an unknown decoder state still says something useful', () => {
+  const msg = silenceReason({ sound: 'silent', filmDecodedAudio: null });
+  assert.ok(msg.length > 0);
+  assert.match(msg, /silent/);
+  assert.equal(silenceReason({}), silenceReason({ sound: 'silent', filmDecodedAudio: null }));
+  assert.ok(silenceReason().length > 0, 'and never throws on nothing');
 });
