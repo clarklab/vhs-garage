@@ -8,7 +8,7 @@ import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, 
 // getRefreshToken is no longer needed here: the only fetch in this file that
 // used it (the hashtag panel) now goes through reports.js loadPosts().
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory } from './auth.js';
-import { publishSlideshow } from './publish.js';
+import { publishSlideshow, publishClip } from './publish.js';
 import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot, fetchQuotesPost, fetchImdbQuotes, fetchSubtitles, fetchFreeform, QUOTES_COUNT, QUOTES_POOL } from './autopilot.js';
 import { fontScaleForQuote } from './caption.js';
 import { parseMovieName } from './filename.js';
@@ -25,6 +25,7 @@ import { storageAvailable, putProject, getProject, listProjects, deleteProject }
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
 import { composePair, pairLayoutOf, otherLayout, PAIR_LAYOUT_LABELS } from './pair.js';
+import { planClip, recordClip, describePlan, extensionForMime, CLIP_FPS } from './clip.js';
 import {
   parseImdbList, toRatedEntries, imdbSearchUrl, formatVotes,
   parseGrossList, toGrossEntries, boxOfficeMojoUrl, formatGross,
@@ -62,7 +63,7 @@ const els = {
   statsNote: $('stats-note'), statsPlot: $('stats-plot'), statsChart: $('stats-chart'), statsTip: $('stats-tip'),
   // editor bar
   back: $('back-btn'), formatChip: $('format-chip'), projectName: $('project-name'),
-  download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
+  download: $('download-btn'), post: $('post-btn'), postLabel: $('post-label'), status: $('post-status'),
   statusChip: $('status-chip'), toast: $('toast'), toastBody: $('toast-body'),
   adjustMenu: $('adjust-menu'), adjustHome: $('adjust-home'),
   pairArmWrap: $('pair-arm-wrap'), pairArm: $('pair-arm'), pairArmLabel: $('pair-arm-label'),
@@ -111,6 +112,10 @@ const els = {
   // slides pane
   count: $('slide-count'), list: $('slide-list'), addScene: $('add-scene'), slidesHint: $('slides-hint'),
   addManual: $('add-manual'), addManualLabel: $('add-manual-label'),
+  // Quote-a-long video format
+  clipBar: $('clip-bar'), outSlides: $('out-slides'), outVideo: $('out-video'), clipPlan: $('clip-plan'),
+  clipControls: $('clip-controls'), clipRender: $('clip-render'), clipCancel: $('clip-cancel'),
+  clipDownload: $('clip-download'), clipPreview: $('clip-preview'), clipNote: $('clip-note'),
   imgFile: $('img-file-input'),
 };
 
@@ -275,6 +280,13 @@ function setSaveState(state) {
 // Debounced autosave: call after ANY project/slide mutation.
 function markDirty() {
   if (!project) return;
+  // A rendered clip is a photograph of the set at one moment; any edit after it
+  // makes it a lie. Say so rather than posting yesterday's cut.
+  if (clip && !clipStale) clipStale = true;
+  // The clip plan is made of the slides, and captions change it — the sign-off
+  // is recognised BY its caption. This is the one hook every edit goes through.
+  syncClipBar();
+  updatePostButton();
   if (!storageAvailable()) return;
   dirty = true;
   setSaveState('saving');
@@ -333,6 +345,10 @@ async function teardownProject() {
   project = null;
   dirty = false;
   resetEditState();
+  // A rendered clip belongs to the project that was open; it is tens of
+  // megabytes and it is never right for the next one.
+  clipAbort?.abort();
+  releaseClip();
   pickTargetId = null;
   editingId = null;
   videoReady = false;
@@ -549,6 +565,7 @@ function applyFormatUI() {
   els.addManual.title = f.key === 'quotes'
     ? 'Add a slide at this frame and type the quote yourself'
     : 'Add a slide at this frame and write it yourself';
+  syncClipBar();
   els.formatChip.textContent = f.label;
   els.formatChip.className = `rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${f.chip}`;
   els.slidesHint.textContent = f.editorHint;
@@ -2646,6 +2663,7 @@ function render() {
   els.grab.disabled = !editingId && !canAddSlide(slides); // Save stays enabled at the cap
   els.addScene.disabled = aiBusy || !videoReady || !canAddSlide(slides);
   els.addManual.disabled = !videoReady || !canAddSlide(slides); // no model involved, so aiBusy is irrelevant
+  syncClipBar(); // the plan is made of the slides, so it moves with them
   els.download.disabled = slides.length === 0;
   els.list.innerHTML = '';
   slides.forEach((slide, index) => els.list.appendChild(renderSlide(slide, index)));
@@ -3152,11 +3170,180 @@ els.postReset.addEventListener('click', () => {
   markDirty();
 });
 
+// ================= Quote-a-long: the video format =================
+//
+// The same set, cut out of the movie file instead of screenshotted. Every
+// timecode on these slides came from a matched subtitle cue, which is exactly
+// what a cut needs: the spans are already known, so this plays them into a
+// 1080x1920 canvas — through the SAME compose code the slideshow posts, so the
+// clip looks like the slides and moves — and records that canvas.
+//
+// The slideshow is untouched by all of this. `output` is a per-project switch
+// and everything below is inert while it says 'slides'.
+
+let clip = null;          // { blob, url, mimeType, seconds } once rendered
+let clipStale = false;    // the set changed after the render
+let clipAbort = null;     // AbortController while recording
+
+function videoOutput() {
+  return project?.format === 'quotes' && project?.output === 'video';
+}
+
+function currentClipPlan() {
+  if (project?.format !== 'quotes') return null;
+  return planClip(slides, {
+    duration: videoReady ? els.video.duration : 0,
+    isTitle: (s, i) => isIntroSlide(s, slides.indexOf(s), project?.format),
+    isOutro: isOutroSlide,
+  });
+}
+
+function releaseClip() {
+  if (clip?.url) URL.revokeObjectURL(clip.url);
+  clip = null;
+  clipStale = false;
+  els.clipPreview.removeAttribute('src');
+  els.clipPreview.classList.add('hidden');
+  els.clipDownload.classList.add('hidden');
+  els.clipDownload.classList.remove('flex');
+  els.clipDownload.removeAttribute('href');
+}
+
+function syncClipBar() {
+  const quotes = project?.format === 'quotes';
+  els.clipBar.classList.toggle('hidden', !quotes);
+  els.clipBar.classList.toggle('flex', quotes);
+  if (!quotes) return;
+
+  const video = videoOutput();
+  const on = 'bg-red-600 text-white';
+  const off = 'text-neutral-300 hover:bg-neutral-800';
+  els.outSlides.className = `px-3 py-1.5 text-xs font-semibold ${video ? off : on}`;
+  els.outVideo.className = `px-3 py-1.5 text-xs font-semibold ${video ? on : off}`;
+  els.clipControls.classList.toggle('hidden', !video);
+  els.clipControls.classList.toggle('flex', video);
+
+  const plan = currentClipPlan();
+  els.clipPlan.textContent = video ? describePlan(plan) : '';
+  els.clipRender.disabled = !!clipAbort || !videoReady || !plan?.scenes;
+
+  if (!video) { els.clipNote.textContent = 'Slides: the usual photo post.'; return; }
+  if (clipAbort) return; // the recorder owns the note while it runs
+  if (!videoReady) { els.clipNote.textContent = 'Load the movie file to cut the clip from it.'; return; }
+  if (!plan?.scenes) { els.clipNote.textContent = 'No quote slide has a timecode yet — run autopilot first.'; return; }
+  const notes = [];
+  if (plan.skipped.length) notes.push(`${plan.skipped.length} slide${plan.skipped.length === 1 ? '' : 's'} skipped for having no timecode.`);
+  if (plan.overlaps) notes.push(`${plan.overlaps} scene${plan.overlaps === 1 ? '' : 's'} overlap the one before — same footage twice, on purpose or not.`);
+  if (plan.long) notes.push('Over three minutes — worth trimming.');
+  if (clip && clipStale) notes.push('The set changed since this render — render again before posting.');
+  else if (clip) notes.push(`Rendered: ${(clip.blob.size / 1024 / 1024).toFixed(1)}MB ${clip.extension.toUpperCase()}. It lives in memory only, so a reload means rendering again.`);
+  else notes.push('Rendering plays the film through once, so it takes about as long as the clip is.');
+  els.clipNote.textContent = notes.join(' ');
+}
+
+function setOutput(mode) {
+  if (!project || project.format !== 'quotes') return;
+  const next = mode === 'video' ? 'video' : 'slides';
+  if (project.output === next) return;
+  project.output = next;
+  markDirty();
+  syncClipBar();
+  updatePostButton();
+  els.status.textContent = next === 'video'
+    ? 'Video format: render the clip, then post it.'
+    : 'Back to the slideshow.';
+}
+els.outSlides.addEventListener('click', () => setOutput('slides'));
+els.outVideo.addEventListener('click', () => setOutput('video'));
+
+els.clipRender.addEventListener('click', async () => {
+  if (clipAbort || !project) return;
+  const plan = currentClipPlan();
+  if (!plan?.scenes) { els.status.textContent = 'Nothing to cut — no slide has a timecode.'; return; }
+  const ticket = project.id;
+  releaseClip();
+  clipAbort = new AbortController();
+  els.clipCancel.classList.remove('hidden');
+  syncClipBar();
+
+  // One offscreen canvas at full size; compose draws the whole slide into it
+  // every frame, live video and all.
+  const canvas = document.createElement('canvas');
+  const byId = new Map(slides.map((sl) => [sl.id, sl]));
+  const paint = (part) => {
+    const slide = byId.get(part.slideId);
+    if (!slide) return;
+    composeToCanvas(canvas, part.kind === 'scene' ? els.video : slide.bitmap, slide.caption, {
+      titleLine: currentTitleLine(),
+      fontScale: slide.fontScale || 1,
+      maxFrameHeightRatio: frameHeightRatio(),
+      format: project.format,
+      kind: slide.kind,
+      // A scene is live film: the still's colour correction was measured on one
+      // frozen frame and the zoom crop would fight the motion.
+      adjust: part.kind === 'scene' ? null : slide.adjust,
+      stampNudge: slide.stampNudge || 0,
+    });
+  };
+
+  try {
+    els.status.textContent = 'Getting the fonts and the badge ready…';
+    await Promise.all([captionFontReady(), quoteStampReady()]);
+    const started = Date.now();
+    const out = await recordClip({
+      video: els.video,
+      plan,
+      canvas,
+      paint,
+      fps: CLIP_FPS,
+      signal: clipAbort.signal,
+      onProgress: (m) => {
+        els.status.textContent = m;
+        els.clipNote.textContent = `${m} — the film is playing through; leave this tab in front.`;
+      },
+    });
+    if (project?.id !== ticket) return; // opened another project mid-render
+    clip = { ...out, seconds: (Date.now() - started) / 1000 };
+    clipStale = false;
+    clip.url = URL.createObjectURL(out.blob);
+    els.clipPreview.src = clip.url;
+    els.clipPreview.classList.remove('hidden');
+    els.clipDownload.href = clip.url;
+    els.clipDownload.download = `${(projectDisplayName(project) || 'quote-a-long').replace(/[^\w.-]+/g, '-')}.${out.extension}`;
+    els.clipDownload.classList.remove('hidden');
+    els.clipDownload.classList.add('flex');
+    els.status.textContent = `Clip ready — ${(out.blob.size / 1024 / 1024).toFixed(1)}MB. Watch it, then post it.`;
+  } catch (err) {
+    if (err.cancelled) els.status.textContent = 'Clip cancelled.';
+    else {
+      console.error('[tik] clip render failed:', err);
+      els.status.textContent = err.message;
+    }
+  } finally {
+    clipAbort = null;
+    els.clipCancel.classList.add('hidden');
+    syncClipBar();
+    updatePostButton();
+  }
+});
+
+els.clipCancel.addEventListener('click', () => {
+  clipAbort?.abort();
+  els.status.textContent = 'Stopping the render…';
+});
+
 // ================= Post =================
 function updatePostButton() {
   const publicOrigin = isPublicOrigin();
-  els.post.disabled = !(project && isSignedIn() && slides.length > 0 && publicOrigin);
-  els.post.title = publicOrigin ? '' : 'Posting to TikTok needs the deployed site';
+  const video = videoOutput();
+  const ready = video ? !!clip && !clipStale : slides.length > 0;
+  els.post.disabled = !(project && isSignedIn() && ready && publicOrigin);
+  els.postLabel.textContent = video ? 'Post video to TikTok' : 'Post to TikTok';
+  els.post.title = !publicOrigin
+    ? 'Posting to TikTok needs the deployed site'
+    : video && !clip ? 'Render the clip first'
+      : video && clipStale ? 'The set changed — render the clip again'
+        : '';
 }
 els.post.addEventListener('click', async () => {
   els.post.disabled = true;
@@ -3164,14 +3351,18 @@ els.post.addEventListener('click', async () => {
   try {
     const titleLine = currentTitleLine();
     const fallback = defaultPostFields(project.format, projectDisplayName(project));
-    const result = await publishSlideshow(slides, {
-      titleLine,
-      maxFrameHeightRatio: frameHeightRatio(),
-      format: project.format,
-      title: (project.postTitle || '').trim() || fallback.title,
-      description: (project.postDesc || '').trim() || fallback.description,
-      onProgress: (m) => { els.status.textContent = m; },
-    });
+    // One branch, at the top: the slideshow path below it is the one that runs
+    // every day and is left exactly as it was.
+    const result = videoOutput()
+      ? await publishClip(clip?.blob, { onProgress: (m) => { els.status.textContent = m; } })
+      : await publishSlideshow(slides, {
+        titleLine,
+        maxFrameHeightRatio: frameHeightRatio(),
+        format: project.format,
+        title: (project.postTitle || '').trim() || fallback.title,
+        description: (project.postDesc || '').trim() || fallback.description,
+        onProgress: (m) => { els.status.textContent = m; },
+      });
     if (project?.id !== ticket) {
       console.warn('[tik] post finished after navigating away; library status left as draft', { ticket, status: result?.status });
       return;

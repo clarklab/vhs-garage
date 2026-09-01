@@ -78,6 +78,17 @@ function pillPath(ctx, x, y, w, h, r) {
 // square or widescreen image goes full width; a tall one is held back so it
 // can't push the caption down the slide. The whole image is always visible —
 // this is a contain fit, never a crop.
+// An ImageBitmap reports its size on width/height; a <video> reports the real
+// thing on videoWidth/videoHeight and leaves width/height as the (usually
+// absent) HTML attributes. Both are valid frame sources — the clip renderer
+// draws the playing video straight into the same composition as the slides.
+export function frameWidth(src) {
+  return Number(src?.videoWidth) || Number(src?.width) || 0;
+}
+export function frameHeight(src) {
+  return Number(src?.videoHeight) || Number(src?.height) || 0;
+}
+
 export function wantsQuoteStamp({ format, kind } = {}) {
   return format === 'quotes' && kind === 'title';
 }
@@ -245,6 +256,13 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   const ctx = cvs.getContext('2d');
   ctx.scale(scale, scale);
 
+  // The frame source is an ImageBitmap for a slide and the <video> element
+  // itself for the clip renderer, and a video keeps its real size on different
+  // properties (`width` is the HTML attribute, usually 0). Everything below
+  // works off these two numbers.
+  const srcW = frameWidth(bitmap);
+  const srcH = frameHeight(bitmap);
+
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
@@ -285,10 +303,10 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
         CANVAS_H - FIT_VPAD * 2 - (capH ? GAP + capH : 0),
       ),
     );
-    F = containFrame(bitmap.width, bitmap.height, CANVAS_W, availH);
+    F = containFrame(srcW, srcH, CANVAS_W, availH);
   } else {
     // Frame size: full width, aspect preserved, capped so text always has room.
-    F = computeSlideLayout(bitmap.width, bitmap.height).frame; // w/h only; we position ourselves
+    F = computeSlideLayout(srcW, srcH).frame; // w/h only; we position ourselves
     if (fullText) {
       const maxTextH = maxGroupH - F.h - GAP;
       fontSize = fitFontSize(wrapAt(fontSize).length, Math.max(maxTextH, lineBoxH(minFont)), {
@@ -318,7 +336,7 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   // the slide keeps its size and shape and only the framing moves. Scaling the
   // destination instead would resize the picture and shove the caption down.
   const correction = filterString(adjust);
-  const { sx, sy, sw, sh } = zoomSourceRect(adjust, bitmap.width, bitmap.height);
+  const { sx, sy, sw, sh } = zoomSourceRect(adjust, srcW, srcH);
   const drawFrame = () => ctx.drawImage(bitmap, sx, sy, sw, sh, frameX, frameY, F.w, F.h);
   if (correction) {
     ctx.save();

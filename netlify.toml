@@ -15,6 +15,13 @@
   to = "/.netlify/functions/tik-media?id=:id"
   status = 200
 
+# The Quote-a-long video format's clip, under the same /tik prefix and for the
+# same reason: one verified URL property covers both the images and the video.
+[[redirects]]
+  from = "/tik/video/:id"
+  to = "/.netlify/functions/tik-video?id=:id"
+  status = 200
+
 # During active development we want every page refresh to pull the latest
 # deploy — testers (some non-technical) shouldn't have to figure out hard
 # refresh / DevTools to see new code. Disable browser caching for the
