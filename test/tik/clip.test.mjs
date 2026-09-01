@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   sceneWindow, planClip, pickClipMime, extensionForMime, describePlan, silenceReason, NO_FILM_AUDIO_NOTE,
+  ffmpegAacCommand, shellQuote,
   PAD_BEFORE, PAD_AFTER, MIN_SCENE, MAX_SCENE, GUESS_SCENE, STILL_SECONDS, CLIP_MIME_CANDIDATES,
 } from '../../public/scripts/tik/clip.js';
 
@@ -194,4 +195,56 @@ test('the pre-flight warning names the codecs and the way out', () => {
   assert.match(NO_FILM_AUDIO_NOTE, /AAC/);
   // And it must not imply the film itself is broken — it plays fine elsewhere.
   assert.match(NO_FILM_AUDIO_NOTE, /this browser|Chrome/);
+});
+
+
+// ---- The fix, as a command you can paste ----
+
+test('the command re-encodes only the audio and names this film', () => {
+  const cmd = ffmpegAacCommand('The Princess Bride.mkv');
+  assert.match(cmd, /^ffmpeg -i /);
+  assert.match(cmd, /-c:v copy/, 'the video is copied, not re-encoded');
+  assert.match(cmd, /-c:a aac/);
+  assert.match(cmd, /'The Princess Bride\.mkv'/);
+  assert.match(cmd, /'The Princess Bride \(aac\)\.mp4'/, 'and writes beside it, never over it');
+});
+
+test('only the first video and audio streams are taken', () => {
+  // An MKV's subtitle and attachment streams have no home in an MP4, and
+  // ffmpeg aborts the mux rather than skipping them.
+  const cmd = ffmpegAacCommand('x.mkv');
+  assert.match(cmd, /-map 0:v:0/);
+  assert.match(cmd, /-map 0:a:0/);
+});
+
+test('the output never overwrites the input', () => {
+  const cmd = ffmpegAacCommand('movie.mp4');
+  assert.match(cmd, /'movie\.mp4'.*'movie \(aac\)\.mp4'/);
+});
+
+test('an apostrophe in the title does not break the quoting', () => {
+  // Ocean's Eleven, Schindler's List, Bridget Jones's Diary…
+  const cmd = ffmpegAacCommand("Ocean's Eleven.mkv");
+  assert.match(cmd, /'Ocean'\\''s Eleven\.mkv'/);
+});
+
+test('shell metacharacters in a filename stay literal', () => {
+  // Single quotes, so $ and backticks are never expanded by the shell.
+  const q = shellQuote('$HOME `whoami` "x".mkv');
+  assert.equal(q, `'$HOME \`whoami\` "x".mkv'`);
+  assert.equal(q.startsWith("'"), true);
+  assert.equal(q.endsWith("'"), true);
+});
+
+test('a missing filename still gives a runnable example', () => {
+  for (const junk of ['', null, undefined, '   ']) {
+    const cmd = ffmpegAacCommand(junk);
+    assert.match(cmd, /^ffmpeg -i 'movie\.mkv'/);
+  }
+});
+
+test('a name with no extension is not mangled', () => {
+  assert.match(ffmpegAacCommand('movie'), /'movie' .*'movie \(aac\)\.mp4'/);
+  // A dotfile-looking name keeps its whole name as the stem.
+  assert.match(ffmpegAacCommand('.hidden'), /'\.hidden \(aac\)\.mp4'/);
 });

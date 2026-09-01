@@ -237,6 +237,27 @@ export async function probeFilmAudio(video, { ms = 450 } = {}) {
   return 'no';
 }
 
+// The fix, as a command the user can paste.
+//
+// Only the audio is re-encoded — the video stream is copied, so a feature film
+// takes a minute or two rather than an hour. `-map 0:v:0 -map 0:a:0` takes just
+// the first video and audio streams, because an MKV's subtitle and attachment
+// streams have no home in an MP4 and abort the mux if you let ffmpeg try.
+//
+// Film titles are full of apostrophes (Ocean's Eleven), so the shell quoting
+// here is single quotes with the POSIX '\'' escape rather than double quotes,
+// which would also expand $ and backticks.
+export function shellQuote(name) {
+  return `'${String(name ?? '').replace(/'/g, `'\\''`)}'`;
+}
+
+export function ffmpegAacCommand(fileName) {
+  const name = String(fileName || '').trim() || 'movie.mkv';
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  return `ffmpeg -i ${shellQuote(name)} -map 0:v:0 -map 0:a:0 -c:v copy -c:a aac -b:a 192k ${shellQuote(`${stem} (aac).mp4`)}`;
+}
+
 // The line to show when a film will not give up its audio.
 export const NO_FILM_AUDIO_NOTE =
   'Heads up: this browser decodes no audio from this film, so a clip cut from it will be silent — '

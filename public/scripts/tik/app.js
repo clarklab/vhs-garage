@@ -25,7 +25,7 @@ import { storageAvailable, putProject, getProject, listProjects, deleteProject }
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
 import { composePair, pairLayoutOf, otherLayout, PAIR_LAYOUT_LABELS } from './pair.js';
-import { planClip, recordClip, describePlan, silenceReason, probeFilmAudio, NO_FILM_AUDIO_NOTE, CLIP_FPS } from './clip.js';
+import { planClip, recordClip, describePlan, silenceReason, probeFilmAudio, ffmpegAacCommand, NO_FILM_AUDIO_NOTE, CLIP_FPS } from './clip.js';
 import {
   parseImdbList, toRatedEntries, imdbSearchUrl, formatVotes,
   parseGrossList, toGrossEntries, boxOfficeMojoUrl, formatGross,
@@ -116,6 +116,7 @@ const els = {
   clipBar: $('clip-bar'), outSlides: $('out-slides'), outVideo: $('out-video'), clipPlan: $('clip-plan'),
   clipControls: $('clip-controls'), clipRender: $('clip-render'), clipCancel: $('clip-cancel'),
   clipDownload: $('clip-download'), clipPreview: $('clip-preview'), clipNote: $('clip-note'),
+  clipFix: $('clip-fix'), clipFixCmd: $('clip-fix-cmd'), clipFixCopy: $('clip-fix-copy'),
   imgFile: $('img-file-input'),
 };
 
@@ -127,6 +128,7 @@ let dragFrom = null;
 let editingId = null;          // slide id whose frame is being replaced, or null
 let pickTargetId = null;       // slide id the hidden image-file input feeds
 let videoReady = false;        // metadata loaded → grabbing is possible
+let filmFileName = '';         // the movie file's own name, for the audio fix-up command
 let aiBusy = false;            // an AI action is in flight
 let movie = { title: '', year: null, query: '' }; // parsed from the filename (trivia)
 let dirty = false;
@@ -1616,6 +1618,7 @@ els.authBtn.addEventListener('click', async () => {
 els.file.addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   if (!file || !project) return;
+  filmFileName = file.name; // the ffmpeg fix-up command names this exact file
   movie = parseMovieName(file.name);
   project.movie = movie;
   if (!project.name) {
@@ -3235,14 +3238,23 @@ function syncClipBar() {
   els.clipPlan.textContent = video ? describePlan(plan) : '';
   els.clipRender.disabled = !!clipAbort || !videoReady || !plan?.scenes;
 
-  if (!video) { els.clipNote.textContent = 'Slides: the usual photo post.'; return; }
+  if (!video) {
+    els.clipNote.textContent = 'Slides: the usual photo post.';
+    els.clipFix.classList.add('hidden');
+    els.clipFix.classList.remove('flex');
+    return;
+  }
   if (clipAbort) return; // the recorder owns the note while it runs
 
   const notes = [];
   // First, and before anything about the set: it decides whether rendering is
   // worth doing at all, and it is known the moment the film loads — long
   // before there are any slides to plan.
-  if (filmAudio === 'no') notes.push(NO_FILM_AUDIO_NOTE);
+  const noAudio = filmAudio === 'no';
+  if (noAudio) notes.push(NO_FILM_AUDIO_NOTE);
+  els.clipFix.classList.toggle('hidden', !noAudio);
+  els.clipFix.classList.toggle('flex', noAudio);
+  if (noAudio) els.clipFixCmd.textContent = ffmpegAacCommand(filmFileName);
   if (!videoReady) {
     notes.push('Load the movie file to cut the clip from it.');
     els.clipNote.textContent = notes.join(' ');
@@ -3351,6 +3363,31 @@ els.clipRender.addEventListener('click', async () => {
     els.clipCancel.classList.add('hidden');
     syncClipBar();
     updatePostButton();
+  }
+});
+
+els.clipFixCopy.addEventListener('click', async () => {
+  const cmd = els.clipFixCmd.textContent || '';
+  try {
+    await navigator.clipboard.writeText(cmd);
+    els.clipFixCopy.textContent = 'Copied';
+    setTimeout(() => { els.clipFixCopy.textContent = 'Copy'; }, 1600);
+  } catch (e) {
+    // Clipboard access can be refused (an unfocused tab, a permissions policy).
+    // Select the command instead, so the keyboard shortcut is one press away
+    // rather than a drag across a line of shell.
+    console.warn('[tik] clipboard refused the command; selecting it instead:', e);
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(els.clipFixCmd);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (e2) {
+      console.warn('[tik] could not select the command either:', e2);
+    }
+    els.clipFixCopy.textContent = 'Press ⌘C';
+    setTimeout(() => { els.clipFixCopy.textContent = 'Copy'; }, 2500);
   }
 });
 
