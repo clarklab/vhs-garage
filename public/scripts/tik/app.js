@@ -25,7 +25,7 @@ import { storageAvailable, putProject, getProject, listProjects, deleteProject }
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
 import { composePair, pairLayoutOf, otherLayout, PAIR_LAYOUT_LABELS } from './pair.js';
-import { planClip, recordClip, describePlan, extensionForMime, CLIP_FPS } from './clip.js';
+import { planClip, recordClip, describePlan, silenceReason, CLIP_FPS } from './clip.js';
 import {
   parseImdbList, toRatedEntries, imdbSearchUrl, formatVotes,
   parseGrossList, toGrossEntries, boxOfficeMojoUrl, formatGross,
@@ -3236,7 +3236,10 @@ function syncClipBar() {
   if (plan.overlaps) notes.push(`${plan.overlaps} scene${plan.overlaps === 1 ? '' : 's'} overlap the one before — same footage twice, on purpose or not.`);
   if (plan.long) notes.push('Over three minutes — worth trimming.');
   if (clip && clipStale) notes.push('The set changed since this render — render again before posting.');
-  else if (clip) notes.push(`Rendered: ${(clip.blob.size / 1024 / 1024).toFixed(1)}MB ${clip.extension.toUpperCase()}. It lives in memory only, so a reload means rendering again.`);
+  else if (clip) {
+    notes.push(`Rendered: ${(clip.blob.size / 1024 / 1024).toFixed(1)}MB ${clip.extension.toUpperCase()}, ${clip.silence ? 'no sound' : 'with sound'}. It lives in memory only, so a reload means rendering again.`);
+    if (clip.silence) notes.push(clip.silence);
+  }
   else notes.push('Rendering plays the film through once, so it takes about as long as the clip is.');
   els.clipNote.textContent = notes.join(' ');
 }
@@ -3304,6 +3307,7 @@ els.clipRender.addEventListener('click', async () => {
     });
     if (project?.id !== ticket) return; // opened another project mid-render
     clip = { ...out, seconds: (Date.now() - started) / 1000 };
+    clip.silence = silenceReason(out);
     clipStale = false;
     clip.url = URL.createObjectURL(out.blob);
     els.clipPreview.src = clip.url;
@@ -3312,7 +3316,9 @@ els.clipRender.addEventListener('click', async () => {
     els.clipDownload.download = `${(projectDisplayName(project) || 'quote-a-long').replace(/[^\w.-]+/g, '-')}.${out.extension}`;
     els.clipDownload.classList.remove('hidden');
     els.clipDownload.classList.add('flex');
-    els.status.textContent = `Clip ready — ${(out.blob.size / 1024 / 1024).toFixed(1)}MB. Watch it, then post it.`;
+    els.status.textContent = clip.silence
+      ? `Clip ready, but SILENT — ${clip.silence}`
+      : `Clip ready with sound — ${(out.blob.size / 1024 / 1024).toFixed(1)}MB. Watch it, then post it.`;
   } catch (err) {
     if (err.cancelled) els.status.textContent = 'Clip cancelled.';
     else {

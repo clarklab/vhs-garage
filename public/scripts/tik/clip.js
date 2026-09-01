@@ -162,18 +162,54 @@ export function movieAudio(video) {
     const src = ctx.createMediaElementSource(video);
     const speaker = ctx.createGain();
     const dest = ctx.createMediaStreamDestination();
+    // An analyser on the SOURCE side, so after a render we can say whether the
+    // film was making any sound at all. That is the one question worth being
+    // able to answer: a silent clip is either a film whose audio this browser
+    // cannot decode, or a fault in here, and guessing between the two from a
+    // finished file is miserable.
+    const meter = ctx.createAnalyser();
+    meter.fftSize = 2048;
     src.connect(speaker);
     speaker.connect(ctx.destination);
     src.connect(dest);
+    src.connect(meter);
     // Once an element is routed through WebAudio it stays routed, so a
     // suspended context would silence ordinary playback too.
     video.addEventListener('play', () => { ctx.resume().catch(() => {}); });
-    graph = { video, ctx, speaker, dest };
+    graph = { video, ctx, speaker, dest, meter };
     return graph;
   } catch (e) {
     console.error('[tik] could not tap the movie audio; the clip will be silent:', e);
     return null;
   }
+}
+
+// Below this, call it silence: dither and encoder noise live down here.
+export const SILENCE_PEAK = 0.005;
+
+// Loudest sample the meter has seen since the last look.
+function peakNow(meter, scratch) {
+  if (!meter) return 0;
+  meter.getFloatTimeDomainData(scratch);
+  let peak = 0;
+  for (let i = 0; i < scratch.length; i++) {
+    const a = Math.abs(scratch[i]);
+    if (a > peak) peak = a;
+  }
+  return peak;
+}
+
+// Can this browser decode the film's audio at all?
+//
+// Most movie rips carry AC-3, E-AC-3 or DTS, and Chrome decodes none of them:
+// the picture plays and the film is simply silent, in the editor and therefore
+// in the clip. `webkitAudioDecodedByteCount` is the honest witness — it counts
+// bytes the audio decoder actually consumed, and it stays at zero when there is
+// nothing it can decode.
+export function audioDecoding(video) {
+  const n = video?.webkitAudioDecodedByteCount;
+  if (typeof n !== 'number') return null; // browser won't say; not the same as "no"
+  return n > 0;
 }
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -230,6 +266,11 @@ export async function recordClip({
   const aborted = () => signal?.aborted;
   let done = 0;
   const total = plan.parts.length;
+  // What the film was actually making while we recorded it. Stills are silent
+  // by design (the film is paused), so only scenes are measured.
+  const scratch = audio?.meter ? new Float32Array(audio.meter.fftSize) : null;
+  let audioPeak = 0;
+  const decodedBefore = video.webkitAudioDecodedByteCount;
 
   try {
     paint(plan.parts[0]);
@@ -260,6 +301,7 @@ export async function recordClip({
       const hardStop = Date.now() + (part.end - part.start + 5) * 1000 * 2;
       while (video.currentTime < part.end && Date.now() < hardStop && !aborted()) {
         paint(part);
+        if (scratch) audioPeak = Math.max(audioPeak, peakNow(audio.meter, scratch));
         await wait(1000 / fps);
       }
       try { video.pause(); } catch { /* fine */ }
@@ -273,5 +315,42 @@ export async function recordClip({
   if (aborted()) throw Object.assign(new Error('Clip cancelled.'), { cancelled: true });
   const blob = new Blob(chunks, { type: mime });
   if (!blob.size) throw new Error('The recorder produced nothing — try again.');
-  return { blob, mimeType: mime, extension: extensionForMime(mime) };
+
+  const decoded = typeof video.webkitAudioDecodedByteCount === 'number'
+    ? video.webkitAudioDecodedByteCount - decodedBefore
+    : null;
+  const sound = !audio ? 'untapped' : audioPeak > SILENCE_PEAK ? 'recorded' : 'silent';
+  if (sound === 'silent') {
+    // Worth a log line: this is the difference between "the film has no audio
+    // this browser can decode" and "we broke the tap", and the counter says
+    // which. Nothing decoded at all is the film, every time.
+    console.warn('[tik] the clip came out silent', { audioPeak, audioBytesDecoded: decoded, mime });
+  }
+  return {
+    blob,
+    mimeType: mime,
+    extension: extensionForMime(mime),
+    sound,                                  // 'recorded' | 'silent' | 'untapped'
+    audioPeak,
+    filmDecodedAudio: decoded === null ? null : decoded > 0,
+  };
+}
+
+// What to tell someone whose clip came out silent.
+//
+// Two very different situations wearing the same face, and the byte counter
+// tells them apart: a film whose audio track this browser cannot decode (most
+// rips are AC-3, E-AC-3 or DTS, and Chrome decodes none of them — the picture
+// plays and the film is simply silent, in the editor too), versus a film that
+// IS decoding and still came out silent, which is ours to fix.
+export function silenceReason({ sound, filmDecodedAudio } = {}) {
+  if (sound === 'recorded') return '';
+  if (sound === 'untapped') return 'The film’s audio couldn’t be tapped in this browser, so the clip is silent.';
+  if (filmDecodedAudio === false) {
+    return 'The clip is silent because this browser decoded no audio from the film — most rips use AC-3 or DTS, which Chrome can’t play. The editor’s own play button will be silent too. A copy with AAC audio fixes it.';
+  }
+  if (filmDecodedAudio === true) {
+    return 'The clip is silent even though the film is decoding audio — check the film isn’t muted or silent over these exact scenes, then say so, because that one is a bug.';
+  }
+  return 'The clip came out silent — check that the film plays with sound in the editor.';
 }
