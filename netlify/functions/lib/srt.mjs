@@ -69,6 +69,12 @@ function tokens(s) {
 // Four is the ceiling because the tie-break prefers fewer cues, so a wider
 // window only wins when it genuinely holds more of the quote.
 export const MAX_SPAN_CUES = 4;
+// Cues in one span must be next to each other in TIME as well as in the file.
+// Without this, four cues that happen to share enough words can be stitched
+// across a twelve-minute gap: the timecode lands on the wrong scene, and the
+// caption becomes two unrelated lines glued together. Real dialogue runs a
+// beat apart.
+export const MAX_CUE_GAP = 5;
 
 // How much of the quote a span has to carry to count as a match. Below this we
 // return nothing, which is honest: the caller keeps the model's guess rather
@@ -94,6 +100,8 @@ export function matchQuoteToCues(quote, cues) {
     const have = new Set();
     const last = Math.min(list.length - 1, i + MAX_SPAN_CUES - 1);
     for (let j = i; j <= last; j++) {
+      // Stop the span the moment the film moves on.
+      if (j > i && Number(list[j].start) - Number(list[j - 1].end) > MAX_CUE_GAP) break;
       for (const w of per[j]) have.add(w);
       let hits = 0;
       for (const w of want) if (have.has(w)) hits++;
@@ -118,6 +126,53 @@ export function matchQuoteToCues(quote, cues) {
     text: list.slice(best.from, best.to + 1).map((c) => c.text).join(' '),
     index: best.from,
   };
+}
+
+// The caption, taken from the subtitle file rather than from the quote.
+//
+// This is the whole point of matching in the first place. An IMDb quote is
+// typed from memory by a contributor and is routinely a paraphrase; the prompt
+// then asks the model to BOIL it, which is a second rewrite. The subtitle file
+// is the only source here that was made from the audio, so once a line is
+// matched, what the subtitle says is what gets shown — and then the words on
+// screen are the words being said.
+//
+// The model's caption is still used for its speaker labels, which subtitles do
+// not carry, and as the fallback whenever the cue text comes back unusable.
+
+// "- " is how a subtitle marks the second speaker inside one cue.
+const SPEAKER_DASH = /(?:^|\s)-\s+/;
+// A span far longer than the quote asked for is the matcher having swept up a
+// neighbouring line; the boiled version is the better caption in that case.
+const RUNAWAY_RATIO = 2.2;
+
+export function speakerLabel(line) {
+  const m = String(line ?? '').match(/^\s*([A-Z][A-Za-z0-9 .'\-]{1,40}:)\s*/);
+  return m ? m[1] : '';
+}
+
+export function captionFromCues(cueText, modelCaption = '') {
+  const cleaned = String(cueText || '')
+    .replace(/\[[^\]]*\]/g, ' ')   // [DOOR CREAKS], [MAN], hearing-impaired notes
+    .replace(/[♪♫]+/g, ' ')        // music cues
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return null;
+
+  const model = String(modelCaption || '').trim();
+  // Subtitles for an exchange are one cue with dashes, or several cues joined.
+  const parts = cleaned.split(SPEAKER_DASH).map((p) => p.trim()).filter(Boolean);
+  if (!parts.length) return null;
+
+  const spoken = parts.join(' ');
+  if (model && spoken.length > model.length * RUNAWAY_RATIO) return null;
+
+  // Put the model's speaker names back, in order, when they line up.
+  const labels = model.split('\n').map((l) => speakerLabel(l));
+  const named = labels.length === parts.length && labels.some(Boolean)
+    ? parts.map((p, i) => (labels[i] ? `${labels[i]} ${p}` : p))
+    : parts;
+  return named.join('\n');
 }
 
 // Where to freeze the frame inside a matched cue span.
@@ -173,6 +228,19 @@ export function applyCueTimes(suggestions, cues, { skipFirst = false, durationSe
     if (!hit) return row;
     let tc = Math.round(seekTime(hit.start, hit.end));
     tc = Math.min(dur || tc, Math.max(0, tc));
-    return { ...row, start: hit.start, end: hit.end, timecode: tc, matched: true };
+    // The subtitle is the only text here that came from the audio, so when it
+    // is usable it becomes the caption — otherwise the boiled quote stands.
+    const spoken = captionFromCues(hit.text, row?.caption);
+    if (!spoken) {
+      console.warn('[tik] cue text unusable; keeping the written quote', { caption: String(row?.caption || '').slice(0, 80) });
+    }
+    return {
+      ...row,
+      caption: spoken || row.caption,
+      start: hit.start,
+      end: hit.end,
+      timecode: tc,
+      matched: true,
+    };
   });
 }

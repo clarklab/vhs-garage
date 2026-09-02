@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseSrt, srtTimeToSeconds, normalizeQuoteText, matchQuoteToCues, quoteHints, seekTime, applyCueTimes,
-  MAX_SPAN_CUES,
+  captionFromCues, speakerLabel, MAX_SPAN_CUES, MAX_CUE_GAP,
 } from '../../netlify/functions/lib/srt.mjs';
 
 const SAMPLE = `1
@@ -222,4 +222,114 @@ test('stripping speaker labels does not eat the line itself', () => {
   const out = normalizeQuoteText('Ripley: Get away from her, you bitch!');
   assert.ok(out.includes('get away from her'), out);
   assert.ok(out.includes('bitch'), out);
+});
+
+
+// ---- The caption is what the film says, not what IMDb remembers ----
+
+test('a matched line is replaced with the words from the subtitle', () => {
+  // IMDb quotes are typed from memory and routinely drift; the subtitle file is
+  // the only text here that was made from the audio.
+  const written = 'You keep using that word. I do not think it means what you think it means.';
+  const spoken = 'You keep using that word. I do not think it means what you think it means.';
+  assert.equal(captionFromCues(spoken, written), spoken);
+  const drifted = captionFromCues('I do not think that word means what you think it means.', written);
+  assert.equal(drifted, 'I do not think that word means what you think it means.');
+});
+
+test('a subtitle exchange splits back onto one line per speaker', () => {
+  // A subtitle marks the second speaker with a leading dash inside one cue.
+  const out = captionFromCues('- You fell victim to one of the classic blunders! - Inconceivable!', '');
+  assert.equal(out, 'You fell victim to one of the classic blunders!\nInconceivable!');
+});
+
+test('the model’s speaker names go back on, in order', () => {
+  // Subtitles carry no names; the written quote does, and the format needs them.
+  const written = 'VIZZINI: You fell victim to one of the classic blunders!\nMAN IN BLACK: Inconceivable!';
+  const out = captionFromCues('- You fell victim to one of the classic blunders! - Inconceivable!', written);
+  assert.equal(out, 'VIZZINI: You fell victim to one of the classic blunders!\nMAN IN BLACK: Inconceivable!');
+});
+
+test('names are left off when they do not line up', () => {
+  // Two names, one spoken line: guessing which one said it would be worse.
+  const written = 'A: one\nB: two';
+  assert.equal(captionFromCues('Just the one line here.', written), 'Just the one line here.');
+});
+
+test('sound cues and music marks are not dialogue', () => {
+  assert.equal(captionFromCues('[DOOR CREAKS] Hello there.', ''), 'Hello there.');
+  assert.equal(captionFromCues('♪ Hello there. ♪', ''), 'Hello there.');
+  assert.equal(captionFromCues('[THUNDER]', ''), null, 'a cue with no words is not a caption');
+  assert.equal(captionFromCues('   ', 'x'), null);
+  assert.equal(captionFromCues(null, 'x'), null);
+});
+
+test('a runaway span keeps the written quote instead', () => {
+  // The matcher can sweep up a neighbouring line; a caption three times the
+  // length of the quote is that, not a better transcription.
+  const written = 'Inconceivable!';
+  const sprawl = 'Inconceivable! And another thing entirely, at considerable length, about the boat.';
+  assert.equal(captionFromCues(sprawl, written), null);
+});
+
+test('applyCueTimes swaps the caption in along with the times', () => {
+  const cues = [
+    { start: 100, end: 102, text: 'You keep using that word.' },
+    { start: 102, end: 105, text: 'I do not think it means what you think it means.' },
+  ];
+  const rows = [{ caption: 'You keep using that word, I dont think it means what you think it means' }];
+  const [out] = applyCueTimes(rows, cues);
+  assert.equal(out.matched, true);
+  assert.equal(out.caption, 'You keep using that word. I do not think it means what you think it means.');
+  assert.equal(out.start, 100);
+  assert.equal(out.end, 105);
+});
+
+test('an unmatched line keeps every word it had', () => {
+  const cues = [{ start: 10, end: 12, text: 'Something else entirely.' }];
+  const rows = [{ caption: 'A line that appears nowhere in this film at all.' }];
+  const [out] = applyCueTimes(rows, cues);
+  assert.equal(out.caption, 'A line that appears nowhere in this film at all.');
+  assert.equal(out.matched, undefined);
+});
+
+test('the title slide is never rewritten by the matcher', () => {
+  const cues = [{ start: 10, end: 12, text: 'The Princess Bride is a good film.' }];
+  const rows = [{ caption: 'The Princess Bride (1987)' }, { caption: 'Inconceivable!' }];
+  const [title] = applyCueTimes(rows, cues, { skipFirst: true });
+  assert.equal(title.caption, 'The Princess Bride (1987)');
+});
+
+test('speakerLabel matches the one the client uses', () => {
+  assert.equal(speakerLabel('VIZZINI: Inconceivable!'), 'VIZZINI:');
+  assert.equal(speakerLabel('Miracle Max: Have fun'), 'Miracle Max:');
+  assert.equal(speakerLabel('Inconceivable!'), '');
+});
+
+
+// ---- A span is contiguous in time, not just in the file ----
+
+test('cues far apart are never stitched into one span', () => {
+  // Four cues that happen to share words can otherwise be glued across a
+  // twelve-minute gap: wrong scene, and a caption of two unrelated lines.
+  const cues = [
+    { start: 600, end: 602, text: 'You keep using that word.' },
+    { start: 602.2, end: 605, text: 'I do not think it means what you think it means.' },
+    { start: 1334, end: 1337, text: 'that word means what you think' },
+  ];
+  const hit = matchQuoteToCues('You keep using that word. I do not think it means what you think it means.', cues);
+  assert.equal(hit.start, 600);
+  assert.equal(hit.end, 605, 'stops before the far-away cue');
+  assert.doesNotMatch(hit.text, /1334/);
+});
+
+test('a normal gap between lines still spans', () => {
+  const cues = [
+    { start: 100, end: 102, text: 'Hello. My name is Inigo Montoya.' },
+    { start: 103, end: 105, text: 'You killed my father.' },
+  ];
+  const hit = matchQuoteToCues('Hello. My name is Inigo Montoya. You killed my father.', cues);
+  assert.equal(hit.start, 100);
+  assert.equal(hit.end, 105);
+  assert.ok(MAX_CUE_GAP >= 1, 'a beat between lines is normal dialogue');
 });
