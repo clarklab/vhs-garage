@@ -22,6 +22,7 @@ export const MIN_SCENE = 2.5;
 export const MAX_SCENE = 12;     // a runaway cue span is a bad match, not a long scene
 export const GUESS_SCENE = 4.5;  // window for a line with no matched cue
 export const STILL_SECONDS = 2.2;
+export const TITLE_SCENE_SECONDS = 4;
 export const CLIP_FPS = 30;
 export const CLIP_VIDEO_BPS = 6_000_000;
 export const CLIP_AUDIO_BPS = 128_000;
@@ -66,6 +67,32 @@ export function sceneWindow(slide, { duration = 0, padBefore = PAD_BEFORE, padAf
   return { start, end };
 }
 
+// The title card's four seconds.
+//
+// It opens the post, and a frozen frame under a wordmark is a poster, not an
+// opening — so it plays. Starting EXACTLY at the still means what runs is what
+// was picked: the frame they chose, and then the next four seconds of it.
+//
+// A title slide with no timecode is a picture from somewhere else (a pasted
+// image clears the timecode), and there is no footage to roll — that one stays
+// a still.
+export function titleWindow(slide, { duration = 0, seconds = TITLE_SCENE_SECONDS } = {}) {
+  const tc = num(slide?.timecode);
+  if (tc === null) return null;
+  const want = Math.max(0.5, Number(seconds) || TITLE_SCENE_SECONDS);
+  const limit = duration > 0 ? duration : Infinity;
+  let start = Math.max(0, tc);
+  let end = start + want;
+  // Picked near the end of the film: back up so the four seconds still exist,
+  // rather than opening the post on a half-second of black.
+  if (end > limit) {
+    end = limit;
+    start = Math.max(0, end - want);
+  }
+  if (!(end > start)) return null;
+  return { start, end };
+}
+
 // The whole clip, part by part, in the order the set is in.
 //
 // isTitle/isOutro are passed in so this file needs no idea what a title slide
@@ -82,10 +109,22 @@ export function planClip(slides, {
 
   for (const slide of list) {
     if (!slide) continue;
-    if (isTitle(slide) || isOutro(slide)) {
-      // The card slides have no scene behind them — they are held stills, cut
-      // from the same composition the slideshow posts.
-      parts.push({ kind: 'still', slideId: slide.id, seconds: Math.max(0.5, Number(still) || STILL_SECONDS) });
+    const holdStill = () => parts.push({
+      kind: 'still',
+      slideId: slide.id,
+      seconds: Math.max(0.5, Number(still) || STILL_SECONDS),
+    });
+    if (isOutro(slide)) {
+      // The sign-off is the logo, not a frame of the film: nothing to roll.
+      holdStill();
+      continue;
+    }
+    if (isTitle(slide)) {
+      // The opening plays from the frame that was picked. Same composition —
+      // wordmark where they put it, caption where it was — just moving.
+      const opener = titleWindow(slide, { duration });
+      if (opener) parts.push({ kind: 'scene', slideId: slide.id, title: true, ...opener });
+      else holdStill();
       continue;
     }
     const win = sceneWindow(slide, { duration });
@@ -263,6 +302,9 @@ export function audioDecoding(video) {
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function seekTo(video, t) {
+  // Already there: setting currentTime to where it already is fires no 'seeked'
+  // in some browsers, which would then sit out the whole timeout below.
+  if (Math.abs(video.currentTime - t) < 0.05 && !video.seeking) return Promise.resolve();
   return new Promise((resolve) => {
     let settled = false;
     const done = () => { if (settled) return; settled = true; video.removeEventListener('seeked', done); resolve(); };
@@ -321,6 +363,14 @@ export async function recordClip({
   const decodedBefore = video.webkitAudioDecodedByteCount;
 
   try {
+    // Park on the first part's own footage BEFORE the recorder starts. Painting
+    // first and seeking afterwards opened the clip on a frame or two of
+    // wherever the playhead happened to be sitting — which, now that the title
+    // card plays, is the very first thing anyone sees.
+    if (plan.parts[0].kind === 'scene') {
+      onProgress('Cueing up…');
+      await seekTo(video, plan.parts[0].start);
+    }
     paint(plan.parts[0]);
     rec.start(1000);
     for (const part of plan.parts) {
