@@ -4,7 +4,7 @@
 // rounded "pills", one pill per wrapped line. composeToCanvas() draws onto a
 // canvas you own (live preview thumbs); composeSlide() renders → JPEG Blob.
 import { computeSlideLayout, containFrame } from './layout.js';
-import { wrapLines, fitFontSize, wordProgress, spokenIndex } from './caption.js';
+import { wrapLines, fitFontSize, wordProgress, spokenIndex, splitSpeaker, spokenWords } from './caption.js';
 import { filterString, zoomSourceRect } from './adjust.js';
 
 const CANVAS_W = 1080;
@@ -73,6 +73,9 @@ const CC_SAID = '#ffffff';
 const CC_TO_COME = 'rgba(255, 255, 255, 0.5)';
 const CC_NOW = '#fde047';          // the word being said, in VHS-yellow
 const CC_NOW_GLOW = 'rgba(253, 224, 71, 0.55)';
+// A speaker label is not spoken, so it never lights and never dims: it is a
+// label, on the whole time.
+const CC_SPEAKER = 'rgba(255, 255, 255, 0.85)';
 const FIT_VPAD = 40;               // margin above/below the group in ratio mode
 
 // Rounded-rect path (fallback-safe: not all canvas impls have ctx.roundRect).
@@ -387,7 +390,7 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
     // caption rather than restarting per line — the line breaks are a wrapping
     // accident, the delivery is not.
     const flat = style === 'karaoke'
-      ? lines.flatMap((line) => (line ? line.split(/\s+/).filter(Boolean) : []))
+      ? lines.flatMap((line) => (line ? spokenWords(line) : []))
       : [];
     const spans = flat.length ? wordProgress(flat) : [];
     const now = spans.length ? spokenIndex(spans, karaokeProgress) : -1;
@@ -425,12 +428,20 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
       // Word by word, so each can carry its own colour. Drawn from the line's
       // own left edge with textAlign left, because centring per word would
       // space them evenly instead of naturally.
-      const words = line.split(/\s+/).filter(Boolean);
+      const { speaker } = splitSpeaker(line);
+      const words = spokenWords(line);
       const spaceW = ctx.measureText(' ').width;
-      const lineW = words.reduce((t, word, i) => t + ctx.measureText(word).width + (i ? spaceW : 0), 0);
+      const speakerW = speaker ? ctx.measureText(speaker).width + spaceW : 0;
+      const lineW = speakerW
+        + words.reduce((t, word, i) => t + ctx.measureText(word).width + (i ? spaceW : 0), 0);
       const prevAlign = ctx.textAlign;
       ctx.textAlign = 'left';
       let wx = left ? x + CC_PAD_X : cx - lineW / 2;
+      if (speaker) {
+        ctx.fillStyle = CC_SPEAKER;
+        ctx.fillText(speaker, wx, textY);
+        wx += speakerW;
+      }
       for (const word of words) {
         const i = wordAt++;
         const isNow = i === now;
