@@ -5,6 +5,7 @@ import {
   splitSpeaker, spokenWords,
 } from '../../public/scripts/tik/caption.js';
 import { captionStyleOf, CAPTION_STYLES } from '../../public/scripts/tik/compose.js';
+import { speakerLabel } from '../../netlify/functions/lib/srt.mjs';
 
 // Fake measurer: every character is 10px wide.
 const measure10 = (s) => s.length * 10;
@@ -188,4 +189,23 @@ test('an exchange times as one run of speech across both lines', () => {
   const spans = wordProgress(flat);
   assert.equal(spans[0].from, 0);
   assert.equal(spans.at(-1).to, 1);
+});
+
+
+test('the client and the server agree on what a speaker label is', () => {
+  // The pattern is duplicated across the no-bundler boundary. If they drift,
+  // the server strips a label the client still highlights, or the reverse.
+  const lines = [
+    'VIZZINI: Inconceivable!',
+    'Miracle Max: Have fun storming the castle!',
+    'The Dread Pirate Roberts: As you wish.',
+    'Inconceivable!',
+    'as you wish: lowercase is not a name',
+    '',
+    'INIGO MONTOYA: Hello.',
+    'Dr. No: A pleasure.',
+  ];
+  for (const line of lines) {
+    assert.equal(splitSpeaker(line).speaker, speakerLabel(line), `disagreed on: ${line}`);
+  }
 });
