@@ -127,6 +127,7 @@ export function makeProject({ id, format, now }) {
     titleLine: '',
     // Quote-a-long:
     output: 'slides',          // 'slides' | 'video' — a clip cut from the movie file
+    captionStyle: 'pills',     // video only: 'pills' | 'cc' | 'karaoke'
     // Freeform:
     topic: '',                 // the brief the whole set was written from
     freeformCount: null,       // how many slides were asked for

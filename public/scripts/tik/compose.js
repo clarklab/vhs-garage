@@ -4,7 +4,7 @@
 // rounded "pills", one pill per wrapped line. composeToCanvas() draws onto a
 // canvas you own (live preview thumbs); composeSlide() renders → JPEG Blob.
 import { computeSlideLayout, containFrame } from './layout.js';
-import { wrapLines, fitFontSize } from './caption.js';
+import { wrapLines, fitFontSize, wordProgress, spokenIndex } from './caption.js';
 import { filterString, zoomSourceRect } from './adjust.js';
 
 const CANVAS_W = 1080;
@@ -54,6 +54,25 @@ const PILL_PAD_X = 26;             // pill padding around each line
 const PILL_PAD_Y = 12;
 const PILL_RADIUS = 18;
 const PILL_GAP = 8;                // vertical gap between line pills
+
+// Caption looks. `pills` is the slideshow's white lozenges — the house style,
+// and still the default everywhere. The other two are for the video format,
+// where a still's design does not automatically hold up over moving film:
+//
+//   cc       what a subtitle looks like: white on a dark box, under the picture.
+//   karaoke  the same box, with the word being spoken lit up. The timing comes
+//            from the line's own subtitle cue, so it needs no speech model.
+export const CAPTION_STYLES = ['pills', 'cc', 'karaoke'];
+export function captionStyleOf(v) {
+  return CAPTION_STYLES.includes(v) ? v : 'pills';
+}
+const CC_BG = 'rgba(0, 0, 0, 0.78)';
+const CC_PAD_X = 22;
+const CC_RADIUS = 8;
+const CC_SAID = '#ffffff';
+const CC_TO_COME = 'rgba(255, 255, 255, 0.5)';
+const CC_NOW = '#fde047';          // the word being said, in VHS-yellow
+const CC_NOW_GLOW = 'rgba(253, 224, 71, 0.55)';
 const FIT_VPAD = 40;               // margin above/below the group in ratio mode
 
 // Rounded-rect path (fallback-safe: not all canvas impls have ctx.roundRect).
@@ -244,7 +263,8 @@ export function wantsLeftAlign({ format, kind, lines } = {}) {
   return (Array.isArray(lines) ? lines : []).filter((l) => String(l || '').trim()).length > 1;
 }
 
-export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null, format, kind, adjust = null, stampNudge = 0 } = {}) {
+export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null, format, kind, adjust = null, stampNudge = 0,
+  captionStyle = 'pills', karaokeProgress = null } = {}) {
   const fs = Math.min(Math.max(Number(fontScale) || 1, 0.5), 1.6);
   const heightRatio = Number.isFinite(maxFrameHeightRatio)
     ? Math.min(Math.max(maxFrameHeightRatio, 0.05), 1)
@@ -346,31 +366,86 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   } else {
     drawFrame();
   }
-  // Caption pills: white rounded pill per line, bold black centered text.
-  // Blank lines (blank paragraph in the textarea) get no pill — just space.
+  // The caption, in whichever of the three looks was asked for. All of them
+  // stack under the picture, never over it.
   if (lines.length) {
     ctx.font = FONT(fontSize);
     ctx.textBaseline = 'middle';
     const left = wantsLeftAlign({ format, kind, lines });
     ctx.textAlign = left ? 'left' : 'center';
     const cx = CANVAS_W / 2;
-    const pillW = (line) => Math.min(ctx.measureText(line).width + PILL_PAD_X * 2, CANVAS_W - 40);
+    const style = captionStyleOf(captionStyle);
+    const padX = style === 'pills' ? PILL_PAD_X : CC_PAD_X;
+    const boxW = (line) => Math.min(ctx.measureText(line).width + padX * 2, CANVAS_W - 40);
     // Flush to the frame's own left edge so the block reads as one column with
-    // the image, and never so far right that the widest pill runs off-canvas.
-    const widest = left ? Math.max(...lines.filter(Boolean).map(pillW)) : 0;
+    // the image, and never so far right that the widest box runs off-canvas.
+    const widest = left ? Math.max(...lines.filter(Boolean).map(boxW)) : 0;
     const leftX = Math.max(20, Math.min(frameX, CANVAS_W - 20 - widest));
+    const boxH = lineBoxH(fontSize);
+
+    // Karaoke lights one word at a time, and the words run across the WHOLE
+    // caption rather than restarting per line — the line breaks are a wrapping
+    // accident, the delivery is not.
+    const flat = style === 'karaoke'
+      ? lines.flatMap((line) => (line ? line.split(/\s+/).filter(Boolean) : []))
+      : [];
+    const spans = flat.length ? wordProgress(flat) : [];
+    const now = spans.length ? spokenIndex(spans, karaokeProgress) : -1;
+    let wordAt = 0;
+
     let y = frameY + F.h + GAP;
     for (const line of lines) {
-      const pillH = lineBoxH(fontSize);
-      if (!line) { y += pillH + PILL_GAP; continue; } // no empty white blob
-      const w = pillW(line);
+      if (!line) { y += boxH + PILL_GAP; continue; } // blank line: just space
+      const w = boxW(line);
       const x = left ? leftX : cx - w / 2;
-      ctx.fillStyle = '#ffffff';
-      pillPath(ctx, x, y, w, pillH, PILL_RADIUS);
+      const textY = y + boxH / 2 + 1;
+
+      if (style === 'pills') {
+        ctx.fillStyle = '#ffffff';
+        pillPath(ctx, x, y, w, boxH, PILL_RADIUS);
+        ctx.fill();
+        ctx.fillStyle = '#000000';
+        ctx.fillText(line, left ? x + PILL_PAD_X : cx, textY);
+        y += boxH + PILL_GAP;
+        continue;
+      }
+
+      // Closed-caption box: white on near-black, the way a subtitle looks.
+      ctx.fillStyle = CC_BG;
+      pillPath(ctx, x, y, w, boxH, CC_RADIUS);
       ctx.fill();
-      ctx.fillStyle = '#000000';
-      ctx.fillText(line, left ? x + PILL_PAD_X : cx, y + pillH / 2 + 1);
-      y += pillH + PILL_GAP;
+
+      if (style !== 'karaoke') {
+        ctx.fillStyle = CC_SAID;
+        ctx.fillText(line, left ? x + CC_PAD_X : cx, textY);
+        y += boxH + PILL_GAP;
+        continue;
+      }
+
+      // Word by word, so each can carry its own colour. Drawn from the line's
+      // own left edge with textAlign left, because centring per word would
+      // space them evenly instead of naturally.
+      const words = line.split(/\s+/).filter(Boolean);
+      const spaceW = ctx.measureText(' ').width;
+      const lineW = words.reduce((t, word, i) => t + ctx.measureText(word).width + (i ? spaceW : 0), 0);
+      const prevAlign = ctx.textAlign;
+      ctx.textAlign = 'left';
+      let wx = left ? x + CC_PAD_X : cx - lineW / 2;
+      for (const word of words) {
+        const i = wordAt++;
+        const isNow = i === now;
+        if (isNow) {
+          ctx.save();
+          ctx.shadowColor = CC_NOW_GLOW;
+          ctx.shadowBlur = 18;
+        }
+        ctx.fillStyle = isNow ? CC_NOW : (i < now ? CC_SAID : CC_TO_COME);
+        ctx.fillText(word, wx, textY);
+        if (isNow) ctx.restore();
+        wx += ctx.measureText(word).width + spaceW;
+      }
+      ctx.textAlign = prevAlign;
+      y += boxH + PILL_GAP;
     }
   }
   // The badge goes on LAST, over the pills. It can be nudged down past the
