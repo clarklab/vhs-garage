@@ -3336,9 +3336,11 @@ els.clipRender.addEventListener('click', async () => {
       maxFrameHeightRatio: frameHeightRatio(),
       format: project.format,
       kind: slide.kind,
-      // A scene is live film: the still's colour correction was measured on one
-      // frozen frame and the zoom crop would fight the motion.
-      adjust: part.kind === 'scene' ? null : slide.adjust,
+      // Whatever correction the slide carries applies to the moving frame too:
+      // a scene that needed brightening is dark for its whole span, and a zoom
+      // is a framing choice, not a property of one frozen frame. Neutral is the
+      // usual case and costs nothing.
+      adjust: slide.adjust,
       stampNudge: slide.stampNudge || 0,
     });
   };

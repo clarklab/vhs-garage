@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   sceneWindow, planClip, pickClipMime, extensionForMime, describePlan, silenceReason, NO_FILM_AUDIO_NOTE,
-  PAD_BEFORE, PAD_AFTER, MIN_SCENE, MAX_SCENE, GUESS_SCENE, STILL_SECONDS, CLIP_MIME_CANDIDATES,
+  titleWindow,
+  PAD_BEFORE, PAD_AFTER, MIN_SCENE, MAX_SCENE, GUESS_SCENE, STILL_SECONDS, TITLE_SCENE_SECONDS,
+  CLIP_MIME_CANDIDATES,
 } from '../../public/scripts/tik/clip.js';
 
 const quote = (id, cue, timecode) => ({ id, kind: null, cue, timecode });
@@ -52,7 +54,7 @@ test('an unknown duration does not clamp anything away', () => {
   assert.equal(w.end, 604 + PAD_AFTER);
 });
 
-test('the plan is the set: title still, a scene per quote, sign-off still', () => {
+test('the plan is the set: title scene, a scene per quote, sign-off still', () => {
   const slides = [
     { id: 't', kind: 'title', timecode: 90 },
     quote('a', { start: 600, end: 603 }),
@@ -60,21 +62,57 @@ test('the plan is the set: title still, a scene per quote, sign-off still', () =
     { id: 'o', kind: 'outro' },
   ];
   const plan = planClip(slides, { duration: 7000, isTitle, isOutro });
-  assert.deepEqual(plan.parts.map((p) => p.kind), ['still', 'scene', 'scene', 'still']);
+  assert.deepEqual(plan.parts.map((p) => p.kind), ['scene', 'scene', 'scene', 'still']);
   assert.deepEqual(plan.parts.map((p) => p.slideId), ['t', 'a', 'b', 'o']);
-  assert.equal(plan.scenes, 2);
-  // Two stills plus both padded spans.
-  const expected = STILL_SECONDS * 2 + (3 + PAD_BEFORE + PAD_AFTER) + (4 + PAD_BEFORE + PAD_AFTER);
+  assert.equal(plan.scenes, 3);
+  const expected = TITLE_SCENE_SECONDS + STILL_SECONDS
+    + (3 + PAD_BEFORE + PAD_AFTER) + (4 + PAD_BEFORE + PAD_AFTER);
   assert.ok(Math.abs(plan.seconds - expected) < 1e-9, `${plan.seconds} vs ${expected}`);
 });
 
-test('the title card is a still even though it has a timecode', () => {
-  // It points at the film's title card, but the clip holds the composed slide
-  // rather than playing three seconds of main titles.
-  const plan = planClip([{ id: 't', kind: 'title', timecode: 90, cue: { start: 90, end: 95 } }],
+// ---- The opening plays ----
+
+test('the title card rolls four seconds from exactly the frame that was picked', () => {
+  // A frozen frame under a wordmark is a poster, not an opening.
+  const plan = planClip([{ id: 't', kind: 'title', timecode: 90 }], { duration: 7000, isTitle, isOutro });
+  assert.equal(plan.parts[0].kind, 'scene');
+  assert.equal(plan.parts[0].title, true);
+  assert.equal(plan.parts[0].start, 90, 'starts ON the still, with no run-up');
+  assert.equal(plan.parts[0].end, 90 + TITLE_SCENE_SECONDS);
+});
+
+test('the title ignores a cue and uses its own frame', () => {
+  // Its timecode points at the main-title shot; a cue on it would be a quote's.
+  const plan = planClip([{ id: 't', kind: 'title', timecode: 90, cue: { start: 600, end: 604 } }],
+    { duration: 7000, isTitle, isOutro });
+  assert.equal(plan.parts[0].start, 90);
+});
+
+test('a title frame near the end still gets its full four seconds', () => {
+  const w = titleWindow({ timecode: 6998 }, { duration: 7000 });
+  assert.equal(w.end, 7000);
+  assert.equal(w.end - w.start, TITLE_SCENE_SECONDS, 'backed up rather than cut short');
+});
+
+test('a title slide with no timecode stays a still', () => {
+  // Pasting an image clears the timecode, and there is no footage to roll.
+  const plan = planClip([{ id: 't', kind: 'title', caption: 'The Princess Bride' }],
     { duration: 7000, isTitle, isOutro });
   assert.equal(plan.parts[0].kind, 'still');
   assert.equal(plan.parts[0].seconds, STILL_SECONDS);
+  assert.equal(titleWindow({ timecode: null }, { duration: 7000 }), null);
+  assert.equal(titleWindow(null, {}), null);
+});
+
+test('the sign-off is still a still', () => {
+  // It is the logo, not a frame of the film: there is nothing to roll.
+  const plan = planClip([{ id: 'o', kind: 'outro', timecode: 500 }], { duration: 7000, isTitle, isOutro });
+  assert.equal(plan.parts[0].kind, 'still');
+});
+
+test('an unknown film length does not stop the opening', () => {
+  const w = titleWindow({ timecode: 90 }, { duration: 0 });
+  assert.deepEqual(w, { start: 90, end: 90 + TITLE_SCENE_SECONDS });
 });
 
 test('a quote with no timecode is reported, not silently dropped', () => {
