@@ -941,6 +941,15 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
               </div>
               <span id="clip-plan" class="text-[11px] tabular-nums text-neutral-500"></span>
             </div>
+            <!-- Video only: how the quote is drawn under the picture. -->
+            <div id="caption-styles" class="hidden flex-wrap items-center gap-2">
+              <span class="text-[11px] font-semibold uppercase tracking-[0.15em] text-neutral-500">Captions</span>
+              <div class="inline-flex overflow-hidden rounded-lg border border-neutral-800">
+                <button id="cap-pills" class="px-3 py-1.5 text-xs font-semibold">Pills</button>
+                <button id="cap-cc" class="px-3 py-1.5 text-xs font-semibold">Subtitle</button>
+                <button id="cap-karaoke" class="px-3 py-1.5 text-xs font-semibold">Karaoke</button>
+              </div>
+            </div>
             <div id="clip-controls" class="hidden flex-wrap items-center gap-2">
               <button id="clip-render"
                       class="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-500 disabled:opacity-40">

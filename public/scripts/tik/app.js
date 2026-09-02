@@ -10,9 +10,9 @@ import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, 
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory } from './auth.js';
 import { publishSlideshow, publishClip } from './publish.js';
 import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot, fetchQuotesPost, fetchImdbQuotes, fetchSubtitles, fetchFreeform, QUOTES_COUNT, QUOTES_POOL } from './autopilot.js';
-import { fontScaleForQuote } from './caption.js';
+import { fontScaleForQuote, cueProgress } from './caption.js';
 import { parseMovieName } from './filename.js';
-import { composeToCanvas, composeSlide, captionFontReady, quoteStampReady, wantsQuoteStamp, clampStampNudge, canNudgeStamp } from './compose.js';
+import { composeToCanvas, composeSlide, captionFontReady, quoteStampReady, wantsQuoteStamp, clampStampNudge, canNudgeStamp, captionStyleOf } from './compose.js';
 import { clockTimecode } from './timecode.js';
 import { PRESETS, applyPreset, autoLevels, describeAdjust, isNeutral, NEUTRAL } from './adjust.js';
 import {
@@ -119,6 +119,8 @@ const els = {
   clipControls: $('clip-controls'), clipRender: $('clip-render'), clipCancel: $('clip-cancel'),
   clipDownload: $('clip-download'), clipPreview: $('clip-preview'), clipNote: $('clip-note'),
   clipFix: $('clip-fix'), fileFix: $('file-fix'),
+  captionStyles: $('caption-styles'),
+  capPills: $('cap-pills'), capCc: $('cap-cc'), capKaraoke: $('cap-karaoke'),
   imgFile: $('img-file-input'),
 };
 
@@ -242,6 +244,7 @@ async function makeThumbBlob(slide) {
     titleLine: currentTitleLine(), scale: 0.12, fontScale: slide.fontScale || 1,
     maxFrameHeightRatio: frameHeightRatio(),
     format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0,
+    captionStyle: captionStyleNow(),
   });
   return await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.7));
 }
@@ -1248,6 +1251,7 @@ function openSlidePreview(slide) {
       fontScale: slide.fontScale || 1,
       maxFrameHeightRatio: frameHeightRatio(),
       format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0,
+    captionStyle: captionStyleNow(),
     });
     const idx = slides.findIndex((s) => s.id === slide.id);
     const scale = Math.round((slide.fontScale || 1) * 100);
@@ -2706,7 +2710,7 @@ function frameHeightRatio() {
 function redrawAllThumbs() {
   slides.forEach((slide) => {
     const thumb = els.list.querySelector(`canvas[data-thumb="${slide.id}"]`);
-    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0 });
+    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0, captionStyle: captionStyleNow() });
   });
 }
 
@@ -2759,6 +2763,7 @@ function renderSlide(slide, index) {
     titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1,
     maxFrameHeightRatio: frameHeightRatio(),
     format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0,
+    captionStyle: captionStyleNow(),
   });
   redrawThumb();
 
@@ -3154,7 +3159,7 @@ els.download.addEventListener('click', async () => {
     const titleLine = currentTitleLine();
     for (let i = 0; i < slides.length; i++) {
       els.status.textContent = `Rendering slide ${i + 1}/${slides.length}…`;
-      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slides[i].kind, adjust: slides[i].adjust, stampNudge: slides[i].stampNudge || 0 });
+      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slides[i].kind, adjust: slides[i].adjust, stampNudge: slides[i].stampNudge || 0, captionStyle: captionStyleNow() });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `${slug}-${String(i + 1).padStart(2, '0')}.jpg`;
@@ -3234,6 +3239,13 @@ function releaseClip() {
 
 // Put a fix-up command in `host`, or clear it. `spec` is falsy when there is
 // nothing wrong, which is the common case.
+// Which caption look to draw. Only the video format offers a choice; a
+// slideshow is always the house pills, so nothing here can change what the
+// photo post has always looked like.
+function captionStyleNow() {
+  return videoOutput() ? captionStyleOf(project?.captionStyle) : 'pills';
+}
+
 function showFix(host, spec) {
   host.innerHTML = '';
   host.classList.toggle('hidden', !spec);
@@ -3254,6 +3266,12 @@ function syncClipBar() {
   els.outVideo.className = `px-3 py-1.5 text-xs font-semibold ${video ? on : off}`;
   els.clipControls.classList.toggle('hidden', !video);
   els.clipControls.classList.toggle('flex', video);
+  els.captionStyles.classList.toggle('hidden', !video);
+  els.captionStyles.classList.toggle('flex', video);
+  const cap = captionStyleOf(project?.captionStyle);
+  for (const [key, btn] of [['pills', els.capPills], ['cc', els.capCc], ['karaoke', els.capKaraoke]]) {
+    btn.className = `px-3 py-1.5 text-xs font-semibold ${cap === key ? on : off}`;
+  }
 
   const plan = currentClipPlan();
   els.clipPlan.textContent = video ? describePlan(plan) : '';
@@ -3310,6 +3328,23 @@ function setOutput(mode) {
     ? 'Video format: render the clip, then post it.'
     : 'Back to the slideshow.';
 }
+function setCaptionStyle(style) {
+  if (!project || project.format !== 'quotes') return;
+  const next = captionStyleOf(style);
+  if (project.captionStyle === next) return;
+  project.captionStyle = next;
+  markDirty();
+  render();       // every thumbnail is drawn in the chosen look
+  syncClipBar();
+  els.status.textContent = next === 'karaoke'
+    ? 'Karaoke captions — the spoken word lights up, timed off each line’s subtitle cue.'
+    : next === 'cc' ? 'Subtitle captions — white on black, under the picture.'
+      : 'House pills.';
+}
+els.capPills.addEventListener('click', () => setCaptionStyle('pills'));
+els.capCc.addEventListener('click', () => setCaptionStyle('cc'));
+els.capKaraoke.addEventListener('click', () => setCaptionStyle('karaoke'));
+
 els.outSlides.addEventListener('click', () => setOutput('slides'));
 els.outVideo.addEventListener('click', () => setOutput('video'));
 
@@ -3330,6 +3365,12 @@ els.clipRender.addEventListener('click', async () => {
   const paint = (part) => {
     const slide = byId.get(part.slideId);
     if (!slide) return;
+    // Karaoke follows the line's own subtitle cue: where the playhead sits
+    // inside that span IS how far through the words we are. A line the matcher
+    // never placed has no honest timing, so it just sits there, lit or not.
+    const progress = part.kind === 'scene' && !part.title
+      ? cueProgress(els.video.currentTime, slide.cue)
+      : null;
     composeToCanvas(canvas, part.kind === 'scene' ? els.video : slide.bitmap, slide.caption, {
       titleLine: currentTitleLine(),
       fontScale: slide.fontScale || 1,
@@ -3342,6 +3383,8 @@ els.clipRender.addEventListener('click', async () => {
       // usual case and costs nothing.
       adjust: slide.adjust,
       stampNudge: slide.stampNudge || 0,
+      captionStyle: captionStyleNow(),
+      karaokeProgress: progress,
     });
   };
 
