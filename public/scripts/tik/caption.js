@@ -47,6 +47,28 @@ export function fontScaleForQuote(text) {
   return 0.85;
 }
 
+// A "Name:" label at the head of a line.
+//
+// Quote-a-long writes an exchange as one line per character, "Name: line", so
+// the label is on screen but nobody says it. For karaoke that matters twice
+// over: it must not light up, and it must not eat any of the line's time.
+//
+// MUST MATCH the speaker-label pattern in netlify/functions/lib/srt.mjs, which
+// strips these before matching a quote to its subtitle cue.
+const SPEAKER = /^\s*([A-Z][A-Za-z0-9 .'\-]{1,40}:)\s*/;
+
+export function splitSpeaker(line) {
+  const text = String(line ?? '');
+  const m = text.match(SPEAKER);
+  if (!m) return { speaker: '', said: text };
+  return { speaker: m[1], said: text.slice(m[0].length) };
+}
+
+// The words of a line that are actually spoken, label dropped.
+export function spokenWords(line) {
+  return splitSpeaker(line).said.split(/\s+/).filter(Boolean);
+}
+
 // ---- Karaoke: which word is being said right now ----
 //
 // No library, and no speech recognition: the subtitle cue already says when a

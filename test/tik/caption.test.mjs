@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   wrapLines, fitFontSize, fontScaleForQuote, wordProgress, spokenIndex, cueProgress, wordWeights,
+  splitSpeaker, spokenWords,
 } from '../../public/scripts/tik/caption.js';
 import { captionStyleOf, CAPTION_STYLES } from '../../public/scripts/tik/compose.js';
 
@@ -144,4 +145,47 @@ test('anything unknown falls back to the house pills', () => {
   assert.equal(captionStyleOf('fancy'), 'pills');
   assert.equal(captionStyleOf('karaoke'), 'karaoke');
   assert.equal(captionStyleOf('cc'), 'cc');
+});
+
+
+// ---- The speaker label is written, not spoken ----
+
+test('a "Name:" label is split off the line', () => {
+  assert.deepEqual(splitSpeaker('INIGO: Hello. My name is Inigo Montoya.'),
+    { speaker: 'INIGO:', said: 'Hello. My name is Inigo Montoya.' });
+  assert.deepEqual(splitSpeaker('Miracle Max: Have fun storming the castle!'),
+    { speaker: 'Miracle Max:', said: 'Have fun storming the castle!' });
+});
+
+test('a line with no label is all spoken', () => {
+  assert.deepEqual(splitSpeaker('Inconceivable!'), { speaker: '', said: 'Inconceivable!' });
+  assert.deepEqual(splitSpeaker(''), { speaker: '', said: '' });
+  assert.deepEqual(splitSpeaker(null), { speaker: '', said: '' });
+  assert.equal(splitSpeaker('as you wish: a lowercase thought').speaker, '', 'a label starts capitalised');
+});
+
+test('the label takes none of the line’s time', () => {
+  // The whole point: a long character name must not push the highlight late.
+  const bare = wordProgress(spokenWords('As you wish.'));
+  const named = wordProgress(spokenWords('WESTLEY: As you wish.'));
+  assert.deepEqual(named, bare);
+  const longer = wordProgress(spokenWords('The Dread Pirate Roberts: As you wish.'));
+  assert.deepEqual(longer, bare, 'however long the name is');
+});
+
+test('the label is never one of the words that lights up', () => {
+  const words = spokenWords('VIZZINI: Inconceivable!');
+  assert.deepEqual(words, ['Inconceivable!']);
+  const spans = wordProgress(words);
+  assert.equal(spans.length, 1);
+  assert.equal(spokenIndex(spans, 0.5), 0, 'the first lit word is the first SPOKEN word');
+});
+
+test('an exchange times as one run of speech across both lines', () => {
+  // Two characters, two labels, and the words still tile 0..1 end to end.
+  const flat = ['INIGO: Hello.', 'VIZZINI: Inconceivable!'].flatMap((l) => spokenWords(l));
+  assert.deepEqual(flat, ['Hello.', 'Inconceivable!']);
+  const spans = wordProgress(flat);
+  assert.equal(spans[0].from, 0);
+  assert.equal(spans.at(-1).to, 1);
 });
