@@ -25,7 +25,8 @@ import { storageAvailable, putProject, getProject, listProjects, deleteProject }
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
 import { composePair, pairLayoutOf, otherLayout, PAIR_LAYOUT_LABELS } from './pair.js';
-import { planClip, recordClip, describePlan, silenceReason, probeFilmAudio, NO_FILM_AUDIO_NOTE, CLIP_FPS } from './clip.js';
+import { planClip, recordClip, describePlan, silenceReason, probeFilmAudio, NO_FILM_AUDIO_NOTE, CLIP_FPS,
+  sceneWindow, titleWindow, nudgeTrim, describeTrim, isTrimmed } from './clip.js';
 import { ffmpegAacCommand, ffmpegH264Command, NO_DECODE_NOTE } from './ffmpeg.js';
 import { fixNote } from './fixnote.js';
 import {
@@ -80,6 +81,9 @@ const els = {
   triviaSeedShowLabel: $('trivia-seed-show-label'),
   slidePreview: $('slide-preview'), slidePreviewCanvas: $('slide-preview-canvas'),
   slidePreviewClose: $('slide-preview-close'), slidePreviewMeta: $('slide-preview-meta'),
+  clipTrim: $('clip-trim'), trimSpan: $('trim-span'), trimReset: $('trim-reset'),
+  trimInEarlier: $('trim-in-earlier'), trimInLater: $('trim-in-later'),
+  trimOutEarlier: $('trim-out-earlier'), trimOutLater: $('trim-out-later'),
   videoReload: $('video-reload'), videoReloadLabel: $('video-reload-label'),
   video: $('video'), range: $('scrub-range'), timecode: $('timecode'), play: $('play-btn'),
   grab: $('grab-btn'), grabIcon: $('grab-icon'), grabLabel: $('grab-label'),
@@ -269,6 +273,8 @@ async function serializeProject() {
       adjust: s.adjust || null,
       // Where the Quote-a-long badge was nudged to on this title card.
       stampNudge: clampStampNudge(s.stampNudge),
+      // Hand trim on this scene's span, in the video format.
+      trim: s.trim?.before || s.trim?.after ? { before: s.trim.before || 0, after: s.trim.after || 0 } : null,
       frame: await frameBlobFor(s),
     });
   }
@@ -530,6 +536,7 @@ async function openProject(id) {
         entry: s.entry || null, section: s.section || null, cue: s.cue || null,
         search: s.search || '', adjust: s.adjust || null,
         stampNudge: clampStampNudge(s.stampNudge),
+        trim: s.trim?.before || s.trim?.after ? { before: s.trim.before || 0, after: s.trim.after || 0 } : null,
         pairFrames: s.pairFrames?.length === 2 ? s.pairFrames : null,
         pairLayout: s.pairFrames?.length === 2 ? pairLayoutOf(s.pairLayout) : null,
       });
@@ -1243,6 +1250,110 @@ document.addEventListener('pointerdown', (e) => {
 // enough to judge a line break. This renders the same composed slide big, from
 // the same code path the upload uses, so what you tune is what ships.
 const PREVIEW_MODAL_SCALE = 0.5;
+
+// ---- Previewing a scene, and trimming it ----
+//
+// In the video format a slide is not a still: it is a span of film. Showing the
+// frozen frame tells you nothing about whether the line finishes inside it,
+// which is exactly the thing that needs checking. So the preview PLAYS the
+// span, on a loop, through the same compose code the clip uses — and the two
+// pairs of buttons under it move each end a second at a time.
+let previewLoop = null;   // { id, timer, wasMuted } while a scene is looping
+
+function stopPreviewLoop() {
+  if (!previewLoop) return;
+  clearInterval(previewLoop.timer);
+  try { els.video.pause(); } catch { /* already stopped */ }
+  els.video.muted = previewLoop.wasMuted;
+  previewLoop = null;
+}
+
+// The span this slide would contribute to the clip, trim included.
+function previewWindow(slide) {
+  if (!slide || project?.format !== 'quotes') return null;
+  const duration = videoReady ? els.video.duration : 0;
+  const index = slides.findIndex((s) => s.id === slide.id);
+  if (isOutroSlide(slide)) return null;             // the sign-off is a held card
+  if (isIntroSlide(slide, index, project?.format)) return titleWindow(slide, { duration });
+  return sceneWindow(slide, { duration });
+}
+
+function syncTrimControls(slide, win) {
+  const on = !!win && videoOutput() && videoReady;
+  els.clipTrim.classList.toggle('hidden', !on);
+  els.clipTrim.classList.toggle('flex', on);
+  if (!on) return;
+  const len = (win.end - win.start).toFixed(1);
+  const hand = describeTrim(slide);
+  els.trimSpan.textContent = `${clockTimecode(win.start)} - ${clockTimecode(win.end)} · ${len}s${hand ? ` · ${hand}` : ''}`;
+  els.trimReset.disabled = !isTrimmed(slide);
+  els.trimReset.classList.toggle('opacity-40', !isTrimmed(slide));
+}
+
+// Loop the span, drawing the full composed slide every frame.
+function playPreviewScene(slide, win) {
+  stopPreviewLoop();
+  const byKaraoke = () => cueProgress(els.video.currentTime, slide.cue);
+  const draw = () => composeToCanvas(els.slidePreviewCanvas, els.video, slide.caption, {
+    titleLine: currentTitleLine(),
+    scale: PREVIEW_MODAL_SCALE,
+    fontScale: slide.fontScale || 1,
+    maxFrameHeightRatio: frameHeightRatio(),
+    format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0,
+    captionStyle: captionStyleNow(),
+    karaokeProgress: isIntroSlide(slide, slides.indexOf(slide), project?.format) ? null : byKaraoke(),
+  });
+  const restart = () => {
+    els.video.currentTime = win.start;
+    els.video.play().catch((e) => {
+      // A browser can refuse to play audio without a gesture. Motion is the
+      // point here, so fall back to a silent loop rather than a frozen frame.
+      console.warn('[tik] preview playback refused with sound; retrying muted:', e);
+      els.video.muted = true;
+      els.video.play().catch((e2) => console.error('[tik] preview would not play at all:', e2));
+    });
+  };
+  // Out loud: the whole question here is whether the line finishes inside the
+  // span, and that is a question about the audio.
+  const wasMuted = els.video.muted;
+  els.video.muted = false;
+  restart();
+  const timer = setInterval(() => {
+    draw();
+    if (els.video.currentTime >= win.end) restart(); // loop the span
+  }, 1000 / 30);
+  previewLoop = { id: slide.id, timer, wasMuted };
+}
+
+function nudgePreview(edge, dir) {
+  const slide = slides.find((s) => s.id === previewLoop?.id) || null;
+  if (!slide) return;
+  const trim = nudgeTrim(slide, edge, dir);
+  slide.trim = trim;
+  slides = slides.map((s) => (s.id === slide.id ? { ...s, trim } : s));
+  markDirty();          // also marks any rendered clip stale
+  const win = previewWindow(slide);
+  if (!win) return;
+  syncTrimControls(slide, win);
+  playPreviewScene(slide, win);   // restart on the new span so the change is audible
+  els.status.textContent = `Scene ${(win.end - win.start).toFixed(1)}s. Render again to put it in the clip.`;
+}
+
+els.trimInEarlier.addEventListener('click', () => nudgePreview('before', +1));
+els.trimInLater.addEventListener('click', () => nudgePreview('before', -1));
+els.trimOutLater.addEventListener('click', () => nudgePreview('after', +1));
+els.trimOutEarlier.addEventListener('click', () => nudgePreview('after', -1));
+els.trimReset.addEventListener('click', () => {
+  const slide = slides.find((s) => s.id === previewLoop?.id);
+  if (!slide) return;
+  slide.trim = null;
+  slides = slides.map((s) => (s.id === slide.id ? { ...s, trim: null } : s));
+  markDirty();
+  const win = previewWindow(slide);
+  if (win) { syncTrimControls(slide, win); playPreviewScene(slide, win); }
+  els.status.textContent = 'Scene back to its matched span.';
+});
+
 function openSlidePreview(slide) {
   captionFontReady().then(() => {
     composeToCanvas(els.slidePreviewCanvas, slide.bitmap, slide.caption, {
@@ -1259,9 +1370,15 @@ function openSlidePreview(slide) {
       `Slide ${idx + 1} of ${slides.length} · text ${scale}%${scale === 100 ? ' (auto)' : ''}`;
     els.slidePreview.classList.remove('hidden');
     els.slidePreview.classList.add('flex');
+    // Video format: this slide is a span of film, so play it rather than
+    // showing the frame it happens to start on.
+    const win = videoOutput() && videoReady ? previewWindow(slide) : null;
+    syncTrimControls(slide, win);
+    if (win) playPreviewScene(slide, win); else stopPreviewLoop();
   }).catch((e) => console.error('[tik] slide preview failed:', e));
 }
 function closeSlidePreview() {
+  stopPreviewLoop();
   els.slidePreview.classList.add('hidden');
   els.slidePreview.classList.remove('flex');
 }

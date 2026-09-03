@@ -26,6 +26,8 @@ export const TITLE_SCENE_SECONDS = 4;
 export const CLIP_FPS = 30;
 export const CLIP_VIDEO_BPS = 6_000_000;
 export const CLIP_AUDIO_BPS = 128_000;
+export const TRIM_STEP = 1;        // one tap of a nudge button, in seconds
+export const TRIM_LIMIT = 30;      // as far as a single scene can be stretched either way
 export const LONG_CLIP_SECONDS = 180; // past this, say so — nobody watches three minutes
 
 // Number(null) is 0 and Number('') is 0, and a slide with no timecode taking
@@ -35,6 +37,41 @@ const num = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
+
+// A hand trim on one scene: seconds ADDED before its start and after its end.
+//
+// Stored as deltas rather than absolute times, so a scene keeps the adjustment
+// when the line is re-matched to its cue — and so "give me two more seconds at
+// the end" survives the quote text changing underneath it.
+export function trimOf(slide) {
+  const n = (v) => {
+    const x = Number(v);
+    if (!Number.isFinite(x)) return 0;
+    return Math.min(TRIM_LIMIT, Math.max(-TRIM_LIMIT, x));
+  };
+  return { before: n(slide?.trim?.before), after: n(slide?.trim?.after) };
+}
+
+// One tap of a nudge button. `edge` is 'before' or 'after'; `dir` is +1 to give
+// the scene more film and -1 to take some back.
+export function nudgeTrim(slide, edge, dir, step = TRIM_STEP) {
+  const trim = trimOf(slide);
+  const key = edge === 'before' ? 'before' : 'after';
+  const next = trim[key] + (dir >= 0 ? step : -step);
+  return { ...trim, [key]: Math.min(TRIM_LIMIT, Math.max(-TRIM_LIMIT, next)) };
+}
+
+export function isTrimmed(slide) {
+  const t = trimOf(slide);
+  return t.before !== 0 || t.after !== 0;
+}
+
+export function describeTrim(slide) {
+  const t = trimOf(slide);
+  if (!t.before && !t.after) return '';
+  const bit = (n, word) => (n ? `${n > 0 ? '+' : ''}${n}s ${word}` : '');
+  return [bit(t.before, 'in'), bit(t.after, 'out')].filter(Boolean).join(', ');
+}
 
 // Where in the film one quote slide's scene starts and ends.
 //
@@ -57,12 +94,20 @@ export function sceneWindow(slide, { duration = 0, padBefore = PAD_BEFORE, padAf
     return null; // no time at all: nothing to cut
   }
 
+  // The hand trim goes on before any clamping, so a nudge can push a scene
+  // past the automatic MAX_SCENE ceiling — that ceiling exists to catch a bad
+  // cue match, not to overrule someone who has watched the scene.
+  const trim = trimOf(slide);
+  start -= trim.before;
+  end += trim.after;
+
   const limit = duration > 0 ? duration : Infinity;
   start = Math.max(0, start);
   end = Math.min(Math.max(end, start + MIN_SCENE), limit);
   // Clamped at the end of the film? Take the length out of the front instead.
   if (end - start < MIN_SCENE) start = Math.max(0, end - MIN_SCENE);
-  if (end - start > MAX_SCENE) end = start + MAX_SCENE;
+  const ceiling = MAX_SCENE + Math.max(0, trim.before) + Math.max(0, trim.after);
+  if (end - start > ceiling) end = start + ceiling;
   if (!(end > start)) return null;
   return { start, end };
 }
@@ -79,11 +124,15 @@ export function sceneWindow(slide, { duration = 0, padBefore = PAD_BEFORE, padAf
 export function titleWindow(slide, { duration = 0, seconds = TITLE_SCENE_SECONDS } = {}) {
   const tc = num(slide?.timecode);
   if (tc === null) return null;
-  const want = Math.max(0.5, Number(seconds) || TITLE_SCENE_SECONDS);
+  const trim = trimOf(slide);
+  const base = Math.max(0.5, Number(seconds) || TITLE_SCENE_SECONDS);
   const limit = duration > 0 ? duration : Infinity;
-  let start = Math.max(0, tc);
-  let end = start + want;
-  // Picked near the end of the film: back up so the four seconds still exist,
+  // Both ends move outward from the picked frame: nudging the start earlier
+  // must ADD film, not slide the same four seconds backwards.
+  let start = Math.max(0, tc - trim.before);
+  let end = Math.max(0, tc) + base + trim.after;
+  const want = Math.max(0.5, end - start);
+  // Picked near the end of the film: back up so the length still exists,
   // rather than opening the post on a half-second of black.
   if (end > limit) {
     end = limit;
