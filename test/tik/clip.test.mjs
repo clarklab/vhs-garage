@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   sceneWindow, planClip, pickClipMime, extensionForMime, describePlan, silenceReason, NO_FILM_AUDIO_NOTE,
-  titleWindow,
+  titleWindow, trimOf, nudgeTrim, describeTrim, isTrimmed, TRIM_STEP, TRIM_LIMIT,
   PAD_BEFORE, PAD_AFTER, MIN_SCENE, MAX_SCENE, GUESS_SCENE, STILL_SECONDS, TITLE_SCENE_SECONDS,
   CLIP_MIME_CANDIDATES,
 } from '../../public/scripts/tik/clip.js';
@@ -232,4 +232,90 @@ test('the pre-flight warning names the codecs and the way out', () => {
   assert.match(NO_FILM_AUDIO_NOTE, /AAC/);
   // And it must not imply the film itself is broken — it plays fine elsewhere.
   assert.match(NO_FILM_AUDIO_NOTE, /this browser|Chrome/);
+});
+
+
+// ---- Trimming one scene by hand ----
+
+test('a nudge gives the scene more film at that end', () => {
+  const cue = { start: 600, end: 604 };
+  const plain = sceneWindow(quote('a', cue), { duration: 7000 });
+  const later = sceneWindow({ ...quote('a', cue), trim: { before: 0, after: 3 } }, { duration: 7000 });
+  assert.equal(later.start, plain.start, 'the front is untouched');
+  assert.equal(later.end, plain.end + 3);
+  const earlier = sceneWindow({ ...quote('a', cue), trim: { before: 2, after: 0 } }, { duration: 7000 });
+  assert.equal(earlier.start, plain.start - 2);
+  assert.equal(earlier.end, plain.end, 'and the back is untouched');
+});
+
+test('a negative nudge takes film back', () => {
+  const cue = { start: 600, end: 604 }; // short enough that nothing is capped
+  const plain = sceneWindow(quote('a', cue), { duration: 7000 });
+  const tighter = sceneWindow({ ...quote('a', cue), trim: { before: -1, after: -2 } }, { duration: 7000 });
+  assert.equal(tighter.start, plain.start + 1);
+  assert.equal(tighter.end, plain.end - 2);
+});
+
+test('a hand trim can push a scene past the automatic ceiling', () => {
+  // MAX_SCENE is there to catch a bad cue match, not to overrule someone who
+  // has just watched the scene and wants five more seconds of it.
+  const long = sceneWindow({ ...quote('a', { start: 600, end: 610 }), trim: { before: 0, after: 8 } },
+    { duration: 7000 });
+  assert.ok(long.end - long.start > MAX_SCENE, `${long.end - long.start}s should beat the ${MAX_SCENE}s ceiling`);
+});
+
+test('a trimmed scene still cannot run off either end of the film', () => {
+  const early = sceneWindow({ ...quote('a', { start: 1, end: 3 }), trim: { before: 30, after: 0 } },
+    { duration: 7000 });
+  assert.ok(early.start >= 0);
+  const late = sceneWindow({ ...quote('a', { start: 6990, end: 6995 }), trim: { before: 0, after: 30 } },
+    { duration: 7000 });
+  assert.ok(late.end <= 7000);
+});
+
+test('the title card can be trimmed the same way', () => {
+  const plain = titleWindow({ timecode: 90 }, { duration: 7000 });
+  const longer = titleWindow({ timecode: 90, trim: { before: 1, after: 2 } }, { duration: 7000 });
+  assert.equal(longer.start, 89, 'starts a second earlier');
+  assert.equal(longer.end - longer.start, (plain.end - plain.start) + 3);
+});
+
+test('nudging walks the trim a step at a time', () => {
+  let slide = quote('a', { start: 600, end: 604 });
+  for (let i = 0; i < 4; i++) slide = { ...slide, trim: nudgeTrim(slide, 'after', +1) };
+  assert.equal(trimOf(slide).after, 4 * TRIM_STEP);
+  slide = { ...slide, trim: nudgeTrim(slide, 'after', -1) };
+  assert.equal(trimOf(slide).after, 3 * TRIM_STEP);
+  assert.equal(trimOf(slide).before, 0, 'the other end never moves');
+});
+
+test('a trim cannot run away', () => {
+  let slide = quote('a', { start: 600, end: 604 });
+  for (let i = 0; i < 100; i++) slide = { ...slide, trim: nudgeTrim(slide, 'before', +1) };
+  assert.equal(trimOf(slide).before, TRIM_LIMIT);
+});
+
+test('an untrimmed slide reads as untrimmed, whatever junk it carries', () => {
+  assert.deepEqual(trimOf(null), { before: 0, after: 0 });
+  assert.deepEqual(trimOf({}), { before: 0, after: 0 });
+  assert.deepEqual(trimOf({ trim: { before: 'x', after: null } }), { before: 0, after: 0 });
+  assert.equal(isTrimmed({}), false);
+  assert.equal(isTrimmed({ trim: { before: 0, after: 2 } }), true);
+  assert.equal(describeTrim({}), '');
+});
+
+test('the trim reads back in plain words', () => {
+  assert.equal(describeTrim({ trim: { before: 2, after: 3 } }), '+2s in, +3s out');
+  assert.equal(describeTrim({ trim: { before: 0, after: -1 } }), '-1s out');
+});
+
+test('a plan picks up the trims', () => {
+  const slides = [
+    { id: 't', kind: 'title', timecode: 90 },
+    { ...quote('a', { start: 600, end: 603 }), trim: { before: 0, after: 5 } },
+  ];
+  const plan = planClip(slides, { duration: 7000, isTitle, isOutro });
+  const untrimmed = planClip([slides[0], quote('a', { start: 600, end: 603 })],
+    { duration: 7000, isTitle, isOutro });
+  assert.ok(Math.abs(plan.seconds - untrimmed.seconds - 5) < 1e-9, 'the clip is five seconds longer');
 });

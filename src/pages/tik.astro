@@ -590,6 +590,26 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
           </button>
         </div>
         <canvas id="slide-preview-canvas" class="max-h-[80vh] w-auto rounded-lg bg-black shadow-2xl"></canvas>
+        <!-- Video format only: the scene plays on a loop and can be trimmed a
+             second at a time from either end. -->
+        <div id="clip-trim" class="hidden w-full flex-wrap items-center justify-center gap-3 rounded-xl border border-neutral-800 bg-neutral-950 px-3 py-2">
+          <div class="flex items-center gap-1">
+            <span class="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Start</span>
+            <button id="trim-in-earlier" title="Start one second earlier"
+                    class="rounded-md bg-neutral-800 px-2 py-1 text-xs font-bold hover:bg-neutral-700">-1s</button>
+            <button id="trim-in-later" title="Start one second later"
+                    class="rounded-md bg-neutral-800 px-2 py-1 text-xs font-bold hover:bg-neutral-700">+1s</button>
+          </div>
+          <span id="trim-span" class="text-[11px] tabular-nums text-neutral-400"></span>
+          <div class="flex items-center gap-1">
+            <span class="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">End</span>
+            <button id="trim-out-earlier" title="End one second earlier"
+                    class="rounded-md bg-neutral-800 px-2 py-1 text-xs font-bold hover:bg-neutral-700">-1s</button>
+            <button id="trim-out-later" title="End one second later"
+                    class="rounded-md bg-neutral-800 px-2 py-1 text-xs font-bold hover:bg-neutral-700">+1s</button>
+          </div>
+          <button id="trim-reset" class="rounded-md border border-neutral-700 px-2 py-1 text-[11px] font-semibold text-neutral-300 hover:bg-neutral-800">Reset</button>
+        </div>
       </div>
     </div>
 
