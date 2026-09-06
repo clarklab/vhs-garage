@@ -5,9 +5,10 @@
 import { loadVideoFile, grabFrame, awaitSeekSettled, seekAndSettle } from './capture.js';
 import { initScrubber } from './scrubber.js';
 import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame } from './slides.js';
-// getRefreshToken is no longer needed here: the only fetch in this file that
-// used it (the hashtag panel) now goes through reports.js loadPosts().
-import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory } from './auth.js';
+// getRefreshToken is back for one caller: importing the posts that predate the
+// library reads them straight from TikTok. Everything else (the hashtag panel)
+// still goes through reports.js loadPosts().
+import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory, getRefreshToken } from './auth.js';
 import { publishSlideshow, publishClip } from './publish.js';
 import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot, fetchQuotesPost, fetchImdbQuotes, fetchSubtitles, fetchFreeform, QUOTES_COUNT, QUOTES_POOL } from './autopilot.js';
 import { fontScaleForQuote, cueProgress } from './caption.js';
@@ -20,6 +21,7 @@ import {
   sectionCaption, captionForYearEntry, photoQueryFor, renumberYearEntries,
   relativeTime, projectDisplayName, pickOutro, nextOutro, isIntroSlide, isOutroSlide, matchesSearch, captionForFreeform,
   STATUSES, statusOf, statusLabel, statusAfterOutroEdit, toggleReady,
+  importedProject, newImports, isImported,
 } from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
@@ -110,6 +112,7 @@ const els = {
   // hashtag performance, under the follower chart
   tagReport: $('tag-report'), tagReportNote: $('tag-report-note'), tagReportBody: $('tag-report-body'),
   openReports: $('open-reports'), connectHistoryBtn: $('connect-history'), reportsHint: $('reports-hint'),
+  importPosts: $('import-posts'),
   statsModes: $('stats-modes'), statsStyles: $('stats-styles'), statsForecast: $('stats-forecast'),
   statsLegend: $('stats-legend'),
   libraryFilters: $('library-filters'), libraryViews: $('library-views'),
@@ -951,7 +954,13 @@ async function renderLibrary() {
     name.textContent = projectDisplayName(rec);
     const sub = document.createElement('span');
     sub.className = 'flex items-center gap-1.5 text-[11px] text-neutral-500';
-    sub.innerHTML = `${formatBadge(rec)} <span>${(rec.slides || []).length} slides · ${relativeTime(rec.updatedAt || 0, Date.now())}</span>`;
+    // An imported post has no slides here and never will: it was published
+    // before this library existed, so say where it came from rather than
+    // reporting "0 slides" as though something went wrong.
+    const detail = isImported(rec)
+      ? `from TikTok · ${relativeTime(rec.postedAt || rec.updatedAt || 0, Date.now())}`
+      : `${(rec.slides || []).length} slides · ${relativeTime(rec.updatedAt || 0, Date.now())}`;
+    sub.innerHTML = `${formatBadge(rec)} <span>${detail}</span>`;
     meta.append(name, sub);
 
     card.append(frame, meta);
@@ -996,6 +1005,66 @@ els.connectHistoryBtn.addEventListener('click', async () => {
   } catch (e) {
     console.error('[tik] connecting post history failed:', e);
     alert(e.message);
+  }
+});
+
+// ---- Posts made before the studio existed ----
+//
+// Two dozen TikToks went out before any of this was recording what it made.
+// They are real posts and they belong in the library: in the list, in the
+// cadence numbers, and in the "already covered" list the batch picker reads off
+// the library. This pulls them from TikTok and writes one thin record each.
+els.importPosts.addEventListener('click', async () => {
+  if (!isSignedIn()) { alert('Sign in to TikTok first.'); return; }
+  if (!storageAvailable()) { alert('The local library is unavailable, so there is nowhere to put them.'); return; }
+  const token = getRefreshToken();
+  if (!token) { alert('Sign in to TikTok first.'); return; }
+  els.importPosts.disabled = true;
+  const say = (msg) => { els.reportsHint.textContent = msg; };
+  try {
+    say('Reading your TikTok posts…');
+    const res = await fetch('/.netlify/functions/tik-history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: token }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Could not read your posts (${res.status})`);
+    if (data.scope === 'missing') {
+      console.warn('[tik] import needs the video.list scope', { hint: data.hint });
+      say(`${data.error} ${data.hint || ''}`.trim());
+      return;
+    }
+    const rows = Array.isArray(data.rows) ? data.rows : [];
+    if (!rows.length) { say('TikTok returned no posts for this account.'); return; }
+
+    const existing = await listProjects().catch((e) => {
+      console.error('[tik] could not read the library before importing:', e);
+      return [];
+    });
+    const fresh = newImports(rows, existing);
+    if (!fresh.length) {
+      say(`Read ${rows.length} post${rows.length === 1 ? '' : 's'} — the library already has all of them.`);
+      return;
+    }
+    let added = 0;
+    for (const row of fresh) {
+      try {
+        await putProject(importedProject(row, { id: uuid() }));
+        added++;
+      } catch (e) {
+        console.error('[tik] could not save an imported post:', e, { id: row.id });
+      }
+    }
+    const unnamed = fresh.filter((r) => !r.movie).length;
+    say(`Added ${added} past post${added === 1 ? '' : 's'} to the library.`
+      + (unnamed ? ` ${unnamed} had no film in the title, so they count as posts but not as coverage.` : ''));
+    await renderLibrary();
+  } catch (e) {
+    console.error('[tik] importing past posts failed:', e);
+    say(e.message);
+  } finally {
+    els.importPosts.disabled = false;
   }
 });
 

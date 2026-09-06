@@ -122,6 +122,39 @@ export function summarizeHistory(rows, { format = 'trivia' } = {}) {
   return [...byMovie.values()].sort((a, b) => (b.postedAt || 0) - (a.postedAt || 0));
 }
 
+// Every post, as something the library can hold.
+//
+// summarizeHistory() answers "which films have we covered" and so keeps one row
+// per FILM. This keeps one row per POST, because the library is a list of posts
+// — including the couple of dozen made before the studio existed, and including
+// the ones whose title no longer names a film (a hand-retitled post is still a
+// post; it just cannot be gated on).
+//
+// Read-only: nothing here writes anything. The client decides what to import.
+export function importablePosts(rows) {
+  const out = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = String(row?.id ?? '').trim();
+    if (!id) continue;
+    const title = String(row?.title || '').trim();
+    const description = row?.video_description || row?.description || '';
+    const quotes = parsePostedQuotes(title, description);
+    const trivia = parsePostedMovie(title, description);
+    out.push({
+      id,
+      title,
+      // The film, when the title still names one, and which format made it.
+      movie: quotes || trivia || '',
+      format: quotes ? 'quotes' : trivia ? 'trivia' : null,
+      postedAt: numOrNull(row?.create_time),
+      views: numOrNull(row?.view_count),
+      likes: numOrNull(row?.like_count),
+      comments: numOrNull(row?.comment_count),
+    });
+  }
+  return out.sort((a, b) => (b.postedAt || 0) - (a.postedAt || 0));
+}
+
 // Every post that carried a hashtag, for the tag report.
 //
 // summarizeHistory() answers "which films have we covered", so it drops any

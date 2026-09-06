@@ -8,7 +8,7 @@
 // call 403s, and that is an expected state rather than a bug: we answer 200
 // with scope:'missing' so batch mode can fall back to the local library and
 // say why, instead of showing the user a broken screen.
-import { summarizeHistory, summarizeTagRows } from './lib/queue.mjs';
+import { summarizeHistory, summarizeTagRows, importablePosts } from './lib/queue.mjs';
 
 const CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY;
 const CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET;
@@ -51,7 +51,7 @@ export default async (req) => {
           // Expected until the portal grants video.list. Not an error state.
           console.warn('[tik-history] video.list not granted', { status: res.status, code });
           return json({
-            posts: [], movies: [], quoteMovies: [], tagRows: [], scope: 'missing',
+            posts: 0, rows: [], movies: [], quoteMovies: [], tagRows: [], scope: 'missing',
             error: 'This TikTok app has not been granted the video.list scope yet.',
             hint: 'Request the video.list scope in the TikTok developer portal, then use "Connect post history" to re-authorize. Batch mode uses your local library until then.',
           });
@@ -74,6 +74,9 @@ export default async (req) => {
   // answers "which tags work" (every tagged post, however it was retitled).
   return json({
     posts: posts.length,
+    // One row per post, so the library can take in what was published before
+    // it existed. summarizeHistory below still answers the coverage question.
+    rows: importablePosts(posts),
     movies: summarizeHistory(posts),
     quoteMovies: summarizeHistory(posts, { format: 'quotes' }),
     tagRows: summarizeTagRows(posts),
