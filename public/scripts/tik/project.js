@@ -471,3 +471,74 @@ export function relativeTime(ts, now) {
 export function projectDisplayName(p) {
   return (p?.name || '').trim() || 'Untitled';
 }
+
+
+// ---- Posts made before the studio existed ----
+//
+// A couple of dozen TikToks went out before any of this was recording what it
+// made. They are real posts: they belong in the library, in the cadence
+// numbers, and in the "already covered" list the batch picker reads. This turns
+// a row from the TikTok API into a library record.
+//
+// Deliberately thin: no slides, no thumb. It is a receipt for a post, not a
+// draft to re-open and edit.
+export function importedProject(row, { id, now = Date.now() } = {}) {
+  const movie = String(row?.movie || '').trim();
+  const title = String(row?.title || '').trim();
+  const format = row?.format === 'quotes' ? 'quotes' : 'trivia';
+  const postedAt = Number(row?.postedAt) ? Number(row.postedAt) * 1000 : now;
+  const base = makeProject({ id, format, now: postedAt });
+  return {
+    ...base,
+    name: movie || title || 'Untitled post',
+    // The picker gates on movie.title, so a post whose title no longer names a
+    // film lands in the library without claiming to cover one.
+    movie: movie ? { title: movie, year: null, query: movie } : null,
+    status: 'posted',
+    postedAt,
+    updatedAt: postedAt,
+    slides: [],
+    thumb: null,
+    // Where it came from, and what it did. `id` is TikTok's, and is what stops
+    // a second import creating a second copy.
+    imported: {
+      source: 'tiktok',
+      id: String(row?.id || ''),
+      title,
+      views: Number.isFinite(Number(row?.views)) ? Number(row.views) : null,
+      likes: Number.isFinite(Number(row?.likes)) ? Number(row.likes) : null,
+      comments: Number.isFinite(Number(row?.comments)) ? Number(row.comments) : null,
+    },
+  };
+}
+
+export function isImported(rec) {
+  return !!rec?.imported?.id;
+}
+
+// Which of these posts the library does not already hold.
+//
+// Two ways to already have one: the same TikTok post id (a second import), or
+// a project of the same format already naming that film (it was made here and
+// posted). Both are "we have this", and neither should produce a duplicate.
+export function newImports(rows, existing = []) {
+  const seenIds = new Set();
+  const seenFilms = new Set();
+  for (const rec of Array.isArray(existing) ? existing : []) {
+    if (rec?.imported?.id) seenIds.add(String(rec.imported.id));
+    const film = rec?.movie?.title;
+    if (film && rec.format) seenFilms.add(`${rec.format}::${String(film).trim().toLowerCase()}`);
+  }
+  const out = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = String(row?.id || '').trim();
+    if (!id || seenIds.has(id)) continue;
+    const film = String(row?.movie || '').trim().toLowerCase();
+    const key = film ? `${row.format === 'quotes' ? 'quotes' : 'trivia'}::${film}` : '';
+    if (key && seenFilms.has(key)) continue;
+    seenIds.add(id);
+    if (key) seenFilms.add(key);
+    out.push(row);
+  }
+  return out;
+}

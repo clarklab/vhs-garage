@@ -80,7 +80,7 @@ export function initBatch({ onExit = () => {} } = {}) {
     tabWrite: $('batch-tab-write'), tabShoot: $('batch-tab-shoot'),
     write: $('batch-write'), shoot: $('batch-shoot'),
     // write
-    suggest: $('batch-suggest'), suggestNote: $('batch-suggest-note'),
+    suggest: $('batch-suggest'), suggestNote: $('batch-suggest-note'), steer: $('batch-steer'),
     search: $('batch-search'), results: $('batch-search-results'),
     pasteBox: $('batch-paste-box'), paste: $('batch-paste'),
     pasteMatch: $('batch-paste-match'), pasteNote: $('batch-paste-note'),
@@ -257,13 +257,18 @@ async function suggestMovies() {
         : 'Using this device\'s library. Connect post history for real view counts.';
     }
 
-    const picks = await runQueueJob({ history, posted, count: 10, format: batchFormat });
+    // Whatever the user typed above the button: an actor, a director, a theme,
+    // a decade. The picker already knew how to take steering; nothing had ever
+    // handed it any.
+    const guidance = els.steer?.value.trim() || '';
+    const picks = await runQueueJob({ history, posted, count: 10, format: batchFormat, guidance });
 
     let added = 0;
     for (const pick of picks) if (addToQueue(pick) === 'added') added++;
+    const steered = guidance ? ` for “${guidance}”` : '';
     say(added
-      ? `Queued ${added} movie${added === 1 ? '' : 's'}.`
-      : 'Nothing new to add — all of those are already queued.', added ? 'good' : 'idle');
+      ? `Queued ${added} movie${added === 1 ? '' : 's'}${steered}.`
+      : `Nothing new to add${steered} — all of those are already queued.`, added ? 'good' : 'idle');
     render();
     prefetchPools(); // fills in the per-movie counts without the user clicking each one
   } catch (e) {
