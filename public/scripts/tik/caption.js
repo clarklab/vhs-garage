@@ -55,7 +55,7 @@ export function fontScaleForQuote(text) {
 //
 // MUST MATCH the speaker-label pattern in netlify/functions/lib/srt.mjs, which
 // strips these before matching a quote to its subtitle cue.
-const SPEAKER = /^\s*([A-Z][A-Za-z0-9 .'\-]{1,40}:)\s*/;
+const SPEAKER = /^\s*([\p{Lu}][\p{L}\p{N} .’'\-]{0,60}:)\s*/u;
 
 export function splitSpeaker(line) {
   const text = String(line ?? '');
@@ -66,7 +66,19 @@ export function splitSpeaker(line) {
 
 // The words of a line that are actually spoken, label dropped.
 export function spokenWords(line) {
-  return splitSpeaker(line).said.split(/\s+/).filter(Boolean);
+  return splitSpeaker(line).said.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+}
+
+// Mark names BEFORE wrapping: “The Man in Black:” may wrap onto two display
+// lines, but every part of it remains an unspoken label.
+export function karaokeTokens(text) {
+  return String(text || '').split('\n').flatMap((line) => {
+    const { speaker, said } = splitSpeaker(line);
+    return [
+      ...speaker.split(/\s+/).filter(Boolean).map((text) => ({ text, spoken: false })),
+      ...said.split(/\s+/).filter(Boolean).map((text) => ({ text, spoken: /[\p{L}\p{N}]/u.test(text) })),
+    ];
+  });
 }
 
 // ---- Karaoke: which word is being said right now ----
@@ -74,8 +86,8 @@ export function spokenWords(line) {
 // No library, and no speech recognition: the subtitle cue already says when a
 // line starts and stops, which is the hard half. The words inside it are spread
 // across that span by LENGTH — "inconceivable" takes longer to say than "a" —
-// which is the standard approximation and lands close enough that the highlight
-// reads as synced.
+// which is only an estimate. Cue anchors below keep that estimate from drifting
+// across a whole exchange and preserve the pauses between subtitle cues.
 //
 // A per-word constant goes in alongside the letters, because the gap between
 // two words costs time no matter how short they are.
@@ -106,6 +118,7 @@ export function wordProgress(words) {
 // caller can colour "already said" and "still to come" without special cases.
 export function spokenIndex(spans, progress) {
   if (!Array.isArray(spans) || !spans.length) return -1;
+  if (progress == null || progress === '') return -1;
   const p = Number(progress);
   if (!Number.isFinite(p)) return -1;
   if (p <= 0) return -1;
@@ -119,10 +132,33 @@ export function spokenIndex(spans, progress) {
 // Where a moment sits inside a cue, as 0..1. Null when there is nothing to
 // sync to — an unmatched line has no honest word timing, so it just sits there.
 export function cueProgress(t, cue) {
+  if (t == null || cue?.start == null || cue?.end == null) return null;
   const start = Number(cue?.start);
   const end = Number(cue?.end);
   const at = Number(t);
   if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(at)) return null;
   if (!(end > start)) return null;
   return Math.min(1, Math.max(0, (at - start) / (end - start)));
+}
+
+export function karaokeState(t, cue, caption) {
+  const idle = { active: -1, completed: 0 };
+  const words = String(caption || '').split('\n').flatMap(spokenWords);
+  if (!words.length || cueProgress(t, cue) == null) return idle;
+  // A manually edited caption must not animate using the old word ranges.
+  if (cue.caption != null && cue.caption !== caption) return idle;
+  const segments = Array.isArray(cue.segments) && cue.segments.length
+    ? cue.segments : [{ start: cue.start, end: cue.end, from: 0, to: words.length }];
+  let completed = 0;
+  for (const segment of segments) {
+    const { start, end, from, to } = segment;
+    if (![start, end, from, to].every(Number.isFinite) || end <= start
+      || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to <= from || to > words.length) return idle;
+    if (t < start) return { active: -1, completed };
+    if (t >= end) { completed = to; continue; }
+    const spans = wordProgress(words.slice(from, to));
+    const active = from + Math.max(0, spokenIndex(spans, (t - start) / (end - start)));
+    return { active, completed: active };
+  }
+  return { active: -1, completed };
 }

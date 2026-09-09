@@ -15,6 +15,7 @@
 import { getStore } from '@netlify/blobs';
 import { buildAutopilotPrompt, buildTitleSlidePrompt, buildQuotesPrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, QUOTES_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
 import { quoteHints, applyCueTimes } from './lib/srt.mjs';
+import { groundQuoteSuggestions } from './lib/quote-dialogue.mjs';
 import { buildFreeformPrompt, normalizeFreeform, FREEFORM_COUNT } from './lib/freeform.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
@@ -164,7 +165,9 @@ export default async (req) => {
       const base = titleOnly ? 1 : (Number(count) || (kind === 'quotes' ? QUOTES_COUNT : AUTOPILOT_COUNT));
       const max = (kind === 'quotes' ? includeTitleSlide !== false : includeTitleSlide) ? base + 1 : base;
       const parsed = parseModelJson(raw);
-      let suggestions = normalizeSuggestions(parsed, durationSeconds, max);
+      const grounded = kind === 'quotes'
+        ? groundQuoteSuggestions(parsed, quotes, { skipFirst: includeTitleSlide !== false }) : parsed;
+      let suggestions = normalizeSuggestions(grounded, durationSeconds, max, { verbatim: kind === 'quotes' });
       // Arithmetic beats the model's own bookkeeping: re-match every caption
       // against the FULL cue list and let that decide the timecode.
       if (kind === 'quotes') {

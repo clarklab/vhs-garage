@@ -1123,7 +1123,7 @@ async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
         role: null, kind: i === 0 ? 'title' : null, entry: null, section: null,
         // Where the timecode came from, so Shoot and the editor can say whether
         // it was matched against the subtitles or estimated.
-        cue: s.matched ? { start: s.start, end: s.end } : null,
+        cue: s.matched ? (s.cue || { start: s.start, end: s.end }) : null,
         frame,
         batchShot: i === 0 ? 'title' : (batchFormat === 'quotes' ? 'quotes' : 'trivia'),
       })),

@@ -319,3 +319,48 @@ test('a plan picks up the trims', () => {
     { duration: 7000, isTitle, isOutro });
   assert.ok(Math.abs(plan.seconds - untrimmed.seconds - 5) < 1e-9, 'the clip is five seconds longer');
 });
+
+test('half-second nudges move only the requested edge by exactly half a second', () => {
+  for (const cue of [{ start: 100, end: 104 }, { start: 100, end: 190 }]) {
+    const slide = quote('a', cue);
+    const plain = sceneWindow(slide);
+    for (const edge of ['before', 'after']) {
+      for (const dir of [-1, 1]) {
+        const changed = sceneWindow({ ...slide, trim: nudgeTrim(slide, edge, dir, 0.5) });
+        assert.equal(changed[edge === 'before' ? 'end' : 'start'], plain[edge === 'before' ? 'end' : 'start']);
+        assert.ok(Math.abs((edge === 'before' ? plain.start - changed.start : changed.end - plain.end) - dir * 0.5) < 1e-9);
+      }
+    }
+  }
+});
+
+test('complete dialogue beyond twelve seconds is preserved', () => {
+  const cut = sceneWindow(quote('a', { start: 100, end: 118 }));
+  assert.equal(cut.end, 118 + PAD_AFTER);
+});
+
+test('automatic padding stops before neighboring dialogue, even for short cues', () => {
+  const slide = quote('a', { start: 100, end: 100.5, previousEnd: 99.8, nextStart: 100.7 });
+  const cut = sceneWindow(slide);
+  assert.ok(cut.start >= 99.8 && cut.start <= 100);
+  assert.ok(cut.end >= 100.5 && cut.end < 100.7);
+  assert.ok(sceneWindow({ ...slide, trim: { after: 1 } }).end > 100.7, 'manual trims can include the next line');
+});
+
+test('manual cuts can be shorter than the automatic reading minimum', () => {
+  const cut = sceneWindow({ ...quote('a', { start: 100, end: 103 }), trim: { before: -2, after: -2 } });
+  assert.ok(cut.end - cut.start < MIN_SCENE);
+  assert.ok(cut.end - cut.start >= 0.5);
+});
+
+test('invalid spans never cut unrelated footage at the end of the film', () => {
+  assert.equal(sceneWindow(quote('a', { start: 100, end: 104 }), { duration: 50 }), null);
+  assert.equal(titleWindow({ timecode: 100 }, { duration: 50 }), null);
+});
+
+test('the title end trim still works when picked near the end of the film', () => {
+  const plain = titleWindow({ timecode: 98 }, { duration: 100 });
+  const cut = titleWindow({ timecode: 98, trim: { after: -0.5 } }, { duration: 100 });
+  assert.equal(cut.start, plain.start);
+  assert.equal(cut.end, plain.end - 0.5);
+});

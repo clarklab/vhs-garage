@@ -20,6 +20,8 @@ export const PAD_BEFORE = 1.2;   // seconds of run-up, so a line never starts mi
 export const PAD_AFTER = 1.6;    // and a beat afterwards, so the delivery can land
 export const MIN_SCENE = 2.5;
 export const MAX_SCENE = 12;     // a runaway cue span is a bad match, not a long scene
+export const MAX_MATCHED_SCENE = 45; // keep complete, bounded dialogue spans
+export const MIN_TRIMMED_SCENE = 0.5;
 export const GUESS_SCENE = 4.5;  // window for a line with no matched cue
 export const STILL_SECONDS = 2.2;
 export const TITLE_SCENE_SECONDS = 4;
@@ -56,6 +58,7 @@ export function trimOf(slide) {
 // the scene more film and -1 to take some back.
 export function nudgeTrim(slide, edge, dir, step = TRIM_STEP) {
   const trim = trimOf(slide);
+  if (!['before', 'after'].includes(edge) || !Number.isFinite(step) || step <= 0) return trim;
   const key = edge === 'before' ? 'before' : 'after';
   const next = trim[key] + (dir >= 0 ? step : -step);
   return { ...trim, [key]: Math.min(TRIM_LIMIT, Math.max(-TRIM_LIMIT, next)) };
@@ -84,9 +87,16 @@ export function sceneWindow(slide, { duration = 0, padBefore = PAD_BEFORE, padAf
   const tc = num(slide?.timecode);
   let start;
   let end;
-  if (cueStart !== null && cueEnd !== null && cueEnd > cueStart) {
+  const matched = cueStart !== null && cueEnd !== null && cueStart >= 0 && cueEnd > cueStart;
+  if (matched) {
     start = cueStart - padBefore;
     end = cueEnd + padAfter;
+    // Use the available gap; automatic padding should not include the next
+    // line of dialogue. Hand trims below can deliberately override this.
+    const previousEnd = num(slide.cue.previousEnd);
+    const nextStart = num(slide.cue.nextStart);
+    if (previousEnd !== null) start = Math.max(start, Math.min(cueStart, previousEnd + 0.08));
+    if (nextStart !== null) end = Math.min(end, Math.max(cueEnd, nextStart - 0.08));
   } else if (tc !== null) {
     start = tc - padBefore;
     end = tc + GUESS_SCENE;
@@ -94,20 +104,22 @@ export function sceneWindow(slide, { duration = 0, padBefore = PAD_BEFORE, padAf
     return null; // no time at all: nothing to cut
   }
 
-  // The hand trim goes on before any clamping, so a nudge can push a scene
-  // past the automatic MAX_SCENE ceiling — that ceiling exists to catch a bad
-  // cue match, not to overrule someone who has watched the scene.
-  const trim = trimOf(slide);
-  start -= trim.before;
-  end += trim.after;
-
   const limit = duration > 0 ? duration : Infinity;
+  if (start >= limit || (matched && cueStart >= limit)) return null;
   start = Math.max(0, start);
-  end = Math.min(Math.max(end, start + MIN_SCENE), limit);
+  // A legitimate exchange can exceed twelve seconds. Only unbounded legacy
+  // spans use the old safety cap, which must not chop a matched last line.
+  if (!matched || cueEnd - cueStart > MAX_MATCHED_SCENE) end = Math.min(end, start + MAX_SCENE);
+  const minimum = matched && (num(slide.cue.previousEnd) !== null || num(slide.cue.nextStart) !== null)
+    ? Math.min(MIN_SCENE, end - start) : MIN_SCENE;
+  end = Math.min(Math.max(end, start + minimum), limit);
   // Clamped at the end of the film? Take the length out of the front instead.
-  if (end - start < MIN_SCENE) start = Math.max(0, end - MIN_SCENE);
-  const ceiling = MAX_SCENE + Math.max(0, trim.before) + Math.max(0, trim.after);
-  if (end - start > ceiling) end = start + ceiling;
+  if (end - start < minimum) start = Math.max(0, end - minimum);
+  // Apply trims to the finished automatic window, so every half-second tap
+  // moves the requested edge by half a second, including capped legacy spans.
+  const trim = trimOf(slide);
+  start = Math.min(Math.max(0, start - trim.before), Math.max(0, end - MIN_TRIMMED_SCENE));
+  end = Math.min(limit, Math.max(start + MIN_TRIMMED_SCENE, end + trim.after));
   if (!(end > start)) return null;
   return { start, end };
 }
@@ -127,17 +139,19 @@ export function titleWindow(slide, { duration = 0, seconds = TITLE_SCENE_SECONDS
   const trim = trimOf(slide);
   const base = Math.max(0.5, Number(seconds) || TITLE_SCENE_SECONDS);
   const limit = duration > 0 ? duration : Infinity;
+  if (tc >= limit) return null;
   // Both ends move outward from the picked frame: nudging the start earlier
   // must ADD film, not slide the same four seconds backwards.
-  let start = Math.max(0, tc - trim.before);
-  let end = Math.max(0, tc) + base + trim.after;
-  const want = Math.max(0.5, end - start);
+  let start = Math.max(0, tc);
+  let end = start + base;
   // Picked near the end of the film: back up so the length still exists,
   // rather than opening the post on a half-second of black.
   if (end > limit) {
     end = limit;
-    start = Math.max(0, end - want);
+    start = Math.max(0, end - base);
   }
+  start = Math.min(Math.max(0, start - trim.before), Math.max(0, end - MIN_TRIMMED_SCENE));
+  end = Math.min(limit, Math.max(start + MIN_TRIMMED_SCENE, end + trim.after));
   if (!(end > start)) return null;
   return { start, end };
 }
@@ -354,13 +368,37 @@ function seekTo(video, t) {
   // Already there: setting currentTime to where it already is fires no 'seeked'
   // in some browsers, which would then sit out the whole timeout below.
   if (Math.abs(video.currentTime - t) < 0.05 && !video.seeking) return Promise.resolve();
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = () => { if (settled) return; settled = true; video.removeEventListener('seeked', done); resolve(); };
+  return new Promise((resolve, reject) => {
+    const cleanup = () => { clearTimeout(timer); video.removeEventListener('seeked', done); };
+    const done = () => {
+      cleanup();
+      if (Math.abs(video.currentTime - t) > 0.1) reject(new Error('The film did not seek to the requested scene.'));
+      else resolve();
+    };
+    const timer = setTimeout(() => {
+      cleanup(); reject(new Error('The film took too long to seek. Try a browser-compatible copy.'));
+    }, 4000);
     video.addEventListener('seeked', done);
-    try { video.currentTime = t; } catch { done(); }
-    setTimeout(done, 4000); // a seek that never reports is not a reason to hang
+    try { video.currentTime = t; } catch (error) { cleanup(); reject(error); }
   });
+}
+
+async function playForClip(video, signal) {
+  let timer, cancel;
+  try {
+    await Promise.race([
+      video.play(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('The film took too long to start playback.')), 5000);
+        cancel = () => reject(Object.assign(new Error('Clip cancelled.'), { cancelled: true }));
+        signal?.addEventListener('abort', cancel, { once: true });
+        if (signal?.aborted) cancel();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    if (cancel) signal?.removeEventListener('abort', cancel);
+  }
 }
 
 // Render the plan into one clip.
@@ -393,14 +431,17 @@ export async function recordClip({
   rec.onerror = (e) => console.error('[tik] recorder error:', e.error || e);
 
   const wasMuted = video.muted;
+  const wasRate = video.playbackRate;
   const restore = () => {
     if (audio) audio.speaker.gain.value = 1;
     video.muted = wasMuted;
+    video.playbackRate = wasRate;
     try { video.pause(); } catch { /* already stopped */ }
     for (const t of stream.getVideoTracks()) t.stop();
   };
   if (audio) audio.speaker.gain.value = 0; // record it, don't blast it
   video.muted = false;                      // the graph, not the element, is the volume
+  video.playbackRate = 1;
 
   const aborted = () => signal?.aborted;
   let done = 0;
@@ -412,6 +453,7 @@ export async function recordClip({
   const decodedBefore = video.webkitAudioDecodedByteCount;
 
   try {
+    video.pause();
     // Park on the first part's own footage BEFORE the recorder starts. Painting
     // first and seeking afterwards opened the clip on a frame or two of
     // wherever the playhead happened to be sitting — which, now that the title
@@ -442,20 +484,37 @@ export async function recordClip({
       if (rec.state === 'recording') rec.pause();
       await seekTo(video, part.start);
       if (aborted()) break;
-      if (rec.state === 'paused') rec.resume();
       paint(part);
-      await video.play().catch((e) => console.warn('[tik] play refused:', e));
-      const hardStop = Date.now() + (part.end - part.start + 5) * 1000 * 2;
-      while (video.currentTime < part.end && Date.now() < hardStop && !aborted()) {
-        paint(part);
-        if (scratch) audioPeak = Math.max(audioPeak, peakNow(audio.meter, scratch));
-        await wait(1000 / fps);
+      // Do not record startup latency or buffering as extra footage.
+      // A refused play must fail rather than producing a frozen scene.
+      await playForClip(video, signal);
+      if (rec.state === 'paused') rec.resume();
+      const onWaiting = () => { if (rec.state === 'recording') rec.pause(); };
+      const onPlaying = () => { if (rec.state === 'paused' && !aborted()) rec.resume(); };
+      video.addEventListener('waiting', onWaiting);
+      video.addEventListener('playing', onPlaying);
+      let lastTime = video.currentTime;
+      let lastAdvance = Date.now();
+      try {
+        while (video.currentTime < part.end && !aborted()) {
+          if (video.ended) {
+            if (part.end - video.currentTime > 0.1) throw new Error('The film ended before this scene finished.');
+            break;
+          }
+          if (video.currentTime > lastTime) { lastTime = video.currentTime; lastAdvance = Date.now(); }
+          else if (Date.now() - lastAdvance > 5000) throw new Error('Playback stalled while recording. Try rendering again.');
+          paint(part);
+          if (scratch) audioPeak = Math.max(audioPeak, peakNow(audio.meter, scratch));
+          await wait(1000 / fps);
+        }
+      } finally {
+        video.removeEventListener('waiting', onWaiting);
+        video.removeEventListener('playing', onPlaying);
+        try { video.pause(); } catch { /* fine */ }
       }
-      try { video.pause(); } catch { /* fine */ }
     }
   } finally {
-    if (rec.state !== 'inactive') rec.stop();
-    await stopped;
+    if (rec.state !== 'inactive') { rec.stop(); await stopped; }
     restore();
   }
 

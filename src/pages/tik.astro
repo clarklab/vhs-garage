@@ -600,21 +600,29 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
         </div>
         <canvas id="slide-preview-canvas" class="max-h-[80vh] w-auto rounded-lg bg-black shadow-2xl"></canvas>
         <!-- Video format only: the scene plays on a loop and can be trimmed a
-             second at a time from either end. -->
+             half-second or second at a time from either end. -->
         <div id="clip-trim" class="hidden w-full flex-wrap items-center justify-center gap-3 rounded-xl border border-neutral-800 bg-neutral-950 px-3 py-2">
           <div class="flex items-center gap-1">
             <span class="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Start</span>
-            <button id="trim-in-earlier" title="Start one second earlier"
+            <button id="trim-in-earlier" data-trim-edge="before" data-trim-dir="1" data-trim-step="1" title="Start one second earlier"
                     class="rounded-md bg-neutral-800 px-2 py-1 text-xs font-bold hover:bg-neutral-700">-1s</button>
-            <button id="trim-in-later" title="Start one second later"
+            <button data-trim-edge="before" data-trim-dir="1" data-trim-step="0.5" title="Start half a second earlier" aria-label="Start half a second earlier"
+                    class="rounded-md bg-neutral-800 px-2 py-1 text-xs font-bold hover:bg-neutral-700">-0.5s</button>
+            <button data-trim-edge="before" data-trim-dir="-1" data-trim-step="0.5" title="Start half a second later" aria-label="Start half a second later"
+                    class="rounded-md bg-neutral-800 px-2 py-1 text-xs font-bold hover:bg-neutral-700">+0.5s</button>
+            <button id="trim-in-later" data-trim-edge="before" data-trim-dir="-1" data-trim-step="1" title="Start one second later"
                     class="rounded-md bg-neutral-800 px-2 py-1 text-xs font-bold hover:bg-neutral-700">+1s</button>
           </div>
           <span id="trim-span" class="text-[11px] tabular-nums text-neutral-400"></span>
           <div class="flex items-center gap-1">
             <span class="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">End</span>
-            <button id="trim-out-earlier" title="End one second earlier"
+            <button id="trim-out-earlier" data-trim-edge="after" data-trim-dir="-1" data-trim-step="1" title="End one second earlier"
                     class="rounded-md bg-neutral-800 px-2 py-1 text-xs font-bold hover:bg-neutral-700">-1s</button>
-            <button id="trim-out-later" title="End one second later"
+            <button data-trim-edge="after" data-trim-dir="-1" data-trim-step="0.5" title="End half a second earlier" aria-label="End half a second earlier"
+                    class="rounded-md bg-neutral-800 px-2 py-1 text-xs font-bold hover:bg-neutral-700">-0.5s</button>
+            <button data-trim-edge="after" data-trim-dir="1" data-trim-step="0.5" title="End half a second later" aria-label="End half a second later"
+                    class="rounded-md bg-neutral-800 px-2 py-1 text-xs font-bold hover:bg-neutral-700">+0.5s</button>
+            <button id="trim-out-later" data-trim-edge="after" data-trim-dir="1" data-trim-step="1" title="End one second later"
                     class="rounded-md bg-neutral-800 px-2 py-1 text-xs font-bold hover:bg-neutral-700">+1s</button>
           </div>
           <button id="trim-reset" class="rounded-md border border-neutral-700 px-2 py-1 text-[11px] font-semibold text-neutral-300 hover:bg-neutral-800">Reset</button>
@@ -976,7 +984,7 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
               <div class="inline-flex overflow-hidden rounded-lg border border-neutral-800">
                 <button id="cap-pills" class="px-3 py-1.5 text-xs font-semibold">Pills</button>
                 <button id="cap-cc" class="px-3 py-1.5 text-xs font-semibold">Subtitle</button>
-                <button id="cap-karaoke" class="px-3 py-1.5 text-xs font-semibold">Karaoke</button>
+                <button id="cap-karaoke" title="Approximate word timing within subtitle cues; pauses between cues are preserved" class="px-3 py-1.5 text-xs font-semibold">Karaoke</button>
               </div>
             </div>
             <div id="clip-controls" class="hidden flex-wrap items-center gap-2">

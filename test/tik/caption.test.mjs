@@ -209,3 +209,37 @@ test('the client and the server agree on what a speaker label is', () => {
     assert.equal(splitSpeaker(line).speaker, speakerLabel(line), `disagreed on: ${line}`);
   }
 });
+
+// Cue-level anchors preserve pauses; character-weighted words remain estimates.
+import { karaokeState, karaokeTokens } from '../../public/scripts/tik/caption.js';
+
+test('karaoke pauses between cues and stops glowing after the last word', () => {
+  const caption = 'Alice: Hello there.\nBob: Welcome back.';
+  const cue = { start: 10, end: 20, caption, segments: [
+    { start: 10, end: 12, from: 0, to: 2 }, { start: 18, end: 20, from: 2, to: 4 },
+  ] };
+  assert.deepEqual(karaokeState(9, cue, caption), { active: -1, completed: 0 });
+  assert.deepEqual(karaokeState(10, cue, caption), { active: 0, completed: 0 });
+  assert.deepEqual(karaokeState(15, cue, caption), { active: -1, completed: 2 });
+  assert.deepEqual(karaokeState(18, cue, caption), { active: 2, completed: 2 });
+  assert.deepEqual(karaokeState(21, cue, caption), { active: -1, completed: 4 });
+});
+
+test('an edited caption never reuses stale word offsets', () => {
+  const cue = { start: 1, end: 5, caption: 'Old words.' };
+  assert.equal(karaokeState(3, cue, 'Completely different words.').active, -1);
+});
+
+test('old drafts still get a bounded approximation within their saved span', () => {
+  const cue = { start: 10, end: 14 };
+  assert.equal(karaokeState(11, cue, 'Hello there.').active, 0);
+  assert.equal(karaokeState(15, cue, 'Hello there.').active, -1);
+  assert.equal(karaokeState(11, null, 'Hello there.').active, -1);
+  assert.equal(cueProgress(1, { start: null, end: 2 }), null);
+});
+
+test('long speaker labels stay unspoken even when their words wrap', () => {
+  const tokens = karaokeTokens('The Man in Black: Hello there.\nÉowyn: Welcome back.');
+  assert.deepEqual(tokens.filter((t) => t.spoken).map((t) => t.text), ['Hello', 'there.', 'Welcome', 'back.']);
+  assert.equal(tokens.filter((t) => !t.spoken).length, 5);
+});

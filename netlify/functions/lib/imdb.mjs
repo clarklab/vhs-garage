@@ -130,6 +130,8 @@ export function rankTrivia(nodes, { includeSpoilers = true } = {}) {
   return out;
 }
 
+import { dialogueLines, formatDialogue } from './quote-dialogue.mjs';
+
 export function quotePlainText(node) {
   const lines = Array.isArray(node?.lines) ? node.lines : [];
   const parts = [];
@@ -145,8 +147,8 @@ export function quotePlainText(node) {
   // a glued-together exchange leaves every name after the first sitting in the
   // words we score against the subtitles.
   const fromLines = parts.join('\n').replace(/[ \t]+/g, ' ').trim();
-  if (fromLines) return fromLines;
-  return String(node?.text?.plainText || '').replace(/\s+/g, ' ').trim();
+  if (fromLines) return formatDialogue(dialogueLines(fromLines));
+  return formatDialogue(dialogueLines(node?.text?.plainText));
 }
 
 export function normalizeQuote(node) {

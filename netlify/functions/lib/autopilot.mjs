@@ -1,6 +1,7 @@
 // Pure helpers for autopilot. buildAutopilotPrompt() writes the LLM prompt;
 // normalizeSuggestions() validates/clamps the model's JSON. No network / DOM.
 import { seekTime } from './srt.mjs';
+import { dialogueLines, formatDialogue, quoteText } from './quote-dialogue.mjs';
 
 export const AUTOPILOT_COUNT = 5;
 // A Quote-a-long is twelve quotes, plus the title card and the sign-off: 14
@@ -284,7 +285,7 @@ export function applyCueSeek(item, durationSeconds) {
   return { ...item, timecode: tc };
 }
 
-export function normalizeSuggestions(raw, durationSeconds, max = AUTOPILOT_COUNT) {
+export function normalizeSuggestions(raw, durationSeconds, max = AUTOPILOT_COUNT, { verbatim = false } = {}) {
   const dur = Math.max(0, Math.floor(durationSeconds || 0));
   const list = Array.isArray(raw?.suggestions) ? raw.suggestions : [];
   const out = [];
@@ -292,7 +293,7 @@ export function normalizeSuggestions(raw, durationSeconds, max = AUTOPILOT_COUNT
     if (out.length >= max) break;
     let caption = typeof item?.caption === 'string' ? item.caption.trim() : '';
     if (!caption) continue;
-    caption = stripDashes(caption);
+    if (!verbatim) caption = stripDashes(caption);
     const sought = applyCueSeek(item, durationSeconds);
     let tc = Number(sought.timecode);
     if (!Number.isFinite(tc)) tc = 0;
@@ -300,7 +301,7 @@ export function normalizeSuggestions(raw, durationSeconds, max = AUTOPILOT_COUNT
     const grab = typeof item?.grab === 'string' ? clampText(item.grab, GRAB_MAX) : '';
     const start = Number(item?.start);
     const end = Number(item?.end);
-    const row = { caption: clampText(caption, CAPTION_MAX), timecode: tc, grab };
+    const row = { caption: verbatim ? caption : clampText(caption, CAPTION_MAX), timecode: tc, grab };
     if (Number.isFinite(start)) row.start = start;
     if (Number.isFinite(end)) row.end = end;
     out.push(row);
@@ -313,7 +314,7 @@ const CUE_CAP = 400;
 function formatQuotePool(quotes) {
   const list = (Array.isArray(quotes) ? quotes : []).slice(0, QUOTES_POOL);
   return list.map((q, i) => {
-    const text = typeof q === 'string' ? q : String(q?.text || '').trim();
+    const text = formatDialogue(dialogueLines(quoteText(q)));
     // A pool item is an exchange over several lines. Indent the continuations
     // so the numbering stays readable as a list rather than running together.
     return `${i + 1}. ${text.replace(/\n/g, '\n   ')}`;
@@ -429,15 +430,17 @@ Produce exactly ${n} quote slides. Each caption is one or two spoken lines from 
 HOW TO WRITE EACH QUOTE CAPTION (the TITLE slide has its own rule below):
 - Cut each IMDb block down to 1-2 spoken lines. Keep the punchline; drop setup that does not earn its space. Cutting means dropping whole lines, never rewording the ones you keep.
 - KEEP THE EXCHANGE ON SEPARATE LINES. When two or more characters speak, put each speaker on their own line as "Name: line", separated by a real newline (\n) inside the caption string. Never join an exchange onto one line. A single speaker is a single line with no name.
-- Use the character names exactly as the IMDb block gives them. Never invent a speaker.
+- Include names ONLY if at least two DIFFERENT people speak in the lines you keep. A person being addressed does not count. Two lines from the same person still get no name.
+- Use the character names exactly as the IMDb block gives them, attached to their original spoken line. Never infer a speaker from memory, swap names, or invent one. If the source has no name, leave it out.
 - QUOTE, DO NOT REWRITE. Use the words from the IMDb pool exactly as they are given. You may drop a line of an exchange to keep the best one or two, and you may fix obvious spelling, but never reword, shorten, modernise or tidy up what a character says. A viewer hears the line while reading it.
-- Write a confident spoken LINE. Do NOT use questions, challenges, or hype. Do not turn a quote into trivia.
-- Do NOT use em dashes or en dashes (the — or – characters). Use commas, periods, or the word "and" instead.
+- Preserve spoken questions, punctuation, contractions, and interrupted sentences. Do not add challenges, hype, or commentary. Remove bracketed stage directions from the displayed dialogue.
 - Keep it tight: about ${CAPTION_TARGET} characters, no hashtags, no emoji. Going a little over is fine if the line needs it; do not pad.
 - Only include quotes you are confident are from this film. Never invent a line.${matchRule}
 
 For each item, give:
 - "caption": the quote text, following the rules above.
+- "quoteIndex": the 1-based IMDb pool number you chose. Omit on the title.
+- "lineIndices": the 1-based spoken line numbers within that pool item (at most two, consecutive, in original order). Select whole lines; never stitch together lines from different exchanges. The server uses these references to preserve the source's exact words and speaker attribution.
 - "timecode": a number of SECONDS between 0 and ${dur} pointing to where that line is spoken (the first quarter of the matched cue span when you have start/end).
 - "grab": a terse visual pointer to help the human editor find the exact shot (about ${GRAB_TARGET} chars, for the editor only, never shown to viewers).
 - "start" and "end": the matched subtitle span in seconds, when you have one.${titleSlideBlock}${quotesBlock}${cuesBlock}${hintsBlock}${guidanceBlock}${metaBlock}
@@ -445,7 +448,7 @@ For each item, give:
 Return ONLY valid JSON in this exact shape, nothing else:
 {
   "suggestions": [
-    { "caption": "string", "timecode": 0, "grab": "string", "start": 0, "end": 0 }
+    { "caption": "string", "quoteIndex": 1, "lineIndices": [1], "timecode": 0, "grab": "string", "start": 0, "end": 0 }
   ]${metaShape}
 }`;
 }

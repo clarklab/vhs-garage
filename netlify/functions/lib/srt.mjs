@@ -1,10 +1,12 @@
+import { dialogueLines, formatDialogue, SPEAKER_PATTERN } from './quote-dialogue.mjs';
+
 // Pure SRT parse + quote→cue matching for Quote-a-long Autopilot.
 //
 // Pure — no network, no DOM. Unit-tested under node:test.
 //
 // This module is the whole reason Quote-a-long exists: the timecode for a
 // quote slide is ARITHMETIC on the subtitle file, not a guess and not a
-// vision check. The model boils the wording; where the line lands in the
+// vision check. The model selects source lines; where the line lands in the
 // film is decided here.
 
 const CLOCK = /^(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})$/;
@@ -17,6 +19,7 @@ export function srtTimeToSeconds(raw) {
   const ss = Number(m[3]);
   const ms = Number(m[4].padEnd(3, '0'));
   if (![hh, mm, ss, ms].every(Number.isFinite)) return null;
+  if (mm > 59 || ss > 59) return null;
   return hh * 3600 + mm * 60 + ss + ms / 1000;
 }
 
@@ -32,7 +35,7 @@ export function parseSrt(input) {
     const [left, right] = arrow.split(/-->/).map((s) => s.trim());
     const start = srtTimeToSeconds(left.split(/\s+/)[0]);
     const end = srtTimeToSeconds(right.split(/\s+/)[0]);
-    if (start == null || end == null) continue;
+    if (start == null || end == null || end <= start) continue;
     const body = lines.filter((l) => l !== arrow).join(' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     if (!body) continue;
     out.push({ start, end, text: body });
@@ -54,125 +57,149 @@ export function normalizeQuoteText(raw) {
   return s;
 }
 
-function tokens(s) {
-  return normalizeQuoteText(s).split(' ').filter((w) => w.length > 1);
+// Keep order and repeated words: a bag of distinct words can match just the
+// first “Game over” and lose the repeated ending entirely.
+function wordRecords(text) {
+  return [...String(text).matchAll(/\S+/g)].map((m) => ({
+    word: m[0].toLowerCase().replace(/[^\p{L}\p{N}]/gu, ''),
+    start: m.index, end: m.index + m[0].length,
+  })).filter((w) => w.word);
 }
 
-// How many consecutive cues one quote may span.
-//
-// Pairs are not enough. A subtitle file breaks a line every few words and an
-// IMDb quote is usually an exchange, so the words of one quote routinely land
-// across three or four cues. Scored against pairs only, such a quote either
-// finds nothing and falls back to a guess, or latches onto whichever half-
-// window scores best and lands seconds off the line it is captioning.
-//
-// Four is the ceiling because the tie-break prefers fewer cues, so a wider
-// window only wins when it genuinely holds more of the quote.
-export const MAX_SPAN_CUES = 4;
-// Cues in one span must be next to each other in TIME as well as in the file.
-// Without this, four cues that happen to share enough words can be stitched
-// across a twelve-minute gap: the timecode lands on the wrong scene, and the
-// caption becomes two unrelated lines glued together. Real dialogue runs a
-// beat apart.
+function cleanCue(text) {
+  return String(text || '').replace(/<[^>]+>/g, ' ').replace(/\[[^\]]*\]/g, ' ')
+    .replace(/[♪♫]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+const wordsOf = (text) => wordRecords(text).map((w) => w.word);
+const spokenText = (text) => dialogueLines(text).map((line) => line.text).join(' ');
+
+// Ordered alignment, with source-word positions for caption/cue boundaries.
+function alignWords(want, have) {
+  const dp = Array.from({ length: want.length + 1 }, () => new Uint16Array(have.length + 1));
+  for (let i = 1; i <= want.length; i++) {
+    for (let j = 1; j <= have.length; j++) {
+      dp[i][j] = want[i - 1] === have[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  const pairs = [];
+  let i = want.length, j = have.length;
+  while (i && j) {
+    if (want[i - 1] === have[j - 1]) { pairs.push([--i, --j]); }
+    else if (dp[i - 1][j] > dp[i][j - 1]) i--;
+    else j--;
+  }
+  return pairs.reverse();
+}
+
+export const MAX_SPAN_CUES = 12;
 export const MAX_CUE_GAP = 5;
+export const MAX_MATCH_SECONDS = 45;
+const MIN_RATIO = 0.85;
 
-// How much of the quote a span has to carry to count as a match. Below this we
-// return nothing, which is honest: the caller keeps the model's guess rather
-// than being handed a confident wrong answer.
-const MIN_RATIO = 0.6;
+const validCue = (c) => c?.start != null && c?.end != null
+  && Number.isFinite(Number(c.start)) && Number.isFinite(Number(c.end))
+  && Number(c.start) >= 0 && Number(c.end) > Number(c.start);
 
-// Best matching run of cues for one quote, or null.
-//
-// Score is recall over the quote's distinct words: what fraction of them the
-// span contains. Ties go to the shorter span, then to the earlier one — a line
-// quoted twice belongs to the first time it is said.
 export function matchQuoteToCues(quote, cues) {
   const list = Array.isArray(cues) ? cues : [];
-  const want = new Set(tokens(quote));
-  if (want.size < 2 || !list.length) return null;
-
-  // Tokenize each cue once. The old version re-normalized the joined text of
-  // every window it scored, which is the same work over and over.
-  const per = list.map((c) => tokens(c?.text));
+  const want = wordsOf(spokenText(quote));
+  if (!want.length || (want.length === 1 && want[0].length < 5) || !list.length) return null;
+  const per = list.map((c) => wordsOf(cleanCue(c?.text)));
   let best = null;
-
   for (let i = 0; i < list.length; i++) {
-    const have = new Set();
-    const last = Math.min(list.length - 1, i + MAX_SPAN_CUES - 1);
-    for (let j = i; j <= last; j++) {
-      // Stop the span the moment the film moves on.
-      if (j > i && Number(list[j].start) - Number(list[j - 1].end) > MAX_CUE_GAP) break;
-      for (const w of per[j]) have.add(w);
-      let hits = 0;
-      for (const w of want) if (have.has(w)) hits++;
-      const ratio = hits / want.size;
-      if (ratio < MIN_RATIO) continue;
+    if (!validCue(list[i])) continue;
+    // Incremental LCS: each added cue extends the alignment instead of
+    // recalculating every window from scratch.
+    let dp = new Uint16Array(want.length + 1);
+    let count = 0;
+    for (let j = i; j < Math.min(list.length, i + MAX_SPAN_CUES); j++) {
+      if (!validCue(list[j]) || Number(list[j].end) - Number(list[i].start) > MAX_MATCH_SECONDS) break;
+      if (j > i && (Number(list[j].start) < Number(list[j - 1].start)
+        || Number(list[j].start) - Number(list[j - 1].end) > MAX_CUE_GAP)) break;
+      for (const word of per[j]) {
+        const next = new Uint16Array(want.length + 1);
+        for (let k = 1; k <= want.length; k++) {
+          next[k] = word === want[k - 1] ? dp[k - 1] + 1 : Math.max(dp[k], next[k - 1]);
+        }
+        dp = next;
+        count++;
+      }
+      const hits = dp[want.length];
+      const ratio = hits / want.length;
+      const precision = hits / (count || 1);
+      if (ratio < MIN_RATIO || precision < 0.45) continue;
       const cueCount = j - i + 1;
-      if (
-        !best
-        || ratio > best.ratio
-        || (ratio === best.ratio && cueCount < best.cueCount)
-        || (ratio === best.ratio && cueCount === best.cueCount && i < best.from)
-      ) {
-        best = { from: i, to: j, ratio, cueCount };
+      if (!best || ratio > best.ratio || (ratio === best.ratio && precision > best.precision)
+        || (ratio === best.ratio && precision === best.precision && cueCount < best.cueCount)) {
+        best = { from: i, to: j, ratio, precision, cueCount };
       }
     }
   }
-
   if (!best) return null;
+  const segments = list.slice(best.from, best.to + 1).map((c) => ({ start: Number(c.start), end: Number(c.end), text: cleanCue(c.text) }));
   return {
-    start: list[best.from].start,
-    end: list[best.to].end,
-    text: list.slice(best.from, best.to + 1).map((c) => c.text).join(' '),
-    index: best.from,
+    start: segments[0].start, end: segments.at(-1).end,
+    text: segments.map((c) => c.text).join(' '), index: best.from, segments,
+    previousEnd: validCue(list[best.from - 1]) ? Number(list[best.from - 1].end) : null,
+    nextStart: validCue(list[best.to + 1]) ? Number(list[best.to + 1].start) : null,
   };
 }
 
-// The caption, taken from the subtitle file rather than from the quote.
-//
-// This is the whole point of matching in the first place. An IMDb quote is
-// typed from memory by a contributor and is routinely a paraphrase; the prompt
-// then asks the model to BOIL it, which is a second rewrite. The subtitle file
-// is the only source here that was made from the audio, so once a line is
-// matched, what the subtitle says is what gets shown — and then the words on
-// screen are the words being said.
-//
-// The model's caption is still used for its speaker labels, which subtitles do
-// not carry, and as the fallback whenever the cue text comes back unusable.
-
-// "- " is how a subtitle marks the second speaker inside one cue.
-const SPEAKER_DASH = /(?:^|\s)-\s+/;
-// A span far longer than the quote asked for is the matcher having swept up a
-// neighbouring line; the boiled version is the better caption in that case.
-const RUNAWAY_RATIO = 2.2;
-
 export function speakerLabel(line) {
-  const m = String(line ?? '').match(/^\s*([A-Z][A-Za-z0-9 .'\-]{1,40}:)\s*/);
-  return m ? m[1] : '';
+  const match = String(line ?? '').match(SPEAKER_PATTERN);
+  return match ? `${match[1]}:` : '';
 }
 
-export function captionFromCues(cueText, modelCaption = '') {
-  const cleaned = String(cueText || '')
-    .replace(/\[[^\]]*\]/g, ' ')   // [DOOR CREAKS], [MAN], hearing-impaired notes
-    .replace(/[♪♫]+/g, ' ')        // music cues
-    .replace(/\s+/g, ' ')
-    .trim();
+// Use subtitle wording, but recover a speaker only by matching their actual
+// words. Subtitle dashes and line positions are never evidence of identity.
+export function captionFromCues(cueText, sourceCaption = '') {
+  const cleaned = cleanCue(cueText);
   if (!cleaned) return null;
+  const source = dialogueLines(sourceCaption);
+  if (!source.length) return cleaned.split(/(?:^|\s)-\s+/).filter(Boolean).join('\n');
+  if (cleaned.length > spokenText(sourceCaption).length * 2.2) return null;
+  const records = wordRecords(cleaned);
+  const have = records.map((r) => r.word);
+  const selected = [];
+  for (const line of source) {
+    const want = wordsOf(line.text);
+    const pairs = alignWords(want, have);
+    if (!want.length || pairs.length / want.length < MIN_RATIO) return null;
+    // A high overall score can still omit the last word of a long quote.
+    // Require both ends of the source line before trusting the clip boundary.
+    if (pairs[0][0] !== 0 || pairs.at(-1)[0] !== want.length - 1) return null;
+    const first = pairs[0][1], last = pairs.at(-1)[1];
+    if (selected.some((s) => first <= s.last && last >= s.first)) return null;
+    // Keep the subtitle's punctuation with the final word, without dragging
+    // the next speaker's leading dash into this line.
+    const text = cleaned.slice(records[first].start, records[last].end)
+      .replace(/(?:^|\s)-\s+/g, ' ').trim();
+    selected.push({ ...line, text, first, last });
+  }
+  selected.sort((a, b) => a.first - b.first);
+  return formatDialogue(selected);
+}
 
-  const model = String(modelCaption || '').trim();
-  // Subtitles for an exchange are one cue with dashes, or several cues joined.
-  const parts = cleaned.split(SPEAKER_DASH).map((p) => p.trim()).filter(Boolean);
-  if (!parts.length) return null;
-
-  const spoken = parts.join(' ');
-  if (model && spoken.length > model.length * RUNAWAY_RATIO) return null;
-
-  // Put the model's speaker names back, in order, when they line up.
-  const labels = model.split('\n').map((l) => speakerLabel(l));
-  const named = labels.length === parts.length && labels.some(Boolean)
-    ? parts.map((p, i) => (labels[i] ? `${labels[i]} ${p}` : p))
-    : parts;
-  return named.join('\n');
+// Word ranges use the same whitespace units as the browser's spokenWords.
+// These are cue anchors, not measured word timestamps. Each cue gets its own
+// clock, so a pause between cues is preserved rather than stretched over words.
+export function captionCueSegments(caption, segments) {
+  const want = wordsOf(spokenText(caption));
+  const have = [], owners = [];
+  for (let i = 0; i < segments.length; i++) {
+    for (const word of wordsOf(segments[i].text)) { have.push(word); owners.push(i); }
+  }
+  const pairs = alignWords(want, have);
+  if (!want.length || pairs.length !== want.length) return [];
+  const out = [];
+  for (const [word, hit] of pairs) {
+    const cue = segments[owners[hit]];
+    const prev = out.at(-1);
+    if (prev?.owner === owners[hit]) prev.to = word + 1;
+    else out.push({ owner: owners[hit], start: cue.start, end: cue.end, from: word, to: word + 1 });
+  }
+  return out.map(({ owner, ...segment }) => segment);
 }
 
 // Where to freeze the frame inside a matched cue span.
@@ -209,9 +236,8 @@ export function quoteHints(quotes, cues) {
 // silently slips by one.
 //
 // So after the model returns, every caption is matched against the FULL cue
-// list here and the result overrides whatever it said. A caption is a boiled
-// subset of the quote it came from, so it matches at least as well as the
-// original did. When nothing clears the matcher's bar the model's own guess is
+// list here and the result overrides whatever it said. A caption consists of
+// complete source turns. When nothing clears the matcher's bar the model's guess is
 // left alone — that is the honest fallback, and it is also what happens for
 // every film with no subtitle file at all.
 //
@@ -221,26 +247,27 @@ export function applyCueTimes(suggestions, cues, { skipFirst = false, durationSe
   const list = Array.isArray(cues) ? cues : [];
   const rows = Array.isArray(suggestions) ? suggestions : [];
   if (!list.length || !rows.length) return rows;
-  const dur = Math.max(0, Math.floor(Number(durationSeconds) || 0));
+  const dur = Math.max(0, Number(durationSeconds) || 0);
   return rows.map((row, i) => {
     if (skipFirst && i === 0) return row;
     const hit = matchQuoteToCues(row?.caption, list);
-    if (!hit) return row;
-    let tc = Math.round(seekTime(hit.start, hit.end));
+    if (!hit || (dur && hit.end > dur)) return row;
+    let tc = Math.round(seekTime(hit.start, hit.end) * 1000) / 1000;
     tc = Math.min(dur || tc, Math.max(0, tc));
     // The subtitle is the only text here that came from the audio, so when it
-    // is usable it becomes the caption — otherwise the boiled quote stands.
+    // is usable it becomes the caption — otherwise the source quote stands.
     const spoken = captionFromCues(hit.text, row?.caption);
-    if (!spoken) {
-      console.warn('[tik] cue text unusable; keeping the written quote', { caption: String(row?.caption || '').slice(0, 80) });
-    }
+    if (!spoken) return row;
+    const segments = captionCueSegments(spoken, hit.segments);
     return {
       ...row,
-      caption: spoken || row.caption,
+      caption: spoken,
       start: hit.start,
       end: hit.end,
       timecode: tc,
       matched: true,
+      cue: { start: hit.start, end: hit.end, segments, caption: spoken,
+        previousEnd: hit.previousEnd, nextStart: hit.nextStart },
     };
   });
 }

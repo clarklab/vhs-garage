@@ -227,14 +227,14 @@ test('stripping speaker labels does not eat the line itself', () => {
 
 // ---- The caption is what the film says, not what IMDb remembers ----
 
-test('a matched line is replaced with the words from the subtitle', () => {
+test('a partial subtitle cannot replace a whole quote', () => {
   // IMDb quotes are typed from memory and routinely drift; the subtitle file is
   // the only text here that was made from the audio.
   const written = 'You keep using that word. I do not think it means what you think it means.';
   const spoken = 'You keep using that word. I do not think it means what you think it means.';
   assert.equal(captionFromCues(spoken, written), spoken);
   const drifted = captionFromCues('I do not think that word means what you think it means.', written);
-  assert.equal(drifted, 'I do not think that word means what you think it means.');
+  assert.equal(drifted, null, 'a partial match must not delete the opening sentence');
 });
 
 test('a subtitle exchange splits back onto one line per speaker', () => {
@@ -253,7 +253,7 @@ test('the model’s speaker names go back on, in order', () => {
 test('names are left off when they do not line up', () => {
   // Two names, one spoken line: guessing which one said it would be worse.
   const written = 'A: one\nB: two';
-  assert.equal(captionFromCues('Just the one line here.', written), 'Just the one line here.');
+  assert.equal(captionFromCues('Just the one line here.', written), null);
 });
 
 test('sound cues and music marks are not dialogue', () => {
@@ -332,4 +332,73 @@ test('a normal gap between lines still spans', () => {
   assert.equal(hit.start, 100);
   assert.equal(hit.end, 105);
   assert.ok(MAX_CUE_GAP >= 1, 'a beat between lines is normal dialogue');
+});
+
+test('repeated words at the end keep their final subtitle cue', () => {
+  const cues = [
+    { start: 10, end: 12, text: 'Game over, man.' },
+    { start: 12.1, end: 15, text: 'Game over!' },
+  ];
+  assert.equal(matchQuoteToCues('Game over, man. Game over!', cues).end, 15);
+});
+
+test('ordered matching rejects the same vocabulary spoken in the wrong order', () => {
+  const cues = [
+    { start: 10, end: 12, text: 'tomorrow leave never we must' },
+    { start: 50, end: 54, text: 'We must never leave tomorrow.' },
+  ];
+  assert.equal(matchQuoteToCues('We must never leave tomorrow.', cues).start, 50);
+});
+
+test('an exchange spread across six cues keeps the whole delivery', () => {
+  const lines = ['Hello there.', 'My name is Inigo Montoya.', 'You killed my father.', 'Prepare to die.', 'I want my father back,', 'you son of a bitch.'];
+  const cues = lines.map((text, i) => ({ text, start: 100 + i * 3, end: 102.5 + i * 3 }));
+  const hit = matchQuoteToCues(lines.join(' '), cues);
+  assert.equal(hit.start, 100);
+  assert.equal(hit.end, 117.5);
+});
+
+test('a distinctive one-word quote can match, but a generic reply cannot', () => {
+  const cues = [{ start: 1, end: 3, text: 'Inconceivable!' }];
+  assert.equal(matchQuoteToCues('Inconceivable!', cues).start, 1);
+  assert.equal(matchQuoteToCues('No', [{ start: 1, end: 2, text: 'No.' }]), null);
+});
+
+test('a subtitle sentence on either side cannot leak into the caption', () => {
+  const [out] = applyCueTimes([{ caption: "I'll be back." }], [{ start: 10, end: 15, text: "Wait. I'll be back. Okay?" }]);
+  assert.equal(out.caption, "I'll be back.");
+});
+
+test('speaker labels follow matching words even if subtitle dashes reverse order', () => {
+  const out = captionFromCues('- Goodbye now. - Hello there.', 'Alice: Hello there.\nBob: Goodbye now.');
+  assert.equal(out, 'Bob: Goodbye now.\nAlice: Hello there.');
+});
+
+test('a real source turn spanning several cues retains its name without subtitle dashes', () => {
+  const cues = [{ start: 1, end: 2, text: 'Hello there.' }, { start: 2, end: 3, text: 'Welcome back.' }, { start: 4, end: 5, text: 'Thank you kindly.' }];
+  const [row] = applyCueTimes([{ caption: 'Alice: Hello there. Welcome back.\nBob: Thank you kindly.' }], cues);
+  assert.equal(row.caption, 'Alice: Hello there. Welcome back.\nBob: Thank you kindly.');
+  assert.equal(row.cue.segments.length, 3);
+});
+
+test('invalid timestamps and out-of-runtime matches never become trusted cues', () => {
+  assert.equal(parseSrt('1\n00:00:05,000 --> 00:00:01,000\nHello there.').length, 0);
+  assert.equal(srtTimeToSeconds('00:99:10,000'), null);
+  assert.equal(matchQuoteToCues('Hello there.', [{ start: null, end: 2, text: 'Hello there.' }]), null);
+  const [row] = applyCueTimes([{ caption: 'Hello there.', timecode: 2 }], [{ start: 90, end: 94, text: 'Hello there.' }], { durationSeconds: 10 });
+  assert.equal(row.matched, undefined);
+  assert.equal(row.timecode, 2);
+});
+
+test('a high match score cannot chop the final word off a quote', () => {
+  const caption = 'We will get out of here together tonight.';
+  const [row] = applyCueTimes([{ caption, timecode: 50 }], [{ start: 10, end: 14, text: 'We will get out of here together.' }]);
+  assert.equal(row.caption, caption);
+  assert.equal(row.matched, undefined);
+});
+
+test('subtitle fractions survive matching and runtime validation', () => {
+  const [row] = applyCueTimes([{ caption: 'Hello there.', timecode: 0 }], [{ start: 10.1, end: 12.3, text: 'Hello there.' }], { durationSeconds: 12.5 });
+  assert.equal(row.timecode, 10.65);
+  assert.equal(row.matched, true);
 });

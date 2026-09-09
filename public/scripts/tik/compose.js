@@ -4,7 +4,7 @@
 // rounded "pills", one pill per wrapped line. composeToCanvas() draws onto a
 // canvas you own (live preview thumbs); composeSlide() renders → JPEG Blob.
 import { computeSlideLayout, containFrame } from './layout.js';
-import { wrapLines, fitFontSize, wordProgress, spokenIndex, splitSpeaker, spokenWords } from './caption.js';
+import { wrapLines, fitFontSize, wordProgress, spokenIndex, karaokeTokens } from './caption.js';
 import { filterString, zoomSourceRect } from './adjust.js';
 
 const CANVAS_W = 1080;
@@ -60,8 +60,8 @@ const PILL_GAP = 8;                // vertical gap between line pills
 // where a still's design does not automatically hold up over moving film:
 //
 //   cc       what a subtitle looks like: white on a dark box, under the picture.
-//   karaoke  the same box, with the word being spoken lit up. The timing comes
-//            from the line's own subtitle cue, so it needs no speech model.
+//   karaoke  the same box, with approximate words highlighted within each
+//            subtitle cue. Gaps between cues preserve pauses.
 export const CAPTION_STYLES = ['pills', 'cc', 'karaoke'];
 export function captionStyleOf(v) {
   return CAPTION_STYLES.includes(v) ? v : 'pills';
@@ -267,7 +267,7 @@ export function wantsLeftAlign({ format, kind, lines } = {}) {
 }
 
 export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null, format, kind, adjust = null, stampNudge = 0,
-  captionStyle = 'pills', karaokeProgress = null } = {}) {
+  captionStyle = 'pills', karaokeProgress = null, karaokeState = null } = {}) {
   const fs = Math.min(Math.max(Number(fontScale) || 1, 0.5), 1.6);
   const heightRatio = Number.isFinite(maxFrameHeightRatio)
     ? Math.min(Math.max(maxFrameHeightRatio, 0.05), 1)
@@ -389,12 +389,16 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
     // Karaoke lights one word at a time, and the words run across the WHOLE
     // caption rather than restarting per line — the line breaks are a wrapping
     // accident, the delivery is not.
-    const flat = style === 'karaoke'
-      ? lines.flatMap((line) => (line ? spokenWords(line) : []))
-      : [];
+    const tokens = style === 'karaoke' ? [
+      ...String(titleLine || '').split(/\s+/).filter(Boolean).map((text) => ({ text, spoken: false })),
+      ...karaokeTokens(caption),
+    ] : [];
+    const flat = tokens.filter((t) => t.spoken).map((t) => t.text);
     const spans = flat.length ? wordProgress(flat) : [];
-    const now = spans.length ? spokenIndex(spans, karaokeProgress) : -1;
+    const now = karaokeState?.active ?? (spans.length ? spokenIndex(spans, karaokeProgress) : -1);
+    const completed = karaokeState?.completed ?? Math.max(0, now);
     let wordAt = 0;
+    let tokenAt = 0;
 
     let y = frameY + F.h + GAP;
     for (const line of lines) {
@@ -428,29 +432,22 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
       // Word by word, so each can carry its own colour. Drawn from the line's
       // own left edge with textAlign left, because centring per word would
       // space them evenly instead of naturally.
-      const { speaker } = splitSpeaker(line);
-      const words = spokenWords(line);
+      const words = line.split(/\s+/).filter(Boolean);
       const spaceW = ctx.measureText(' ').width;
-      const speakerW = speaker ? ctx.measureText(speaker).width + spaceW : 0;
-      const lineW = speakerW
-        + words.reduce((t, word, i) => t + ctx.measureText(word).width + (i ? spaceW : 0), 0);
+      const lineW = words.reduce((t, word, i) => t + ctx.measureText(word).width + (i ? spaceW : 0), 0);
       const prevAlign = ctx.textAlign;
       ctx.textAlign = 'left';
       let wx = left ? x + CC_PAD_X : cx - lineW / 2;
-      if (speaker) {
-        ctx.fillStyle = CC_SPEAKER;
-        ctx.fillText(speaker, wx, textY);
-        wx += speakerW;
-      }
       for (const word of words) {
-        const i = wordAt++;
-        const isNow = i === now;
+        const spoken = tokens[tokenAt++]?.spoken;
+        const i = spoken ? wordAt++ : -1;
+        const isNow = spoken && i === now;
         if (isNow) {
           ctx.save();
           ctx.shadowColor = CC_NOW_GLOW;
           ctx.shadowBlur = 18;
         }
-        ctx.fillStyle = isNow ? CC_NOW : (i < now ? CC_SAID : CC_TO_COME);
+        ctx.fillStyle = !spoken ? CC_SPEAKER : isNow ? CC_NOW : (i < completed ? CC_SAID : CC_TO_COME);
         ctx.fillText(word, wx, textY);
         if (isNow) ctx.restore();
         wx += ctx.measureText(word).width + spaceW;

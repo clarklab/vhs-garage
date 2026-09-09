@@ -11,10 +11,10 @@ import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, 
 import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory, getRefreshToken } from './auth.js';
 import { publishSlideshow, publishClip } from './publish.js';
 import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot, fetchQuotesPost, fetchImdbQuotes, fetchSubtitles, fetchFreeform, QUOTES_COUNT, QUOTES_POOL } from './autopilot.js';
-import { fontScaleForQuote, cueProgress } from './caption.js';
+import { fontScaleForQuote, karaokeState } from './caption.js';
 import { parseMovieName } from './filename.js';
 import { composeToCanvas, composeSlide, captionFontReady, quoteStampReady, wantsQuoteStamp, clampStampNudge, canNudgeStamp, captionStyleOf } from './compose.js';
-import { clockTimecode } from './timecode.js';
+import { clockTimecode, formatTimecode } from './timecode.js';
 import { PRESETS, applyPreset, autoLevels, describeAdjust, isNeutral, NEUTRAL } from './adjust.js';
 import {
   FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
@@ -84,8 +84,6 @@ const els = {
   slidePreview: $('slide-preview'), slidePreviewCanvas: $('slide-preview-canvas'),
   slidePreviewClose: $('slide-preview-close'), slidePreviewMeta: $('slide-preview-meta'),
   clipTrim: $('clip-trim'), trimSpan: $('trim-span'), trimReset: $('trim-reset'),
-  trimInEarlier: $('trim-in-earlier'), trimInLater: $('trim-in-later'),
-  trimOutEarlier: $('trim-out-earlier'), trimOutLater: $('trim-out-later'),
   videoReload: $('video-reload'), videoReloadLabel: $('video-reload-label'),
   video: $('video'), range: $('scrub-range'), timecode: $('timecode'), play: $('play-btn'),
   grab: $('grab-btn'), grabIcon: $('grab-icon'), grabLabel: $('grab-label'),
@@ -1326,7 +1324,7 @@ const PREVIEW_MODAL_SCALE = 0.5;
 // frozen frame tells you nothing about whether the line finishes inside it,
 // which is exactly the thing that needs checking. So the preview PLAYS the
 // span, on a loop, through the same compose code the clip uses — and the two
-// pairs of buttons under it move each end a second at a time.
+// buttons under it move each end half a second or a second at a time.
 let previewLoop = null;   // { id, timer, wasMuted } while a scene is looping
 
 function stopPreviewLoop() {
@@ -1354,15 +1352,23 @@ function syncTrimControls(slide, win) {
   if (!on) return;
   const len = (win.end - win.start).toFixed(1);
   const hand = describeTrim(slide);
-  els.trimSpan.textContent = `${clockTimecode(win.start)} - ${clockTimecode(win.end)} · ${len}s${hand ? ` · ${hand}` : ''}`;
+  els.trimSpan.textContent = `${formatTimecode(win.start)} – ${formatTimecode(win.end)} · ${len}s${hand ? ` · ${hand}` : ''}`;
   els.trimReset.disabled = !isTrimmed(slide);
   els.trimReset.classList.toggle('opacity-40', !isTrimmed(slide));
+  for (const button of els.clipTrim.querySelectorAll('[data-trim-edge]')) {
+    const trim = nudgeTrim(slide, button.dataset.trimEdge, Number(button.dataset.trimDir), Number(button.dataset.trimStep));
+    const next = previewWindow({ ...slide, trim });
+    button.disabled = !next || (Math.abs(next.start - win.start) < 0.001 && Math.abs(next.end - win.end) < 0.001);
+    button.classList.toggle('opacity-40', button.disabled);
+  }
 }
 
 // Loop the span, drawing the full composed slide every frame.
 function playPreviewScene(slide, win) {
   stopPreviewLoop();
-  const byKaraoke = () => cueProgress(els.video.currentTime, slide.cue);
+  const loop = { id: slide.id, timer: null, wasMuted: els.video.muted };
+  previewLoop = loop;
+  const byKaraoke = () => karaokeState(els.video.currentTime, slide.cue, slide.caption);
   const draw = () => composeToCanvas(els.slidePreviewCanvas, els.video, slide.caption, {
     titleLine: currentTitleLine(),
     scale: PREVIEW_MODAL_SCALE,
@@ -1370,11 +1376,14 @@ function playPreviewScene(slide, win) {
     maxFrameHeightRatio: frameHeightRatio(),
     format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0,
     captionStyle: captionStyleNow(),
-    karaokeProgress: isIntroSlide(slide, slides.indexOf(slide), project?.format) ? null : byKaraoke(),
+    karaokeState: isIntroSlide(slide, slides.indexOf(slide), project?.format) ? null : byKaraoke(),
   });
   const restart = () => {
     els.video.currentTime = win.start;
     els.video.play().catch((e) => {
+      // A quick nudge cancels the previous play() promise. Its rejection must
+      // not mute or restart the replacement preview.
+      if (previewLoop !== loop || e.name === 'AbortError') return;
       // A browser can refuse to play audio without a gesture. Motion is the
       // point here, so fall back to a silent loop rather than a frozen frame.
       console.warn('[tik] preview playback refused with sound; retrying muted:', e);
@@ -1384,34 +1393,34 @@ function playPreviewScene(slide, win) {
   };
   // Out loud: the whole question here is whether the line finishes inside the
   // span, and that is a question about the audio.
-  const wasMuted = els.video.muted;
   els.video.muted = false;
   restart();
-  const timer = setInterval(() => {
+  loop.timer = setInterval(() => {
     draw();
-    if (els.video.currentTime >= win.end) restart(); // loop the span
+    if (els.video.currentTime >= win.end || els.video.ended) restart(); // loop the span
   }, 1000 / 30);
-  previewLoop = { id: slide.id, timer, wasMuted };
 }
 
-function nudgePreview(edge, dir) {
+function nudgePreview(edge, dir, step = 1) {
   const slide = slides.find((s) => s.id === previewLoop?.id) || null;
   if (!slide) return;
-  const trim = nudgeTrim(slide, edge, dir);
+  const trim = nudgeTrim(slide, edge, dir, step);
+  const previous = previewWindow(slide);
+  const win = previewWindow({ ...slide, trim });
+  if (!win || (previous && Math.abs(win.start - previous.start) < 0.001 && Math.abs(win.end - previous.end) < 0.001)) return;
   slide.trim = trim;
   slides = slides.map((s) => (s.id === slide.id ? { ...s, trim } : s));
   markDirty();          // also marks any rendered clip stale
-  const win = previewWindow(slide);
-  if (!win) return;
   syncTrimControls(slide, win);
   playPreviewScene(slide, win);   // restart on the new span so the change is audible
   els.status.textContent = `Scene ${(win.end - win.start).toFixed(1)}s. Render again to put it in the clip.`;
 }
 
-els.trimInEarlier.addEventListener('click', () => nudgePreview('before', +1));
-els.trimInLater.addEventListener('click', () => nudgePreview('before', -1));
-els.trimOutLater.addEventListener('click', () => nudgePreview('after', +1));
-els.trimOutEarlier.addEventListener('click', () => nudgePreview('after', -1));
+for (const button of els.clipTrim.querySelectorAll('[data-trim-edge]')) {
+  button.addEventListener('click', () => nudgePreview(
+    button.dataset.trimEdge, Number(button.dataset.trimDir), Number(button.dataset.trimStep),
+  ));
+}
 els.trimReset.addEventListener('click', () => {
   const slide = slides.find((s) => s.id === previewLoop?.id);
   if (!slide) return;
@@ -1975,7 +1984,7 @@ els.autopilot.addEventListener('click', async () => {
         id: String(nextId++), bitmap, blob: null,
         caption, timecode: scenes[i].timecode, grabHint: scenes[i].grab || '',
         // Only when applyCueTimes actually matched it — a model guess is not a cue.
-        cue: scenes[i].matched ? { start: scenes[i].start, end: scenes[i].end } : null,
+        cue: scenes[i].matched ? (scenes[i].cue || { start: scenes[i].start, end: scenes[i].end }) : null,
         fontScale: quotesMode ? (i === 0 ? 1 : fontScaleForQuote(caption)) : 1,
         // includeTitleSlide above means the first item is the intro, not a
         // fact. Marking it is what lets its editor buttons differ from a
@@ -3523,7 +3532,7 @@ function setCaptionStyle(style) {
   render();       // every thumbnail is drawn in the chosen look
   syncClipBar();
   els.status.textContent = next === 'karaoke'
-    ? 'Karaoke captions — the spoken word lights up, timed off each line’s subtitle cue.'
+    ? 'Karaoke uses approximate word timing within each subtitle cue, with pauses between cues.'
     : next === 'cc' ? 'Subtitle captions — white on black, under the picture.'
       : 'House pills.';
 }
@@ -3552,10 +3561,10 @@ els.clipRender.addEventListener('click', async () => {
     const slide = byId.get(part.slideId);
     if (!slide) return;
     // Karaoke follows the line's own subtitle cue: where the playhead sits
-    // inside that span IS how far through the words we are. A line the matcher
+    // inside each cue estimates the word; gaps preserve pauses. A line the matcher
     // never placed has no honest timing, so it just sits there, lit or not.
     const progress = part.kind === 'scene' && !part.title
-      ? cueProgress(els.video.currentTime, slide.cue)
+      ? karaokeState(els.video.currentTime, slide.cue, slide.caption)
       : null;
     composeToCanvas(canvas, part.kind === 'scene' ? els.video : slide.bitmap, slide.caption, {
       titleLine: currentTitleLine(),
@@ -3570,7 +3579,7 @@ els.clipRender.addEventListener('click', async () => {
       adjust: slide.adjust,
       stampNudge: slide.stampNudge || 0,
       captionStyle: captionStyleNow(),
-      karaokeProgress: progress,
+      karaokeState: progress,
     });
   };
 

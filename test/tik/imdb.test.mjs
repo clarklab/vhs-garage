@@ -125,7 +125,7 @@ test('quotePlainText prefers plainText then joins character lines', () => {
     lines: [
       { characters: [{ character: 'Terminator' }], text: "I'll be back." },
     ],
-  }), "Terminator: I'll be back.");
+  }), "I'll be back.");
   assert.equal(quotePlainText({ text: { plainText: '  ' } }), '');
   assert.equal(quotePlainText(null), '');
 });
@@ -157,7 +157,7 @@ test('normalizeQuote joins TitleQuote lines and skips stage directions', () => {
     ],
   });
   assert.ok(q);
-  assert.equal(q.text, "The Terminator: I'll be back.");
+  assert.equal(q.text, "I'll be back.");
   assert.equal(q.score, 890);
 });
 
