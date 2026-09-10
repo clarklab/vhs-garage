@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recordClip } from '../../public/scripts/tik/clip.js';
 
-function fixture(t, { refuse = false, brokenSeek = false, pendingPlay = false, onStatic = () => {} } = {}) {
+function fixture(t, { refuse = false, brokenSeek = false, pendingPlay = false, pendingSeek = false, onStatic = () => {} } = {}) {
   const previousWindow = globalThis.window;
   const previousRecorder = globalThis.MediaRecorder;
   const recorders = [];
@@ -19,6 +19,8 @@ function fixture(t, { refuse = false, brokenSeek = false, pendingPlay = false, o
     }
   }
   class Video extends EventTarget {
+    readyState = 2;
+    seeking = false;
     muted = true;
     playbackRate = 1.5;
     time = 0;
@@ -27,6 +29,7 @@ function fixture(t, { refuse = false, brokenSeek = false, pendingPlay = false, o
     set currentTime(t) {
       if (brokenSeek) throw new Error('Cannot seek');
       this.time = t;
+      if (pendingSeek) { this.seeking = true; this.readyState = 1; return; }
       queueMicrotask(() => this.dispatchEvent(new Event('seeked')));
     }
     async play() {
@@ -92,6 +95,26 @@ test('cancel also interrupts a play request that never settles', async (t) => {
   setTimeout(() => controller.abort(), 5);
   await assert.rejects(job, (error) => error.cancelled === true);
   assert.equal(f.recorders[0].state, 'inactive');
+  assert.equal(f.trackStopped(), true);
+});
+
+test('cancel interrupts a seek between clips while the recorder is paused', async (t) => {
+  const f = fixture(t, { pendingSeek: true });
+  const controller = new AbortController();
+  const parts = [plan.parts[0], { kind: 'scene', start: 10, end: 11 }];
+  await assert.rejects(recordClip({ ...f, plan: { parts }, signal: controller.signal,
+    mimeType: 'video/webm', paint() {},
+    onProgress(message) {
+      if (message === 'Seeking scene 2/2…') {
+        assert.equal(f.recorders[0].state, 'paused');
+        setTimeout(() => controller.abort(), 5);
+      }
+    },
+  }), (error) => error.cancelled === true);
+  assert.equal(f.recorders[0].state, 'inactive');
+  assert.equal(f.video.timer, null);
+  assert.equal(f.video.muted, true);
+  assert.equal(f.video.playbackRate, 1.5);
   assert.equal(f.trackStopped(), true);
 });
 

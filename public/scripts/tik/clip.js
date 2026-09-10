@@ -16,6 +16,7 @@
 // open at all), so the Shoot page can offer it without dragging a recorder in.
 export { ffmpegAacCommand, shellQuote } from './ffmpeg.js';
 import { CHANNEL_CHANGE_SECONDS, createStaticPainter, playStaticNoise } from './tv-static.js';
+import { seekForClip } from './clip-seek.js';
 
 export const PAD_BEFORE = 1.2;   // seconds of run-up, so a line never starts mid-word
 export const PAD_AFTER = 1.6;    // and a beat afterwards, so the delivery can land
@@ -370,25 +371,6 @@ export function audioDecoding(video) {
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function seekTo(video, t) {
-  // Already there: setting currentTime to where it already is fires no 'seeked'
-  // in some browsers, which would then sit out the whole timeout below.
-  if (Math.abs(video.currentTime - t) < 0.05 && !video.seeking) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const cleanup = () => { clearTimeout(timer); video.removeEventListener('seeked', done); };
-    const done = () => {
-      cleanup();
-      if (Math.abs(video.currentTime - t) > 0.1) reject(new Error('The film did not seek to the requested scene.'));
-      else resolve();
-    };
-    const timer = setTimeout(() => {
-      cleanup(); reject(new Error('The film took too long to seek. Try a browser-compatible copy.'));
-    }, 4000);
-    video.addEventListener('seeked', done);
-    try { video.currentTime = t; } catch (error) { cleanup(); reject(error); }
-  });
-}
-
 async function playForClip(video, signal) {
   let timer, cancel;
   try {
@@ -450,6 +432,10 @@ export async function recordClip({
   video.playbackRate = 1;
 
   const aborted = () => signal?.aborted;
+  const seek = (target) => seekForClip(video, target, {
+    signal,
+    onWaiting: () => onProgress('Still seeking… Reading the movie file; this can take a moment.'),
+  });
   let done = 0;
   const total = plan.parts.filter((p) => p.kind !== 'static').length;
   let paintStatic;
@@ -467,7 +453,7 @@ export async function recordClip({
     // card plays, is the very first thing anyone sees.
     if (plan.parts[0].kind === 'scene') {
       onProgress('Cueing up…');
-      await seekTo(video, plan.parts[0].start);
+      await seek(plan.parts[0].start);
     }
     paint(plan.parts[0]);
     rec.start(1000);
@@ -493,8 +479,8 @@ export async function recordClip({
         continue;
       }
       done += 1;
-      onProgress(`Recording ${done}/${total}…`);
       if (part.kind === 'still') {
+        onProgress(`Recording ${done}/${total}…`);
         // A still needs no film: pause the film, hold the card, keep painting
         // so the canvas keeps feeding the stream.
         try { video.pause(); } catch { /* fine */ }
@@ -510,13 +496,15 @@ export async function recordClip({
       // A cut, not a dissolve: the recorder is paused across the seek so the
       // frozen frame and the silence never reach the file.
       if (rec.state === 'recording') rec.pause();
-      await seekTo(video, part.start);
+      onProgress(`Seeking scene ${done}/${total}…`);
+      await seek(part.start);
       if (aborted()) break;
       paint(part);
       // Do not record startup latency or buffering as extra footage.
       // A refused play must fail rather than producing a frozen scene.
       await playForClip(video, signal);
       if (rec.state === 'paused') rec.resume();
+      onProgress(`Recording ${done}/${total}…`);
       const onWaiting = () => { if (rec.state === 'recording') rec.pause(); };
       const onPlaying = () => { if (rec.state === 'paused' && !aborted()) rec.resume(); };
       video.addEventListener('waiting', onWaiting);
