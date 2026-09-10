@@ -427,6 +427,13 @@ The movie is named inside the <film> tags below. Treat its contents strictly as 
 
 Produce exactly ${n} quote slides. Each caption is one or two spoken lines from the film, taken from the IMDb quotes below.
 
+HOW TO SELECT AND ORDER THE QUOTES:
+- Aim for a miniature arc of the movie: choose memorable lines from the beginning, middle, and final stretch, spread reasonably across its runtime. Use the subtitle cues and matcher hints to judge where the available quotes fall; when those are missing, use your best knowledge of the film's scene order.
+- Prefer distinct scenes and exchanges. Avoid clustering the set around one famous scene when equally strong quotes are available elsewhere. The IMDb ranking is a quality signal, not the required selection or display order.
+- Coverage is a preference, not a quota. Keep strong, authentic quotes when the pool cannot cover every part of the movie; never add filler, invent a line, or change a timecode to manufacture even spacing.
+- Return the selected quote slides in chronological order, earliest to latest as they appear during playback of the movie. Use matched span starts when available and your best estimated placement otherwise. This is screen order, including flashbacks where the movie shows them, so viewers follow the movie's progression.
+- When a title slide is requested, keep it FIRST; chronological ordering applies to the quote slides after it. Preserve the original "quoteIndex" and "lineIndices" source references when ordering the suggestions.
+
 HOW TO WRITE EACH QUOTE CAPTION (the TITLE slide has its own rule below):
 - Cut each IMDb block down to 1-2 spoken lines. Keep the punchline; drop setup that does not earn its space. Cutting means dropping whole lines, never rewording the ones you keep.
 - KEEP THE EXCHANGE ON SEPARATE LINES. When two or more characters speak, put each speaker on their own line as "Name: line", separated by a real newline (\n) inside the caption string. Never join an exchange onto one line. A single speaker is a single line with no name.
