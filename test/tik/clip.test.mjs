@@ -6,6 +6,7 @@ import {
   PAD_BEFORE, PAD_AFTER, MIN_SCENE, MAX_SCENE, GUESS_SCENE, STILL_SECONDS, TITLE_SCENE_SECONDS,
   CLIP_MIME_CANDIDATES,
 } from '../../public/scripts/tik/clip.js';
+import { CHANNEL_CHANGE_SECONDS } from '../../public/scripts/tik/tv-static.js';
 
 const quote = (id, cue, timecode) => ({ id, kind: null, cue, timecode });
 const isTitle = (s) => s.kind === 'title';
@@ -62,11 +63,11 @@ test('the plan is the set: title scene, a scene per quote, sign-off still', () =
     { id: 'o', kind: 'outro' },
   ];
   const plan = planClip(slides, { duration: 7000, isTitle, isOutro });
-  assert.deepEqual(plan.parts.map((p) => p.kind), ['scene', 'scene', 'scene', 'still']);
-  assert.deepEqual(plan.parts.map((p) => p.slideId), ['t', 'a', 'b', 'o']);
+  assert.deepEqual(plan.parts.map((p) => p.kind), ['scene', 'static', 'scene', 'static', 'scene', 'static', 'still']);
+  assert.deepEqual(plan.parts.filter((p) => p.kind !== 'static').map((p) => p.slideId), ['t', 'a', 'b', 'o']);
   assert.equal(plan.scenes, 3);
   const expected = TITLE_SCENE_SECONDS + STILL_SECONDS
-    + (3 + PAD_BEFORE + PAD_AFTER) + (4 + PAD_BEFORE + PAD_AFTER);
+    + (3 + PAD_BEFORE + PAD_AFTER) + (4 + PAD_BEFORE + PAD_AFTER) + 3 * CHANNEL_CHANGE_SECONDS;
   assert.ok(Math.abs(plan.seconds - expected) < 1e-9, `${plan.seconds} vs ${expected}`);
 });
 
@@ -127,7 +128,21 @@ test('the set order is the clip order, even out of film order', () => {
   // Slides are reorderable; the post's order is the one the user chose.
   const plan = planClip([quote('late', { start: 4000, end: 4003 }), quote('early', { start: 100, end: 103 })],
     { duration: 7000, isTitle, isOutro });
-  assert.deepEqual(plan.parts.map((p) => p.slideId), ['late', 'early']);
+  assert.deepEqual(plan.parts.filter((p) => p.kind !== 'static').map((p) => p.slideId), ['late', 'early']);
+});
+
+test('channel changes sit only between rendered parts and preserve the scene windows', () => {
+  const first = quote('a', { start: 600, end: 603 });
+  const last = quote('c', { start: 1200, end: 1204 });
+  const plan = planClip([quote('skip-first'), first, quote('skip-middle'), last, quote('skip-last')]);
+  assert.deepEqual(plan.parts, [
+    { kind: 'scene', slideId: 'a', ...sceneWindow(first) },
+    { kind: 'static', seconds: 0.25 },
+    { kind: 'scene', slideId: 'c', ...sceneWindow(last) },
+  ]);
+  assert.equal(plan.skipped.length, 3);
+  assert.equal(planClip([first]).parts.length, 1, 'one scene has no leading or trailing static');
+  assert.equal(planClip([quote('skip')]).parts.length, 0, 'skipped quotes cannot leave static behind');
 });
 
 test('two quotes from the same exchange are reported as an overlap', () => {

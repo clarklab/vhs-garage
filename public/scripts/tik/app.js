@@ -3504,7 +3504,7 @@ function syncClipBar() {
   if (plan.long) notes.push('Over three minutes — worth trimming.');
   if (clip && clipStale) notes.push('The set changed since this render — render again before posting.');
   else if (clip) {
-    notes.push(`Rendered: ${(clip.blob.size / 1024 / 1024).toFixed(1)}MB ${clip.extension.toUpperCase()}, ${clip.silence ? 'no sound' : 'with sound'}. It lives in memory only, so a reload means rendering again.`);
+    notes.push(`Rendered: ${(clip.blob.size / 1024 / 1024).toFixed(1)}MB ${clip.extension.toUpperCase()}, ${clip.silence ? 'movie audio missing' : 'with sound'}. It lives in memory only, so a reload means rendering again.`);
     if (clip.silence) notes.push(clip.silence);
   }
   else notes.push('Rendering plays the film through once, so it takes about as long as the clip is.');
@@ -3611,7 +3611,7 @@ els.clipRender.addEventListener('click', async () => {
     els.clipDownload.classList.remove('hidden');
     els.clipDownload.classList.add('flex');
     els.status.textContent = clip.silence
-      ? `Clip ready, but SILENT — ${clip.silence}`
+      ? `Clip ready, but movie audio is missing — ${clip.silence}`
       : `Clip ready with sound — ${(out.blob.size / 1024 / 1024).toFixed(1)}MB. Watch it, then post it.`;
   } catch (err) {
     if (err.cancelled) els.status.textContent = 'Clip cancelled.';

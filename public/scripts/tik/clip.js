@@ -15,6 +15,7 @@
 // The fix-up command lives with its twin (the one for a file that will not
 // open at all), so the Shoot page can offer it without dragging a recorder in.
 export { ffmpegAacCommand, shellQuote } from './ffmpeg.js';
+import { CHANNEL_CHANGE_SECONDS, createStaticPainter, playStaticNoise } from './tv-static.js';
 
 export const PAD_BEFORE = 1.2;   // seconds of run-up, so a line never starts mid-word
 export const PAD_AFTER = 1.6;    // and a beat afterwards, so the delivery can land
@@ -199,7 +200,12 @@ export function planClip(slides, {
   }
 
   const scenes = parts.filter((p) => p.kind === 'scene');
-  const seconds = parts.reduce((t, p) => t + (p.kind === 'scene' ? p.end - p.start : p.seconds), 0);
+  // Each cut gets a quarter-second channel change, including the title and
+  // sign-off. Insert only after skipped slides are removed: never bookend the
+  // video with static or leave two bursts together where a quote was skipped.
+  const timeline = parts.flatMap((part, i) => i
+    ? [{ kind: 'static', seconds: CHANNEL_CHANGE_SECONDS }, part] : [part]);
+  const seconds = timeline.reduce((t, p) => t + (p.kind === 'scene' ? p.end - p.start : p.seconds), 0);
   // Two quotes from the same exchange land on overlapping spans, which plays
   // the same footage twice under different captions. It is a real cut, not a
   // fault, so it is reported rather than silently merged away.
@@ -207,7 +213,7 @@ export function planClip(slides, {
   for (let i = 1; i < scenes.length; i++) {
     if (scenes[i].start < scenes[i - 1].end && scenes[i].start >= scenes[i - 1].start) overlaps++;
   }
-  return { parts, seconds, scenes: scenes.length, skipped, overlaps, long: seconds > LONG_CLIP_SECONDS };
+  return { parts: timeline, seconds, scenes: scenes.length, skipped, overlaps, long: seconds > LONG_CLIP_SECONDS };
 }
 
 // What MediaRecorder should encode to.
@@ -345,7 +351,7 @@ export async function probeFilmAudio(video, { ms = 450 } = {}) {
 
 // The line to show when a film will not give up its audio.
 export const NO_FILM_AUDIO_NOTE =
-  'Heads up: this browser decodes no audio from this film, so a clip cut from it will be silent — '
+  'Heads up: this browser decodes no audio from this film, so the movie scenes in a clip will be silent — '
   + 'the audio track is almost certainly AC-3, E-AC-3 or DTS, which Chrome can’t play even though the '
   + 'film has perfectly good sound elsewhere. A copy with AAC audio records fine.';
 
@@ -445,7 +451,8 @@ export async function recordClip({
 
   const aborted = () => signal?.aborted;
   let done = 0;
-  const total = plan.parts.length;
+  const total = plan.parts.filter((p) => p.kind !== 'static').length;
+  let paintStatic;
   // What the film was actually making while we recorded it. Stills are silent
   // by design (the film is paused), so only scenes are measured.
   const scratch = audio?.meter ? new Float32Array(audio.meter.fftSize) : null;
@@ -466,12 +473,33 @@ export async function recordClip({
     rec.start(1000);
     for (const part of plan.parts) {
       if (aborted()) break;
+      if (part.kind === 'static') {
+        video.pause();
+        paintStatic ||= createStaticPainter(canvas);
+        paintStatic();
+        if (rec.state === 'paused') rec.resume();
+        const stopNoise = playStaticNoise(audio, part.seconds);
+        const until = performance.now() + part.seconds * 1000;
+        try {
+          while (performance.now() < until && !aborted()) {
+            paintStatic();
+            await wait(Math.min(1000 / fps, Math.max(0, until - performance.now())));
+          }
+        } finally {
+          stopNoise();
+          // Seeking the next scene must not stretch the static burst.
+          if (rec.state === 'recording') rec.pause();
+        }
+        continue;
+      }
       done += 1;
       onProgress(`Recording ${done}/${total}…`);
       if (part.kind === 'still') {
         // A still needs no film: pause the film, hold the card, keep painting
         // so the canvas keeps feeding the stream.
         try { video.pause(); } catch { /* fine */ }
+        paint(part);
+        if (rec.state === 'paused') rec.resume();
         const until = Date.now() + part.seconds * 1000;
         while (Date.now() < until && !aborted()) {
           paint(part);
@@ -530,7 +558,7 @@ export async function recordClip({
     // Worth a log line: this is the difference between "the film has no audio
     // this browser can decode" and "we broke the tap", and the counter says
     // which. Nothing decoded at all is the film, every time.
-    console.warn('[tik] the clip came out silent', { audioPeak, audioBytesDecoded: decoded, mime });
+    console.warn('[tik] the clip’s movie audio came out silent', { audioPeak, audioBytesDecoded: decoded, mime });
   }
   return {
     blob,
@@ -553,10 +581,10 @@ export function silenceReason({ sound, filmDecodedAudio } = {}) {
   if (sound === 'recorded') return '';
   if (sound === 'untapped') return 'The film’s audio couldn’t be tapped in this browser, so the clip is silent.';
   if (filmDecodedAudio === false) {
-    return 'The clip is silent because this browser decoded no audio from the film — most rips use AC-3 or DTS, which Chrome can’t play. The editor’s own play button will be silent too. A copy with AAC audio fixes it.';
+    return 'The movie scenes are silent because this browser decoded no audio from the film — most rips use AC-3 or DTS, which Chrome can’t play. The editor’s own play button will be silent too. A copy with AAC audio fixes it.';
   }
   if (filmDecodedAudio === true) {
-    return 'The clip is silent even though the film is decoding audio — check the film isn’t muted or silent over these exact scenes, then say so, because that one is a bug.';
+    return 'The movie scenes are silent even though the film is decoding audio — check the film isn’t muted or silent over these exact scenes, then say so, because that one is a bug.';
   }
-  return 'The clip came out silent — check that the film plays with sound in the editor.';
+  return 'The movie scenes came out silent — check that the film plays with sound in the editor.';
 }
