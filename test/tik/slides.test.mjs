@@ -137,3 +137,46 @@ test('updateSlideFrame leaves other slides alone', () => {
   assert.equal(next[0].adjust, null);
   assert.deepEqual(next[1].adjust, { zoom: 1.35 }, 'the slide that was not re-framed keeps its own');
 });
+
+// ---- A human fixing a batch frame is the measurement ----
+
+import { confirmFrame } from '../../public/scripts/tik/slides.js';
+
+test('replacing a flagged frame clears the flag and records the fix', () => {
+  const set = [{ id: '1', frameScan: { source: 'scan', score: 61, review: true } }];
+  const [s] = updateSlideFrame(set, '1', 'bmp', 10);
+  assert.equal(s.frameScan.review, false);
+  assert.equal(s.frameScan.fixed, true);
+  assert.equal(s.frameScan.wasFlagged, true, 'the batch did ask for this one');
+});
+
+test('replacing an UNflagged frame records a miss', () => {
+  // The batch was sure and wrong — the case most worth counting.
+  const set = [{ id: '1', frameScan: { source: 'scan', score: 94, review: false } }];
+  const [s] = updateSlideFrame(set, '1', 'bmp', 10);
+  assert.equal(s.frameScan.fixed, true);
+  assert.equal(s.frameScan.wasFlagged, false);
+});
+
+test('a second fix keeps what the batch originally thought', () => {
+  let set = [{ id: '1', frameScan: { source: 'scan', score: 61, review: true } }];
+  set = updateSlideFrame(set, '1', 'a', 1);
+  set = updateSlideFrame(set, '1', 'b', 2);
+  assert.equal(set[0].frameScan.wasFlagged, true);
+});
+
+test('confirming a flagged frame clears it without calling it fixed', () => {
+  const set = [{ id: '1', frameScan: { source: 'scan', score: 61, review: true } }];
+  const [s] = confirmFrame(set, '1');
+  assert.equal(s.frameScan.review, false);
+  assert.equal(s.frameScan.confirmed, true);
+  assert.equal(s.frameScan.fixed, undefined);
+  assert.equal(s.frameScan.wasFlagged, true, 'a false alarm is still worth counting');
+});
+
+test('slides that never went through batch are left alone', () => {
+  const [s] = updateSlideFrame([{ id: '1' }], '1', 'bmp', 1);
+  assert.equal(s.frameScan ?? null, null);
+  const [c] = confirmFrame([{ id: '1' }], '1');
+  assert.equal(c.frameScan, undefined);
+});

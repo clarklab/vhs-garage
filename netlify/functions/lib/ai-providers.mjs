@@ -185,6 +185,41 @@ export async function callModelWithImages(prompt, images, model, signal, maxToke
   return anthropicText(await res.json());
 }
 
+// Several images, each introduced by a short text label ("Grid A:") so the
+// prompt can refer to them by name. Labels before images is the documented way
+// to send more than one picture; without them "the third image" is a guess.
+export async function callModelWithLabeledImages(prompt, items, model, signal, maxTokens = 2048) {
+  if (providerFor(model) !== 'anthropic') {
+    throw new Error(`Vision requires a Claude model, got "${model}"`);
+  }
+  if (!ANTHROPIC_API_KEY) throw new Error('Anthropic not configured');
+  const content = [];
+  for (const it of Array.isArray(items) ? items : []) {
+    const data = String(it?.base64 || '');
+    if (!data) continue;
+    if (it.label) content.push({ type: 'text', text: `${it.label}:` });
+    content.push({ type: 'image', source: { type: 'base64', media_type: it.mediaType || 'image/jpeg', data } });
+  }
+  if (!content.some((b) => b.type === 'image')) throw new Error('No image data');
+  content.push({ type: 'text', text: prompt });
+
+  const res = await fetch(`${ANTHROPIC_BASE_URL}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model, max_tokens: budgetFor(model, maxTokens),
+      ...tuning(model),
+      messages: [{ role: 'user', content }],
+    }),
+    signal,
+  });
+  if (!res.ok) throw new Error(`Anthropic vision ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+  return anthropicText(await res.json());
+}
+
 // The text block, or a loud error naming the reason there isn't one.
 //
 // Returning '' here is how a truncated reply used to travel all the way to the

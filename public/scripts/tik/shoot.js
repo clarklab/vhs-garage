@@ -17,6 +17,8 @@
 // Owns its own DOM. batch.js only tells it when the tab is shown.
 
 import { grabVerifiedFrame, grabSettledFrame } from './vision.js';
+import { scanFilm, pinpoint } from './filmscan.js';
+import { SCAN_MIN_SCORE, REVIEW_BELOW, frameVerdict } from './scan.js';
 import { loadVideoFile } from './capture.js';
 import { ffmpegH264Command, NO_DECODE_NOTE } from './ffmpeg.js';
 import { fixNote } from './fixnote.js';
@@ -230,6 +232,10 @@ async function shootAll() {
   let doneFrames = 0;
   startRun('Shooting', totalFrames || queue.length);
   els.shots.innerHTML = '';
+  // Whole-film scan for this run. Switched off the first time the endpoint is
+  // found to be down, so one outage costs one film's worth of seeking, not ten.
+  let scanUp = true;
+  let runFlagged = 0;
 
   try {
     for (const [i, row] of queue.entries()) {
@@ -259,27 +265,98 @@ async function shootAll() {
 
       const slides = project.slides || [];
       const shootable = slides.filter((s) => s.batchShot !== 'skip' && s.kind !== 'outro');
+      const dur = row.duration || project.batch?.runtimeSeconds || 0;
+      const onProgress = (m) => pulse(`${row.name}: ${m}`);
+      const facts = shootable.map((s) => ({
+        caption: s.caption, grab: s.grabHint, kind: s.batchShot === 'title' ? 'title' : 'trivia',
+      }));
       let verified = 0;
+      let scanned = 0;
+      let flagged = 0;
+
+      // Look at the WHOLE film once, for every fact at the same time. Quotes
+      // already have their subtitle cue times, which are better than any
+      // picture search, so they skip this.
+      let hits = [];
+      if (project.format !== 'quotes' && scanUp) {
+        setPhase('Scanning', `${row.name} — movie ${i + 1} of ${queue.length}`);
+        try {
+          const scan = await scanFilm(video, { facts, durationSeconds: dur, onProgress, signal: abort.signal });
+          hits = scan.best;
+          const found = hits.filter((h) => h && h.score >= SCAN_MIN_SCORE).length;
+          console.info(`[tik-shoot] ${row.name}: scanned ${scan.frames} frames in ${scan.grids} grids over ${scan.calls} calls; ${found} of ${facts.length} facts located`);
+        } catch (e) {
+          // A Stop lands here too; the slide loop below sees the abort on its
+          // first check and the film is marked stopped the usual way.
+          if (e.unavailable) {
+            // The endpoint is down. Every film after this would spend minutes
+            // seeking for nothing, so stop scanning for the rest of the run.
+            scanUp = false;
+            console.warn(`[tik-shoot] whole-film scan unavailable for the rest of this run: ${e.message}`);
+          } else {
+            console.warn(`[tik-shoot] scan of ${row.name} failed; falling back per slide: ${e.message}`);
+          }
+          hits = [];
+        }
+      }
 
       for (const [n, slide] of shootable.entries()) {
         if (abort.signal.aborted) break;
         setPhase('Shooting', `${row.name} — movie ${i + 1} of ${queue.length}, frame ${n + 1} of ${shootable.length}`);
         try {
-          const grabber = project.format === 'quotes' ? grabSettledFrame : grabVerifiedFrame;
-          const out = await grabber(video, {
-            timecode: slide.timecode,
-            durationSeconds: row.duration || project.batch?.runtimeSeconds || 0,
-            caption: slide.caption,
-            grab: slide.grabHint,
-            kind: slide.batchShot === 'title' ? 'title' : 'trivia',
-            onProgress: (m) => pulse(`${row.name}: ${m}`),
-          });
+          let out = null;
+          let verdict = null;
+          let why = '';
+
+          // 1. The scan found it: pinpoint the exact frame around the hit.
+          const hit = hits[n];
+          if (hit && hit.score >= SCAN_MIN_SCORE) {
+            try {
+              const pin = await pinpoint(video, {
+                fact: facts[n], center: hit.seconds, durationSeconds: dur, onProgress, signal: abort.signal,
+              });
+              // No confirmation from the close look: keep the scan's own frame,
+              // but say so — it goes on the list to check.
+              const at = pin ? pin.seconds : hit.seconds;
+              const score = pin ? pin.score : Math.min(hit.score, REVIEW_BELOW - 1);
+              out = await grabSettledFrame(video, { timecode: at, durationSeconds: dur, onProgress });
+              verdict = frameVerdict({ source: 'scan', score });
+              why = pin?.why || hit.why;
+              scanned++;
+            } catch (e) {
+              if (abort.signal.aborted) break;
+              console.warn(`[tik-shoot] pinpoint for frame ${n + 1} of ${row.name} failed; using the old check: ${e.message}`);
+            }
+          }
+
+          // 2. Anything the scan could not place goes through the old check
+          //    around the writer's guess — exactly what every frame got before.
+          if (!out) {
+            const grabber = project.format === 'quotes' ? grabSettledFrame : grabVerifiedFrame;
+            out = await grabber(video, {
+              timecode: slide.timecode,
+              durationSeconds: dur,
+              caption: slide.caption,
+              grab: slide.grabHint,
+              kind: slide.batchShot === 'title' ? 'title' : 'trivia',
+              onProgress,
+            });
+            verdict = project.format === 'quotes'
+              ? { source: 'cue', score: null, review: false }
+              : frameVerdict({ source: 'verify', verified: !!out.verified, degraded: !!out.degraded });
+            why = out.reason || '';
+            if (out.verified) verified++;
+          }
+
           slide.frame = await bitmapToBlob(out.bitmap);
           slide.timecode = out.timecode;
+          slide.frameScan = { ...verdict, why: String(why || '').slice(0, 200), at: Date.now() };
+          if (verdict.review) flagged++;
           out.bitmap.close?.();
-          if (out.verified) verified++;
         } catch (e) {
           console.error(`[tik-shoot] frame ${n + 1} of ${row.name} failed: ${e.message}`, e);
+          slide.frameScan = { source: 'failed', score: null, review: true, why: e.message, at: Date.now() };
+          flagged++;
         }
         row.done = n + 1;
         doneFrames++;
@@ -294,9 +371,12 @@ async function shootAll() {
         project.updatedAt = Date.now();
         await putProject(project);
         row.state = 'done';
+        row.flagged = flagged;
+        runFlagged += flagged;
         row.detail = project.format === 'quotes'
           ? `${shootable.length} frames grabbed`
-          : `${verified} of ${shootable.length} frames verified`;
+          : `${shootable.length} frames · ${scanned} found by whole-film scan`
+            + (flagged ? ` · ${flagged} to check` : ' · nothing to check');
       } else {
         row.state = 'stopped';
         row.detail = `stopped after ${row.done} frames (not saved)`;
@@ -310,7 +390,10 @@ async function shootAll() {
     finishRun(
       stopped
         ? `Stopped. ${done} finished and saved, ${left} still to do.`
-        : `Finished ${done} draft${done === 1 ? '' : 's'}${left ? `, ${left} still need a file` : ''}. Open them from your library.`,
+        : `Finished ${done} draft${done === 1 ? '' : 's'}${left ? `, ${left} still need a file` : ''}. `
+          + (runFlagged
+            ? `${runFlagged} frame${runFlagged === 1 ? '' : 's'} flagged to check — they are marked on the slide.`
+            : 'Nothing flagged to check.'),
       stopped, // label it Stopped, not Done — they mean different things
     );
     await loadDrafts();
