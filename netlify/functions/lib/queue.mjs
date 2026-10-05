@@ -150,6 +150,11 @@ export function importablePosts(rows) {
       views: numOrNull(row?.view_count),
       likes: numOrNull(row?.like_count),
       comments: numOrNull(row?.comment_count),
+      // The post's own cover — the first slide — and a way back to it. The
+      // cover URL is a CDN link that expires in days, so whoever imports this
+      // should fetch the bytes rather than keep the address.
+      cover: String(row?.cover_image_url || ''),
+      link: String(row?.share_url || ''),
     });
   }
   return out.sort((a, b) => (b.postedAt || 0) - (a.postedAt || 0));

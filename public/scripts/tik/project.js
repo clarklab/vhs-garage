@@ -482,7 +482,7 @@ export function projectDisplayName(p) {
 //
 // Deliberately thin: no slides, no thumb. It is a receipt for a post, not a
 // draft to re-open and edit.
-export function importedProject(row, { id, now = Date.now() } = {}) {
+export function importedProject(row, { id, now = Date.now(), thumb = null } = {}) {
   const movie = String(row?.movie || '').trim();
   const title = String(row?.title || '').trim();
   const format = row?.format === 'quotes' ? 'quotes' : 'trivia';
@@ -498,13 +498,17 @@ export function importedProject(row, { id, now = Date.now() } = {}) {
     postedAt,
     updatedAt: postedAt,
     slides: [],
-    thumb: null,
+    // The post's own cover — its first slide — so the library looks like the
+    // feed it came from rather than a wall of placeholder icons.
+    thumb: thumb || null,
     // Where it came from, and what it did. `id` is TikTok's, and is what stops
     // a second import creating a second copy.
     imported: {
       source: 'tiktok',
       id: String(row?.id || ''),
       title,
+      // Where the post lives, so a card can open the real thing.
+      link: String(row?.link || ''),
       views: Number.isFinite(Number(row?.views)) ? Number(row.views) : null,
       likes: Number.isFinite(Number(row?.likes)) ? Number(row.likes) : null,
       comments: Number.isFinite(Number(row?.comments)) ? Number(row.comments) : null,
