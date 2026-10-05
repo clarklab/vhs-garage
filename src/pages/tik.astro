@@ -186,6 +186,35 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
         </button>
       </div>
 
+      <!-- Library tools, on the screen that shows the library. The one
+           thing that matters about a local library is being able to get a
+           copy out of it, and a button buried under the stats charts is a
+           button nobody finds. -->
+      <div class="mt-10 flex flex-wrap items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900 px-4 py-3">
+        <h2 class="w-full text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Library</h2>
+        <button id="open-reports" class="flex items-center gap-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800">
+          <span class="material-symbols-outlined text-[16px] leading-none">bar_chart</span> Post reports
+        </button>
+        <button id="connect-history" class="hidden items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/20">
+          <span class="material-symbols-outlined text-[16px] leading-none">link</span> Connect post history
+        </button>
+        <button id="backup-save" title="Download your whole library as one file — keep it somewhere that is not a browser"
+                class="flex items-center gap-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
+          <span class="material-symbols-outlined text-[16px] leading-none">download</span> Back up library
+        </button>
+        <button id="backup-load" title="Restore projects from a library file"
+                class="flex items-center gap-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
+          <span class="material-symbols-outlined text-[16px] leading-none">upload</span> Restore
+        </button>
+        <input id="backup-file" type="file" accept=".vhslib" class="hidden" />
+        <button id="import-posts" title="Add TikToks you posted before this tool existed to the library"
+                class="flex items-center gap-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
+          <span class="material-symbols-outlined text-[16px] leading-none">library_add</span> Import past posts
+        </button>
+        <p id="reports-hint" class="text-[11px] leading-snug text-neutral-600"></p>
+        <p id="storage-state" class="w-full text-[11px] leading-snug text-neutral-600"></p>
+      </div>
+
       <div class="mt-10 flex flex-wrap items-center justify-between gap-3">
         <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Open</h2>
         <div class="flex items-center gap-3">
@@ -278,29 +307,6 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
              authorize trip, because TikTok rejects the whole request when an
              app asks for a scope it does not hold, which would take sign-in
              and publishing down with it. -->
-        <div class="mt-5 flex flex-wrap items-center gap-2 border-t border-neutral-800 pt-4">
-          <button id="open-reports" class="flex items-center gap-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800">
-            <span class="material-symbols-outlined text-[16px] leading-none">bar_chart</span> Post reports
-          </button>
-          <button id="connect-history" class="hidden items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/20">
-            <span class="material-symbols-outlined text-[16px] leading-none">link</span> Connect post history
-          </button>
-          <button id="backup-save" title="Download your whole library as one file — keep it somewhere that is not a browser"
-                  class="flex items-center gap-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
-            <span class="material-symbols-outlined text-[16px] leading-none">download</span> Back up library
-          </button>
-          <button id="backup-load" title="Restore projects from a library file"
-                  class="flex items-center gap-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
-            <span class="material-symbols-outlined text-[16px] leading-none">upload</span> Restore
-          </button>
-          <input id="backup-file" type="file" accept=".vhslib" class="hidden" />
-          <button id="import-posts" title="Add TikToks you posted before this tool existed to the library"
-                  class="flex items-center gap-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
-            <span class="material-symbols-outlined text-[16px] leading-none">library_add</span> Import past posts
-          </button>
-          <p id="reports-hint" class="text-[11px] leading-snug text-neutral-600"></p>
-          <p id="storage-state" class="w-full text-[11px] leading-snug text-neutral-600"></p>
-        </div>
       </div>
 
       </div><!-- /tab-stats -->
