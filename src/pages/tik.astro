@@ -285,11 +285,21 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
           <button id="connect-history" class="hidden items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/20">
             <span class="material-symbols-outlined text-[16px] leading-none">link</span> Connect post history
           </button>
+          <button id="backup-save" title="Download your whole library as one file — keep it somewhere that is not a browser"
+                  class="flex items-center gap-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
+            <span class="material-symbols-outlined text-[16px] leading-none">download</span> Back up library
+          </button>
+          <button id="backup-load" title="Restore projects from a library file"
+                  class="flex items-center gap-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
+            <span class="material-symbols-outlined text-[16px] leading-none">upload</span> Restore
+          </button>
+          <input id="backup-file" type="file" accept=".vhslib" class="hidden" />
           <button id="import-posts" title="Add TikToks you posted before this tool existed to the library"
                   class="flex items-center gap-1.5 rounded-md border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:bg-neutral-800 disabled:opacity-40">
             <span class="material-symbols-outlined text-[16px] leading-none">library_add</span> Import past posts
           </button>
           <p id="reports-hint" class="text-[11px] leading-snug text-neutral-600"></p>
+          <p id="storage-state" class="w-full text-[11px] leading-snug text-neutral-600"></p>
         </div>
       </div>
 
