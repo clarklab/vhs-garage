@@ -187,7 +187,7 @@ HOW TO WRITE EACH TRIVIA CAPTION (the title slide has its own rule below):
 For each item, give:
 - "caption": the trivia text, following the rules above.
 - "timecode": a whole number of SECONDS between 0 and ${dur} pointing to where that scene appears (spread them across the runtime). A suggestion the user fine-tunes.
-- "grab": a terse visual pointer to help the human editor find the exact shot, e.g. "the scene where the building is on fire" (about ${GRAB_TARGET} chars, for the editor only, never shown to viewers).${titleSlideBlock}${focusBlock}${excludeBlock}${guidanceBlock}${sourceBlock}${metaBlock}
+- "grab": what the exact shot LOOKS LIKE, so it can be found by eye in a grid of frames (about ${GRAB_TARGET} chars, never shown to viewers). Describe what is visible — the setting, the action, wardrobe, props, creatures, vehicles, lighting, how many people are in shot — not who the actors are: a frame-finder cannot recognise faces, so "Kurt Russell in the snow" finds nothing while "bearded man in a fur-hooded parka, snowfield at night, flare in hand" finds the shot. A character name may come AFTER the description.${titleSlideBlock}${focusBlock}${excludeBlock}${guidanceBlock}${sourceBlock}${metaBlock}
 
 Return ONLY valid JSON in this exact shape, nothing else:
 {

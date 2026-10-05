@@ -4,7 +4,7 @@
 // itself can't persist (browser limitation), but every slide's frame does.
 import { loadVideoFile, grabFrame, awaitSeekSettled, seekAndSettle } from './capture.js';
 import { initScrubber } from './scrubber.js';
-import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame } from './slides.js';
+import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame, confirmFrame } from './slides.js';
 // getRefreshToken is back for one caller: importing the posts that predate the
 // library reads them straight from TikTok. Everything else (the hashtag panel)
 // still goes through reports.js loadPosts().
@@ -279,6 +279,8 @@ async function serializeProject() {
       stampNudge: clampStampNudge(s.stampNudge),
       // Hand trim on this scene's span, in the video format.
       trim: s.trim?.before || s.trim?.after ? { before: s.trim.before || 0, after: s.trim.after || 0 } : null,
+      // How batch Shoot chose this frame, and whether it asked for a look.
+      frameScan: s.frameScan || null,
       frame: await frameBlobFor(s),
     });
   }
@@ -541,6 +543,7 @@ async function openProject(id) {
         search: s.search || '', adjust: s.adjust || null,
         stampNudge: clampStampNudge(s.stampNudge),
         trim: s.trim?.before || s.trim?.after ? { before: s.trim.before || 0, after: s.trim.after || 0 } : null,
+        frameScan: s.frameScan || null,
         pairFrames: s.pairFrames?.length === 2 ? s.pairFrames : null,
         pairLayout: s.pairFrames?.length === 2 ? pairLayoutOf(s.pairLayout) : null,
       });
@@ -3100,6 +3103,31 @@ function renderSlide(slide, index) {
         ? `Matched to the subtitle cue at ${clockTimecode(slide.cue.start)}–${clockTimecode(slide.cue.end)}.`
         : 'No subtitle cue matched this line, so the time is the model\u2019s guess. Worth checking.';
       row.append(src);
+    }
+
+    // Batch Shoot asked for a look at this one. The point of the flag is that
+    // a ten-film batch hands back a short list instead of a hundred frames to
+    // inspect; clicking it says "I looked, it's right" and clears it. Replacing
+    // the frame clears it too, and records that it needed fixing.
+    if (slide.frameScan?.review) {
+      const flag = document.createElement('button');
+      flag.type = 'button';
+      flag.className = 'flex items-center gap-1 rounded-md bg-amber-400/15 px-1.5 py-0.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-400/25';
+      flag.append(iconSpan('visibility', 'text-[14px]'), document.createTextNode('check frame'));
+      const fs = slide.frameScan;
+      const how = fs.source === 'scan' ? `whole-film scan, ${fs.score ?? '?'}% sure`
+        : fs.source === 'verify' ? 'the old checker never passed a frame'
+          : fs.source === 'failed' ? 'the frame could not be found'
+            : 'a guess';
+      flag.title = `Batch flagged this frame (${how})${fs.why ? `: ${fs.why}` : ''}. Re-grab it if it is wrong; click here if it is right.`;
+      flag.addEventListener('click', (e) => {
+        e.stopPropagation();
+        slides = confirmFrame(slides, slide.id);
+        markDirty();
+        render();
+        els.status.textContent = 'Frame confirmed.';
+      });
+      row.append(flag);
     }
     mid.append(row);
   }

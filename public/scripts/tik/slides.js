@@ -54,6 +54,25 @@ export function editCaption(slides, id, caption) {
 // framed on one shot's title card, is nonsense applied to a different picture —
 // pasting a fresh image into a zoomed slide came back zoomed, which reads as
 // the app doing something of its own accord.
+//
+// A batch frame verdict is kept but marked FIXED: a human replacing the frame is
+// the one honest signal of whether the batch got it right, and `wasFlagged`
+// keeps what the batch thought at the time — so "flagged and fixed", "missed
+// and fixed" and "flagged but fine" can all be told apart later.
 export function updateSlideFrame(slides, id, bitmap, timecode) {
-  return slides.map(x => (x.id === id ? { ...x, bitmap, timecode, adjust: null } : x));
+  return slides.map(x => (x.id === id
+    ? { ...x, bitmap, timecode, adjust: null, frameScan: markFixed(x.frameScan) }
+    : x));
+}
+
+function markFixed(scan) {
+  if (!scan) return scan ?? null;
+  return { ...scan, wasFlagged: scan.wasFlagged ?? !!scan.review, review: false, fixed: true };
+}
+
+// "I looked, it's right." Clears the flag without pretending it was fixed.
+export function confirmFrame(slides, id) {
+  return slides.map(x => (x.id === id && x.frameScan
+    ? { ...x, frameScan: { ...x.frameScan, wasFlagged: x.frameScan.wasFlagged ?? !!x.frameScan.review, review: false, confirmed: true } }
+    : x));
 }
