@@ -317,3 +317,46 @@ test('summarizeTagRows sorts newest first and tolerates junk', () => {
   assert.deepEqual(rows.map((r) => r.tags[0]), ['new', 'old']);
   assert.deepEqual(summarizeTagRows(null), []);
 });
+
+// ---- Coverage is not capped at the most recent sixty ----
+
+const postRow = (movie, i) => ({ movie, views: 1000 + i, likes: 10, comments: 1, postedAt: 1_700_000_000 - i * 86400 });
+
+test('every covered film reaches the prompt, not just the newest page of them', () => {
+  // A 132-post account was being told about its newest 60, which is how a film
+  // from last spring comes back around as a fresh idea.
+  const history = Array.from({ length: 132 }, (_, i) => postRow(`Film ${i}`, i));
+  const p = buildQueuePrompt({ history, count: 10 });
+  assert.match(p, /- Film 0\b/, 'the newest');
+  assert.match(p, /- Film 131\b/, 'and the oldest');
+  const covered = p.slice(p.indexOf('ALREADY COVERED'));
+  assert.equal((covered.match(/^- Film \d+$/gm) || []).length, 132);
+});
+
+test('the performance block stays capped even when coverage is not', () => {
+  // Names are cheap; 132 rows of view counts are not.
+  const history = Array.from({ length: 132 }, (_, i) => postRow(`Film ${i}`, i));
+  const p = buildQueuePrompt({ history, count: 10 });
+  const perf = p.slice(p.indexOf('HOW OUR POSTS HAVE DONE'), p.indexOf('ALREADY COVERED'));
+  const withViews = (perf.match(/views/g) || []).length;
+  assert.ok(withViews <= 60, `performance rows should stay capped, got ${withViews}`);
+  assert.ok(withViews > 0);
+});
+
+test('the library list and the API history merge without repeating a film', () => {
+  const history = [postRow('The Thing', 0), postRow('Aliens', 1)];
+  const posted = [{ movie: 'The Thing' }, { movie: 'RoboCop' }];
+  const p = buildQueuePrompt({ history, posted });
+  const covered = p.slice(p.indexOf('ALREADY COVERED'));
+  assert.equal((covered.match(/- The Thing/g) || []).length, 1, 'named in both, listed once');
+  assert.match(covered, /- RoboCop/);
+  assert.match(covered, /- Aliens/);
+});
+
+test('a runaway covered list is still bounded', () => {
+  const history = Array.from({ length: 900 }, (_, i) => postRow(`Film ${i}`, i));
+  const p = buildQueuePrompt({ history });
+  const covered = p.slice(p.indexOf('ALREADY COVERED'));
+  const n = (covered.match(/^- Film \d+$/gm) || []).length;
+  assert.ok(n <= 400 && n >= 300, `bounded but generous, got ${n}`);
+});

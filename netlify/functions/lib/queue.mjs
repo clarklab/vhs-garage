@@ -15,7 +15,10 @@ export const QUEUE_COUNT = 10;
 // its own store rather than sharing the autopilot's.
 export const QUEUE_JOBS_STORE = 'tik-queue-jobs';
 const WHY_MAX = 140;
-const MAX_HISTORY_ROWS = 60; // enough signal for the model without a huge prompt
+const MAX_HISTORY_ROWS = 60;   // performance rows: enough signal without a huge prompt
+// The covered list is only NAMES, so it costs a line each and getting it wrong
+// means repeating a film. It gets every post, not the most recent sixty.
+const MAX_COVERED_NAMES = 400;
 
 // A posted title → the film it was about.
 //
@@ -239,7 +242,13 @@ export function buildQueuePrompt({ history = [], posted = [], count = QUEUE_COUN
         .join('\n')}`
     : `\n\nWe have no per-post view counts available, so judge on the covered list and on what you know about this kind of account rather than guessing at our numbers.`;
 
-  const coveredNames = [...new Set([...rows.map((r) => r.movie), ...posted.map((p) => typeof p === 'string' ? p : p?.movie || p?.title)].filter(Boolean))];
+  // `rows` is capped for the performance block above; coverage is not. An
+  // account with 132 posts was being told about its newest 60, which is how a
+  // film from last spring comes back around as a fresh idea.
+  const coveredNames = [...new Set([
+    ...history.map((r) => r.movie),
+    ...posted.map((p) => (typeof p === 'string' ? p : p?.movie || p?.title)),
+  ].filter(Boolean))].slice(0, MAX_COVERED_NAMES);
   const coveredBlock = coveredNames.length
     ? `\n\nALREADY COVERED, do not pick any of these or another cut of the same film:\n${coveredNames.map((m) => `- ${m}`).join('\n')}`
     : '';
