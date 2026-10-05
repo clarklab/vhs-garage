@@ -880,7 +880,9 @@ async function renderLibrary() {
     card.className = listView
       ? 'group relative flex w-full items-center gap-3 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-left transition hover:border-neutral-600'
       : 'group relative overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900 text-left transition hover:border-neutral-600';
-    card.title = `Open ${projectDisplayName(rec)}`;
+    card.title = isImported(rec) && rec.imported.link
+      ? `Open “${projectDisplayName(rec)}” on TikTok`
+      : `Open ${projectDisplayName(rec)}`;
 
     const frame = document.createElement('div');
     frame.className = listView
@@ -967,6 +969,13 @@ async function renderLibrary() {
     card.append(frame, meta);
     if (listView) card.append(badge, del);
     card.addEventListener('click', () => {
+      // An imported post has no slides to edit — it was published before this
+      // library existed. Opening an empty editor would be a dead end, so the
+      // card goes to the post itself.
+      if (isImported(rec) && rec.imported.link) {
+        window.open(rec.imported.link, '_blank', 'noopener,noreferrer');
+        return;
+      }
       openProject(rec.id).catch((e) => {
         console.error('[tik] open failed:', e);
         alert('Couldn’t open that project — check the console.');
@@ -1113,16 +1122,31 @@ els.importPosts.addEventListener('click', async () => {
       return;
     }
     let added = 0;
-    for (const row of fresh) {
+    let covers = 0;
+    for (const [i, row] of fresh.entries()) {
+      say(`Importing ${i + 1} of ${fresh.length}…`);
+      // The cover is the post's first slide. Its CDN address expires in days,
+      // so the bytes get stored, not the link — and a cover that will not come
+      // down is a missing picture, never a missing post.
+      let thumb = null;
+      if (row.cover) {
+        try {
+          const img = await fetch(`/.netlify/functions/tik-cover?url=${encodeURIComponent(row.cover)}`);
+          if (img.ok) { thumb = await img.blob(); covers++; }
+          else console.warn('[tik] cover unavailable for an imported post', { id: row.id, status: img.status });
+        } catch (e) {
+          console.warn('[tik] cover fetch failed for an imported post:', e, { id: row.id });
+        }
+      }
       try {
-        await putProject(importedProject(row, { id: uuid() }));
+        await putProject(importedProject(row, { id: uuid(), thumb }));
         added++;
       } catch (e) {
         console.error('[tik] could not save an imported post:', e, { id: row.id });
       }
     }
     const unnamed = fresh.filter((r) => !r.movie).length;
-    say(`Added ${added} past post${added === 1 ? '' : 's'} to the library.`
+    say(`Added ${added} past post${added === 1 ? '' : 's'} to the library, ${covers} with their cover.`
       + (unnamed ? ` ${unnamed} had no film in the title, so they count as posts but not as coverage.` : ''));
     await renderLibrary();
   } catch (e) {

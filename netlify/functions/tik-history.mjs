@@ -14,7 +14,7 @@ const CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY;
 const CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET;
 const TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/';
 const LIST_URL = 'https://open.tiktokapis.com/v2/video/list/';
-const FIELDS = 'id,title,video_description,create_time,view_count,like_count,comment_count,share_count';
+const FIELDS = 'id,title,video_description,create_time,view_count,like_count,comment_count,share_count,cover_image_url,share_url';
 const PAGE_SIZE = 20;   // TikTok's per-request maximum
 const MAX_PAGES = 10;   // 200 posts is far more history than the queue needs
 
