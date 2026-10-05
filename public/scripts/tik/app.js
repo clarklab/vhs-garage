@@ -24,6 +24,7 @@ import {
   importedProject, newImports, isImported,
 } from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
+import { packLibrary, unpackLibrary, backupFileName, restorable, keepStorage, storageUsed } from './backup.js';
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
 import { composePair, pairLayoutOf, otherLayout, PAIR_LAYOUT_LABELS } from './pair.js';
@@ -111,6 +112,8 @@ const els = {
   tagReport: $('tag-report'), tagReportNote: $('tag-report-note'), tagReportBody: $('tag-report-body'),
   openReports: $('open-reports'), connectHistoryBtn: $('connect-history'), reportsHint: $('reports-hint'),
   importPosts: $('import-posts'),
+  backupSave: $('backup-save'), backupLoad: $('backup-load'), backupFile: $('backup-file'),
+  storageState: $('storage-state'),
   statsModes: $('stats-modes'), statsStyles: $('stats-styles'), statsForecast: $('stats-forecast'),
   statsLegend: $('stats-legend'),
   libraryFilters: $('library-filters'), libraryViews: $('library-views'),
@@ -1003,6 +1006,70 @@ els.connectHistoryBtn.addEventListener('click', async () => {
   } catch (e) {
     console.error('[tik] connecting post history failed:', e);
     alert(e.message);
+  }
+});
+
+// ---- Getting a copy of the library out, and back in ----
+//
+// Everything here lives in one browser profile's IndexedDB. That is why the
+// movie files never leave the machine, and it is also why clearing site data,
+// a new profile, or a browser deciding to reclaim space takes the lot. A
+// library with no way out is one bad day from nothing.
+els.backupSave.addEventListener('click', async () => {
+  if (!storageAvailable()) { alert('The local library is unavailable.'); return; }
+  els.backupSave.disabled = true;
+  const say = (msg) => { els.reportsHint.textContent = msg; };
+  try {
+    say('Packing the library…');
+    const list = await listProjects();
+    if (!list.length) { say('Nothing in the library to back up yet.'); return; }
+    const blob = packLibrary(list);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = backupFileName(new Date());
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    const mb = (blob.size / 1024 / 1024).toFixed(1);
+    say(`Backed up ${list.length} project${list.length === 1 ? '' : 's'} (${mb}MB). Keep it somewhere that is not this browser.`);
+  } catch (e) {
+    console.error('[tik] library backup failed:', e);
+    say(`Backup failed: ${e.message}`);
+  } finally {
+    els.backupSave.disabled = false;
+  }
+});
+
+els.backupLoad.addEventListener('click', () => els.backupFile.click());
+els.backupFile.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  els.backupFile.value = ''; // same file can be restored again later
+  if (!file) return;
+  const say = (msg) => { els.reportsHint.textContent = msg; };
+  els.backupLoad.disabled = true;
+  try {
+    say('Reading the library file…');
+    const projects = await unpackLibrary(file);
+    if (!projects.length) { say('That file holds no projects.'); return; }
+    const existing = await listProjects().catch(() => []);
+    // Restoring never overwrites what is here: a project already in the
+    // library keeps the copy you have been working on.
+    const fresh = restorable(projects, existing.map((p) => p.id));
+    if (!fresh.length) { say(`All ${projects.length} project(s) in that file are already in the library.`); return; }
+    let added = 0;
+    for (const p of fresh) {
+      try { await putProject(p); added++; }
+      catch (err) { console.error('[tik] could not restore a project:', err, { id: p.id }); }
+    }
+    const skipped = projects.length - fresh.length;
+    say(`Restored ${added} project${added === 1 ? '' : 's'}.`
+      + (skipped ? ` ${skipped} were already here and were left alone.` : ''));
+    await renderLibrary();
+  } catch (err) {
+    console.error('[tik] restoring the library failed:', err);
+    say(err.message);
+  } finally {
+    els.backupLoad.disabled = false;
   }
 });
 
@@ -3704,6 +3771,27 @@ els.post.addEventListener('click', async () => {
     if (await handleRedirect()) authMsg = 'Signed in to TikTok.';
   } catch (e) { console.error('[tik] sign-in failed:', e); authMsg = e.message; }
   refreshAuthUI();
+
+  // Ask the browser to KEEP the library before anything is written into it.
+  //
+  // Without this the data is "best effort": Chrome may evict it when the disk
+  // gets tight and Safari deletes script-writable storage after seven days of
+  // not visiting. Everything the studio makes lives there, so a silent eviction
+  // is the whole library.
+  keepStorage().then(async (state) => {
+    const { usage } = await storageUsed();
+    const mb = usage ? `${(usage / 1e6).toFixed(0)}MB` : 'nothing yet';
+    if (state === 'granted') {
+      els.storageState.textContent = `Library: ${mb} in this browser, marked persistent. Still worth a backup — it only exists here.`;
+      els.storageState.className = 'w-full text-[11px] leading-snug text-neutral-600';
+      return;
+    }
+    // Worth saying out loud. Everything the studio makes lives in this one
+    // browser profile, and in this state the browser is free to bin it.
+    console.warn('[tik] this library is NOT marked persistent; the browser may evict it', { state, usage });
+    els.storageState.textContent = `Library: ${mb} in this browser, NOT marked persistent — the browser can clear it on its own. Back it up.`;
+    els.storageState.className = 'w-full text-[11px] leading-snug font-semibold text-amber-300/90';
+  }).catch((e) => console.error('[tik] storage persistence check failed:', e));
 
   // Font readiness is armed once here and re-checked whenever a project opens
   // (see enterEditor). The old one-shot fired at boot behind `if (project)`,
