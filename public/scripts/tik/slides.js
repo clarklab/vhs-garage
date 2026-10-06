@@ -76,3 +76,10 @@ export function confirmFrame(slides, id) {
     ? { ...x, frameScan: { ...x.frameScan, wasFlagged: x.frameScan.wasFlagged ?? !!x.frameScan.review, review: false, confirmed: true } }
     : x));
 }
+
+// How many slides batch still wants a human to look at. The library card shows
+// it, so a ten-film batch reads as "three films, five frames" from the grid
+// instead of a hunt through every draft.
+export function flaggedCount(slides) {
+  return (Array.isArray(slides) ? slides : []).filter((x) => x?.frameScan?.review).length;
+}

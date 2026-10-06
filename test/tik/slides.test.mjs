@@ -140,7 +140,7 @@ test('updateSlideFrame leaves other slides alone', () => {
 
 // ---- A human fixing a batch frame is the measurement ----
 
-import { confirmFrame } from '../../public/scripts/tik/slides.js';
+import { confirmFrame, flaggedCount } from '../../public/scripts/tik/slides.js';
 
 test('replacing a flagged frame clears the flag and records the fix', () => {
   const set = [{ id: '1', frameScan: { source: 'scan', score: 61, review: true } }];
@@ -179,4 +179,18 @@ test('slides that never went through batch are left alone', () => {
   assert.equal(s.frameScan ?? null, null);
   const [c] = confirmFrame([{ id: '1' }], '1');
   assert.equal(c.frameScan, undefined);
+});
+
+test('flaggedCount counts only frames still waiting for a look', () => {
+  const s = [
+    { id: 'a', frameScan: { review: true } },
+    { id: 'b', frameScan: { review: false } },
+    { id: 'c', frameScan: { review: true } },
+    { id: 'd' },
+  ];
+  assert.equal(flaggedCount(s), 2);
+  assert.equal(flaggedCount(confirmFrame(s, 'a')), 1, 'confirmed is no longer waiting');
+  assert.equal(flaggedCount(updateSlideFrame(s, 'c', null, 5)), 1, 'nor is a re-grabbed frame');
+  assert.equal(flaggedCount(undefined), 0);
+  assert.equal(flaggedCount([null]), 0);
 });
