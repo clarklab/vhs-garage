@@ -4,7 +4,7 @@
 // itself can't persist (browser limitation), but every slide's frame does.
 import { loadVideoFile, grabFrame, awaitSeekSettled, seekAndSettle } from './capture.js';
 import { initScrubber } from './scrubber.js';
-import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame, confirmFrame } from './slides.js';
+import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame, confirmFrame, flaggedCount } from './slides.js';
 // getRefreshToken is back for one caller: importing the posts that predate the
 // library reads them straight from TikTok. Everything else (the hashtag panel)
 // still goes through reports.js loadPosts().
@@ -967,6 +967,18 @@ async function renderLibrary() {
       ? `from TikTok · ${relativeTime(rec.postedAt || rec.updatedAt || 0, Date.now())}`
       : `${(rec.slides || []).length} slides · ${relativeTime(rec.updatedAt || 0, Date.now())}`;
     sub.innerHTML = `${formatBadge(rec)} <span>${detail}</span>`;
+    // Frames batch Shoot was unsure of and nobody has looked at yet. Posted
+    // sets are past caring, so only the queue shows it.
+    const flagged = key === 'posted' ? 0 : flaggedCount(rec.slides);
+    if (flagged) {
+      const chip = document.createElement('span');
+      chip.className = listView
+        ? 'ml-auto flex flex-none items-center gap-0.5 rounded-md bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200'
+        : 'absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold text-neutral-950 shadow';
+      chip.title = `${flagged} frame${flagged === 1 ? '' : 's'} flagged by batch to check — open the set and look for the amber “check frame” pills.`;
+      chip.append(iconSpan('visibility', 'text-[13px]'), document.createTextNode(listView ? String(flagged) : `${flagged} to check`));
+      (listView ? sub : frame).appendChild(chip);
+    }
     meta.append(name, sub);
 
     card.append(frame, meta);
