@@ -118,6 +118,7 @@ const els = {
   statsLegend: $('stats-legend'),
   libraryFilters: $('library-filters'), libraryViews: $('library-views'),
   librarySearch: $('library-search'),
+  libraryNarrowed: $('library-narrowed'),
   homeNav: $('home-nav'), homeLink: $('home-link'), tabPosts: $('tab-posts'), tabStats: $('tab-stats'), tabModels: $('tab-models'),
   // slides pane
   count: $('slide-count'), list: $('slide-list'), addScene: $('add-scene'), slidesHint: $('slides-hint'),
@@ -833,6 +834,33 @@ els.libraryViews.addEventListener('click', (e) => {
   renderLibrary();
 });
 
+// "Showing 3 of 136" whenever a search or a status pill is hiding cards. The
+// status pill is remembered between visits and the pills count only search
+// matches, so without this a narrowed grid looks exactly like a lost library.
+function renderNarrowed(shown, total) {
+  const q = librarySearch.trim();
+  const status = STATUSES.find((st) => st.key === libFilter);
+  const narrowed = shown < total && (q || status);
+  els.libraryNarrowed.classList.toggle('hidden', !narrowed);
+  els.libraryNarrowed.innerHTML = '';
+  if (!narrowed) return;
+  const why = [status && status.plural.toLowerCase(), q && `matching “${q}”`].filter(Boolean).join(', ');
+  const text = document.createElement('span');
+  text.textContent = `Showing ${shown} of ${total} — ${why}.`;
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'rounded-md border border-neutral-700 px-2 py-0.5 font-semibold text-neutral-200 hover:border-neutral-500';
+  all.textContent = 'Show all';
+  all.addEventListener('click', () => {
+    librarySearch = '';
+    els.librarySearch.value = '';
+    libFilter = 'all';
+    localStorage.setItem(LS_LIB_FILTER, 'all');
+    renderLibrary();
+  });
+  els.libraryNarrowed.append(text, all);
+}
+
 async function renderLibrary() {
   thumbUrls.forEach((u) => URL.revokeObjectURL(u));
   thumbUrls = [];
@@ -858,6 +886,7 @@ async function renderLibrary() {
   // posted or how many sets are queued.
   refreshCadence(list).catch((e) => console.error('[tik] cadence render failed:', e));
 
+  const total = list.length;
   const q = librarySearch.trim().toLowerCase();
   if (q) list = list.filter((r) => matchesSearch(r, q));
 
@@ -869,6 +898,7 @@ async function renderLibrary() {
   renderLibraryChrome(counts);
 
   const shown = libFilter === 'all' ? list : list.filter((r) => statusOf(r) === libFilter);
+  renderNarrowed(shown.length, total);
   els.grid.className = GRID_CLASS[libView] || GRID_CLASS.grid;
   els.libraryEmpty.classList.toggle('hidden', shown.length > 0);
   if (!shown.length) {
