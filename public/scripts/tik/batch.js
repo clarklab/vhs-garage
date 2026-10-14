@@ -727,10 +727,12 @@ function onSizeChange() {
   refreshBuildButton();
 }
 
-// Changing the spoiler rule changes what IMDb sends, so every pool is stale.
+// Changing the spoiler rule changes what IMDb sends, so every pool is stale —
+// and so is its curation. Leaving `curated` set made curatePool() skip the new
+// pool, and every "AI pick" label vanished the moment Spoilers was ticked.
 function onSpoilersChange() {
   poolGeneration += 1;
-  for (const it of queue) { it.pool = null; it.state = 'idle'; }
+  for (const it of queue) { it.pool = null; it.state = 'idle'; it.curated = 0; }
   render();
   const it = find(selectedKey);
   if (it) ensurePool(it);
