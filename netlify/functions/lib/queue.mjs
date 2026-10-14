@@ -40,12 +40,57 @@ export function parsePostedMovie(title, description = '') {
   if (dash) return cleanMovieName(dash[1]);
 
   // Older/hand-edited posts: "Behind-the-scenes facts and hidden details from X."
-  const from = String(description || '').match(/hidden details from ([^.]+)\./i);
-  if (from) return cleanMovieName(from[1]);
+  const from = String(description || '').match(/hidden details from ([^.!?]+?)\s*(?:[—–]|[.!?](?:\s|$))/i);
+  if (from) return cleanMovieName(from[1].replace(/^the\s+(?:\d{4}\s+)?classic,?\s+/i, ''));
 
   // A bare "movie trivia" title with no film in it tells us nothing.
   if (/^movie trivia\b/i.test(t)) return null;
-  return null;
+
+  // Everything since late summer is a free-form caption that opens on the film:
+  // "Point Break (1991), Kathryn Bigelow's…", "By follower request: The
+  // Rocketeer (1991)!". Two thirds of the account was invisible to the picker
+  // until this, which is how it kept suggesting films we had already posted.
+  return filmFromCaption(t);
+}
+
+// Actor tributes and year round-ups name films too, but they don't COVER one.
+const NOT_A_FILM_POST = /remembering some guys|memorable roles|do you have a favorite [\w .'-]{1,40} movie\?|take a look at the data/i;
+// Sentence breaks, except the full stop in "Mr. Mom" or "Dr. Strangelove".
+// Not colons: "Home Alone 2: Lost in New York" is one title.
+const SENTENCE_BREAK = /(?:[!?;]|(?<!\b(?:Mr|Mrs|Ms|Dr|St|Jr|vs))\.)\s+/;
+// What a caption says before it gets to the film.
+const LEAD_INS = [
+  /^.*\b(?:trivia|details|facts|secrets)\s+from\s+(?:the\s+classic\s+)?/i,
+  /^.*\basked\s+for\s+/i,
+  /^.*\brequest:\s*/i,
+  /^.*\bstars?\s+in\s+/i,
+  /^(?:it'?s|it is)\s+/i,
+];
+
+export function filmFromCaption(caption) {
+  const text = String(caption || '').replace(/\s+/g, ' ').trim();
+  if (!text || NOT_A_FILM_POST.test(text)) return null;
+
+  // "Title (1991)" near the start: the film is whatever ends the sentence
+  // the year closes.
+  const year = text.match(/^(.{1,160}?)\s*\((?:19|20)\d{2}\)/);
+  // "Airplane! from 1980," / "The Nutty Professor from 1996,"
+  const bareYear = text.match(/^(.{1,60}?)\s+from\s+(?:19|20)\d{2}\b/);
+  // "Deep-cut trivia from jaws."
+  const noYear = text.match(/\btrivia\s+from\s+([^.!?(#]{1,60})[.!?]/i);
+
+  let name = null;
+  if (year) {
+    name = year[1].split(SENTENCE_BREAK).pop();
+    for (const re of LEAD_INS) name = name.replace(re, '');
+  } else if (bareYear) {
+    name = bareYear[1];
+  } else if (noYear) {
+    name = noYear[1];
+  }
+  name = cleanMovieName(name);
+  // A "name" this long is a sentence the patterns misread, not a title.
+  return name && name.length <= 70 ? name : null;
 }
 
 export function parsePostedQuotes(title, description = '') {
@@ -87,7 +132,15 @@ export function movieKey(name) {
 export function isAlreadyPosted(name, posted = []) {
   const key = movieKey(name);
   if (!key) return false;
-  return posted.some((p) => movieKey(typeof p === 'string' ? p : p?.movie || p?.title) === key);
+  return posted.some((p) => movieKey(postedName(p)) === key);
+}
+
+// The film a `posted` entry stands for. Library posts imported before the
+// caption parser could read them arrive as { caption } and are named here,
+// server side, where the parser lives.
+export function postedName(p) {
+  if (typeof p === 'string') return p;
+  return p?.movie || p?.title || (p?.caption ? filmFromCaption(p.caption) : null) || null;
 }
 
 // Turn raw TikTok post rows into the compact history the prompt shows the
@@ -247,7 +300,7 @@ export function buildQueuePrompt({ history = [], posted = [], count = QUEUE_COUN
   // film from last spring comes back around as a fresh idea.
   const coveredNames = [...new Set([
     ...history.map((r) => r.movie),
-    ...posted.map((p) => (typeof p === 'string' ? p : p?.movie || p?.title)),
+    ...posted.map(postedName),
   ].filter(Boolean))].slice(0, MAX_COVERED_NAMES);
   const coveredBlock = coveredNames.length
     ? `\n\nALREADY COVERED, do not pick any of these or another cut of the same film:\n${coveredNames.map((m) => `- ${m}`).join('\n')}`

@@ -360,3 +360,58 @@ test('a runaway covered list is still bounded', () => {
   const n = (covered.match(/^- Film \d+$/gm) || []).length;
   assert.ok(n <= 400 && n >= 300, `bounded but generous, got ${n}`);
 });
+
+// ---- free-form captions (every post since late summer) ----
+// Real captions from the account. Two thirds of them used to parse to nothing,
+// so the picker kept suggesting Raiders, Jaws and The Mask all over again.
+
+import { filmFromCaption, postedName } from '../../netlify/functions/lib/queue.mjs';
+
+const CAPTIONS = [
+  ['Raiders of the Lost Ark (1981), the Steven Spielberg and George Lucas adventure starring Harrison Ford', 'Raiders of the Lost Ark'],
+  ['Home Alone 2: Lost in New York (1992), directed by Chris Columbus and written by John Hughes', 'Home Alone 2: Lost in New York'],
+  ['Ace Ventura: Pet Detective (1994), Tom Shadyac\'s directing debut with Jim Carrey', 'Ace Ventura: Pet Detective'],
+  ['By popular fan request: it\'s Tremors (1990)! Ron Underwood\'s directorial debut', 'Tremors'],
+  ['Movie fan request! This one came in via channel request: Mr. Mom (1983), the Stan Dragoti comedy', 'Mr. Mom'],
+  ['Movie fan request! One of you asked for Super Troopers (2001), the Broken Lizard highway patrol comedy', 'Super Troopers'],
+  ['By follower request: The Rocketeer (1991)! Joe Johnston\'s Disney adventure', 'The Rocketeer'],
+  ['Hulk Hogan and Tommy Tiny Lister star in No Holds Barred (1989), the late eighties wrestling movie', 'No Holds Barred'],
+  ['The \'Burbs (1989) is Joe Dante\'s dark suburban comedy starring Tom Hanks', 'The \'Burbs'],
+  ['Honey, I Shrunk the Kids (1989) is the Walt Disney sci-fi comedy', 'Honey, I Shrunk the Kids'],
+  ['Airplane! from 1980, the disaster movie spoof directed by Jim Abrahams', 'Airplane!'],
+  ['The Nutty Professor from 1996, Tom Shadyac\'s Universal Pictures comedy remake', 'The Nutty Professor'],
+  ['Deep-cut trivia from Jurassic Park (1993). Which one surprised you? #movietrivia', 'Jurassic Park'],
+  ['Deep-cut trivia from jaws. Which one surprised you? #movietrivia #film #jaws', 'jaws'],
+  ['We\'re never gonna get another set like Dom and Brian. The Fast and The Furious (2001), directed by Rob Cohen', 'The Fast and The Furious'],
+  ['Rounders (1998), John Dahl\'s high stakes poker drama. What\'s your favorite line from the movie?', 'Rounders'],
+];
+
+test('a free-form caption names the film it opens on', () => {
+  for (const [caption, film] of CAPTIONS) {
+    assert.equal(parsePostedMovie(caption, caption), film, caption);
+  }
+});
+
+test('actor tributes and year round-ups do not cover a film', () => {
+  for (const caption of [
+    'Join us as we celebrate Tim Curry\'s most memorable roles. Which one is your favorite? Legend (1985)',
+    'Do you have a favorite Sam Neill movie? Drop it in the comments.',
+    'New series: Remembering Some Guys. Amazing actors that always play "that guy". Raiders (1981)',
+    'Some of y\'all commented what a crazy year 1994 was for movies, so we thought we should take a look at the data!',
+  ]) assert.equal(filmFromCaption(caption), null, caption);
+});
+
+test('the older caption style stops at the end of the name', () => {
+  assert.equal(parsePostedMovie('x', 'Behind-the-scenes facts and hidden details from 3 Ninjas (1992) — how many of these did you know? What’s your favorite scene?'), '3 Ninjas');
+  assert.equal(parsePostedMovie('x', 'Dive into some behind-the-scenes facts and hidden details from the classic RoboCop (1987)! 🤖'), 'RoboCop');
+  assert.equal(parsePostedMovie('x', 'Dive into some cool behind-the-scenes facts and hidden details from the 1994 classic, Airheads! 🎬'), 'Airheads');
+});
+
+test('a library post with only a caption is still covered', () => {
+  const posted = [{ caption: 'The Mask (1994), Chuck Russell\'s comic book comedy for New Line Cinema' }];
+  assert.equal(postedName(posted[0]), 'The Mask');
+  assert.equal(isAlreadyPosted('The Mask', posted), true);
+  assert.match(buildQueuePrompt({ posted }), /ALREADY COVERED[^]*- The Mask/);
+  const picks = normalizeQueue({ picks: [{ title: 'The Mask', year: 1994 }, { title: 'Elf', year: 2003 }] }, { posted });
+  assert.deepEqual(picks.map((p) => p.title), ['Elf']);
+});

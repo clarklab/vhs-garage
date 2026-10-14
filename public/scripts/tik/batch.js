@@ -236,9 +236,13 @@ async function suggestMovies() {
   say('Working out what to cover next…');
   try {
     // Everything already made on this device, so the agent never repeats one.
+    // A post imported from TikTok before its caption could be read has no
+    // movie; its caption goes instead and the server names the film from it.
     const posted = (await listProjects().catch(() => []))
-      .filter((p) => p.format === batchFormat && p.movie?.title)
-      .map((p) => ({ movie: p.movie.title }));
+      .filter((p) => p.format === batchFormat)
+      .map((p) => (p.movie?.title ? { movie: p.movie.title }
+        : p.imported?.title ? { caption: p.imported.title.slice(0, 300) } : null))
+      .filter(Boolean);
 
     // Real post performance if TikTok has granted video.list, otherwise the
     // library alone. Never fatal: a missing scope just means weaker signal.
