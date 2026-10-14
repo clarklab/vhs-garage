@@ -9,12 +9,12 @@ const YOUTUBE_CLIENT_SECRET = process.env.YOUTUBE_OAUTH_CLIENT_SECRET;
 // base URL + API key in the gateway. Defaults work out of the box if the
 // gateway env vars are configured; missing keys cause that provider's
 // path to fall back to the template description.
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_BASE_URL = process.env.GOOGLE_GEMINI_BASE_URL;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
+const GEMINI_API_KEY = () => process.env.GEMINI_API_KEY;
+const GEMINI_BASE_URL = () => process.env.GOOGLE_GEMINI_BASE_URL;
+const OPENAI_API_KEY = () => process.env.OPENAI_API_KEY;
+const OPENAI_BASE_URL = () => process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+const ANTHROPIC_API_KEY = () => process.env.ANTHROPIC_API_KEY;
+const ANTHROPIC_BASE_URL = () => process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
 
 // Default model. Overridable per-request via body.model. Allowlisted in
 // pickModel() — anything else falls back to the default so a typo can't
@@ -235,12 +235,12 @@ async function rewriteForYouTube(metadata, model) {
 // handler stays small and only worries about wire format.
 
 async function callGemini(prompt, model, signal) {
-  if (!GEMINI_API_KEY || !GEMINI_BASE_URL) throw new Error('Gemini not configured');
+  if (!GEMINI_API_KEY() || !GEMINI_BASE_URL()) throw new Error('Gemini not configured');
   const res = await fetch(
-    `${GEMINI_BASE_URL}/v1beta/models/${model}:generateContent`,
+    `${GEMINI_BASE_URL()}/v1beta/models/${model}:generateContent`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY() },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         // generationConfig.responseMimeType: "application/json" gives us
@@ -260,12 +260,12 @@ async function callGemini(prompt, model, signal) {
 }
 
 async function callOpenAI(prompt, model, signal) {
-  if (!OPENAI_API_KEY) throw new Error('OpenAI not configured (set OPENAI_API_KEY)');
-  const res = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+  if (!OPENAI_API_KEY()) throw new Error('OpenAI not configured (set OPENAI_API_KEY)');
+  const res = await fetch(`${OPENAI_BASE_URL()}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      'Authorization': `Bearer ${OPENAI_API_KEY()}`,
     },
     body: JSON.stringify({
       model,
@@ -285,12 +285,12 @@ async function callOpenAI(prompt, model, signal) {
 }
 
 async function callAnthropic(prompt, model, signal) {
-  if (!ANTHROPIC_API_KEY) throw new Error('Anthropic not configured (set ANTHROPIC_API_KEY)');
-  const res = await fetch(`${ANTHROPIC_BASE_URL}/messages`, {
+  if (!ANTHROPIC_API_KEY()) throw new Error('Anthropic not configured (set ANTHROPIC_API_KEY)');
+  const res = await fetch(`${ANTHROPIC_BASE_URL()}/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
+      'x-api-key': ANTHROPIC_API_KEY(),
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({

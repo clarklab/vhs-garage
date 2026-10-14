@@ -3,14 +3,18 @@
 // recovers the JSON object. Used by both the sync tik-autopilot function and
 // the background tik-autopilot-job function.
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_BASE_URL = process.env.GOOGLE_GEMINI_BASE_URL;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+// Read on every call, never captured when the module loads. Since early
+// October 2026 Netlify's AI Gateway fills these in after a function has
+// started, so a copy taken at load time is empty and every request failed
+// with "Anthropic not configured" — while the variable sat right there.
+const GEMINI_API_KEY = () => process.env.GEMINI_API_KEY;
+const GEMINI_BASE_URL = () => process.env.GOOGLE_GEMINI_BASE_URL;
+const OPENAI_API_KEY = () => process.env.OPENAI_API_KEY;
+const OPENAI_BASE_URL = () => process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+const ANTHROPIC_API_KEY = () => process.env.ANTHROPIC_API_KEY;
 // Root URL (no /v1) — Netlify's AI Gateway injects it this way, matching the
 // Anthropic SDK convention where /v1/messages is appended.
-const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
+const ANTHROPIC_BASE_URL = () => process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
 
 export function providerFor(model) {
   if (model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3')) return 'openai';
@@ -76,10 +80,10 @@ export async function callModel(prompt, model, signal, maxTokens = DEFAULT_MAX_T
 }
 
 async function callGemini(prompt, model, signal, maxTokens) {
-  if (!GEMINI_API_KEY || !GEMINI_BASE_URL) throw new Error('Gemini not configured');
-  const res = await fetch(`${GEMINI_BASE_URL}/v1beta/models/${model}:generateContent`, {
+  if (!GEMINI_API_KEY() || !GEMINI_BASE_URL()) throw new Error('Gemini not configured');
+  const res = await fetch(`${GEMINI_BASE_URL()}/v1beta/models/${model}:generateContent`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY() },
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       // Gemini 2.5 Flash has "thinking" on by default, which adds several
@@ -98,10 +102,10 @@ async function callGemini(prompt, model, signal, maxTokens) {
 }
 
 async function callOpenAI(prompt, model, signal, maxTokens) {
-  if (!OPENAI_API_KEY) throw new Error('OpenAI not configured');
-  const res = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+  if (!OPENAI_API_KEY()) throw new Error('OpenAI not configured');
+  const res = await fetch(`${OPENAI_BASE_URL()}/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY()}` },
     body: JSON.stringify({
       model, messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
@@ -115,12 +119,12 @@ async function callOpenAI(prompt, model, signal, maxTokens) {
 }
 
 async function callAnthropic(prompt, model, signal, maxTokens) {
-  if (!ANTHROPIC_API_KEY) throw new Error('Anthropic not configured');
+  if (!ANTHROPIC_API_KEY()) throw new Error('Anthropic not configured');
   // Netlify AI Gateway + Anthropic REST: {base}/v1/messages (base has no /v1).
-  const res = await fetch(`${ANTHROPIC_BASE_URL}/v1/messages`, {
+  const res = await fetch(`${ANTHROPIC_BASE_URL()}/v1/messages`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY,
+      'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY(),
       'anthropic-version': '2023-06-01',
     },
     // Adaptive thinking plus an effort level is how depth is controlled on the
@@ -158,7 +162,7 @@ export async function callModelWithImages(prompt, images, model, signal, maxToke
   if (providerFor(model) !== 'anthropic') {
     throw new Error(`Vision requires a Claude model, got "${model}"`);
   }
-  if (!ANTHROPIC_API_KEY) throw new Error('Anthropic not configured');
+  if (!ANTHROPIC_API_KEY()) throw new Error('Anthropic not configured');
   const blocks = (Array.isArray(images) ? images : [])
     .map((img) => ({ mediaType: img?.mediaType || 'image/jpeg', data: String(img?.base64 || '') }))
     .filter((img) => img.data)
@@ -168,10 +172,10 @@ export async function callModelWithImages(prompt, images, model, signal, maxToke
     }));
   if (!blocks.length) throw new Error('No image data');
 
-  const res = await fetch(`${ANTHROPIC_BASE_URL}/v1/messages`, {
+  const res = await fetch(`${ANTHROPIC_BASE_URL()}/v1/messages`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY,
+      'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY(),
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
@@ -192,7 +196,7 @@ export async function callModelWithLabeledImages(prompt, items, model, signal, m
   if (providerFor(model) !== 'anthropic') {
     throw new Error(`Vision requires a Claude model, got "${model}"`);
   }
-  if (!ANTHROPIC_API_KEY) throw new Error('Anthropic not configured');
+  if (!ANTHROPIC_API_KEY()) throw new Error('Anthropic not configured');
   const content = [];
   for (const it of Array.isArray(items) ? items : []) {
     const data = String(it?.base64 || '');
@@ -203,10 +207,10 @@ export async function callModelWithLabeledImages(prompt, items, model, signal, m
   if (!content.some((b) => b.type === 'image')) throw new Error('No image data');
   content.push({ type: 'text', text: prompt });
 
-  const res = await fetch(`${ANTHROPIC_BASE_URL}/v1/messages`, {
+  const res = await fetch(`${ANTHROPIC_BASE_URL()}/v1/messages`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY,
+      'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY(),
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
