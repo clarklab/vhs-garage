@@ -10,8 +10,8 @@
 // gemini-2.5-flash, which is fully vision-capable, in the Gateway's
 // allowed list, and much faster than 2.5-pro for the sleeve-OCR task.
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_BASE_URL = process.env.GOOGLE_GEMINI_BASE_URL;
+const GEMINI_API_KEY = () => process.env.GEMINI_API_KEY;
+const GEMINI_BASE_URL = () => process.env.GOOGLE_GEMINI_BASE_URL;
 // Vision-capable, fast, in the Gateway. Override via env if you need
 // 2.5-pro quality for some reason.
 const MODEL = process.env.SLEEVE_AI_MODEL || 'gemini-2.5-flash';
@@ -21,10 +21,10 @@ export default async (req) => {
     return json({ error: 'POST required' }, 405);
   }
 
-  if (!GEMINI_API_KEY || !GEMINI_BASE_URL) {
+  if (!GEMINI_API_KEY() || !GEMINI_BASE_URL()) {
     console.error('[sleeve-ai] missing env vars', {
-      hasKey: !!GEMINI_API_KEY,
-      hasBase: !!GEMINI_BASE_URL,
+      hasKey: !!GEMINI_API_KEY(),
+      hasBase: !!GEMINI_BASE_URL(),
     });
     return json({ error: 'Gemini API not configured' }, 500);
   }
@@ -74,12 +74,12 @@ If you cannot determine a field, use an empty string. Return ONLY the JSON objec
   let res;
   try {
     res = await fetch(
-      `${GEMINI_BASE_URL}/v1beta/models/${MODEL}:generateContent`,
+      `${GEMINI_BASE_URL()}/v1beta/models/${MODEL}:generateContent`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-goog-api-key': GEMINI_API_KEY,
+          'x-goog-api-key': GEMINI_API_KEY(),
         },
         body: JSON.stringify({
           contents: [{ role: 'user', parts: imageParts }],
