@@ -266,6 +266,16 @@ export function wantsLeftAlign({ format, kind, lines } = {}) {
   return (Array.isArray(lines) ? lines : []).filter((l) => String(l || '').trim()).length > 1;
 }
 
+// A designed end card is already the whole slide — picture, words and all — so
+// it is drawn edge to edge with no caption on top. Recognised by being an
+// outro at the canvas's own 9:16, which the square logo card never is; that
+// keeps every caller (previews, export, publish, the clip) right without each
+// of them having to pass a flag.
+export function isFullCard({ kind, width, height } = {}) {
+  if (kind !== 'outro' || !(width > 0) || !(height > 0)) return false;
+  return Math.abs(width / height - CANVAS_W / CANVAS_H) < 0.01;
+}
+
 export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null, format, kind, adjust = null, stampNudge = 0,
   captionStyle = 'pills', karaokeProgress = null, karaokeState = null } = {}) {
   const fs = Math.min(Math.max(Number(fontScale) || 1, 0.5), 1.6);
@@ -288,6 +298,11 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
 
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  if (isFullCard({ kind, width: srcW, height: srcH })) {
+    ctx.drawImage(bitmap, 0, 0, CANVAS_W, CANVAS_H);
+    return;
+  }
 
   const fullText = `${titleLine ? `${titleLine}\n` : ''}${caption}`.trim();
 

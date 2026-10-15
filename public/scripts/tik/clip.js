@@ -167,6 +167,9 @@ export function planClip(slides, {
   isTitle = () => false,
   isOutro = () => false,
   still = STILL_SECONDS,
+  // Per-slide override for how long a still holds: a designed end card plays
+  // its own five-second animation. null means "the usual".
+  holdSeconds = () => null,
 } = {}) {
   const parts = [];
   const skipped = [];
@@ -177,10 +180,10 @@ export function planClip(slides, {
     const holdStill = () => parts.push({
       kind: 'still',
       slideId: slide.id,
-      seconds: Math.max(0.5, Number(still) || STILL_SECONDS),
+      seconds: Math.max(0.5, Number(holdSeconds(slide)) || Number(still) || STILL_SECONDS),
     });
     if (isOutro(slide)) {
-      // The sign-off is the logo, not a frame of the film: nothing to roll.
+      // The sign-off is the end card, not a frame of the film: nothing to roll.
       holdStill();
       continue;
     }
