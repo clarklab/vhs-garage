@@ -86,7 +86,7 @@ export function initBatch({ onExit = () => {} } = {}) {
     pasteMatch: $('batch-paste-match'), pasteNote: $('batch-paste-note'),
     pasteReport: $('batch-paste-report'),
     queue: $('batch-queue'), queueEmpty: $('batch-queue-empty'), queueCount: $('batch-queue-count'),
-    build: $('batch-build'), buildLabel: $('batch-build-label'),
+    build: $('batch-build'), buildLabel: $('batch-build-label'), load: $('batch-load'),
     pickerTitle: $('batch-picker-title'), pickerMeta: $('batch-picker-meta'),
     size: $('batch-size'), spoilers: $('batch-spoilers'), curate: $('batch-curate'),
     curateWrap: $('batch-curate-wrap'),
@@ -133,6 +133,7 @@ export function initBatch({ onExit = () => {} } = {}) {
     hideResults();
   });
   els.build.addEventListener('click', buildAll);
+  els.load.addEventListener('click', loadHeld);
   els.size.addEventListener('change', onSizeChange);
   els.spoilers.addEventListener('change', onSpoilersChange);
   els.curate.addEventListener('change', onCurateToggle);
@@ -267,14 +268,16 @@ async function suggestMovies() {
     const guidance = els.steer?.value.trim() || '';
     const picks = await runQueueJob({ history, posted, count: 10, format: batchFormat, guidance });
 
+    // Held: titles only until the list is approved. Ten IMDb pulls and ten AI
+    // rankings for a list that still has three films you'd never post is
+    // waste, and reading trivia before choosing the films is the wrong order.
     let added = 0;
-    for (const pick of picks) if (addToQueue(pick) === 'added') added++;
+    for (const pick of picks) if (addToQueue(pick, { held: true }) === 'added') added++;
     const steered = guidance ? ` for “${guidance}”` : '';
     say(added
-      ? `Queued ${added} movie${added === 1 ? '' : 's'}${steered}.`
+      ? `Queued ${added} movie${added === 1 ? '' : 's'}${steered}. Remove any you don't want, then load their trivia.`
       : `Nothing new to add${steered} — all of those are already queued.`, added ? 'good' : 'idle');
     render();
-    prefetchPools(); // fills in the per-movie counts without the user clicking each one
   } catch (e) {
     console.error('[tik-batch] suggest failed', e);
     say(e.message, 'bad');
@@ -507,10 +510,11 @@ function renderPasteRow(r, added) {
 
 // Returns a reason, not a boolean: "already queued" and "queue is full" are
 // different things to be told, and callers used to conflate them.
-function addToQueue(pick) {
+function addToQueue(pick, { held = false } = {}) {
   const verdict = queueAdmission(pick, queue, MAX_QUEUE);
   if (!verdict.ok) return verdict.reason;
   queue.push({
+    held,
     key: verdict.key, title: String(pick.title).trim(), year: pick.year ?? null, why: pick.why || '',
     imdbId: pick.imdbId || pick.id || null,
     runtimeSeconds: pick.runtimeSeconds || null,
@@ -519,7 +523,7 @@ function addToQueue(pick) {
   // The list grows downward, so with a few films queued a new row lands well
   // below the search box that was just clicked. renderQueue scrolls to this.
   justAdded = { key: verdict.key, at: Date.now() };
-  if (!selectedKey) selectMovie(verdict.key);
+  if (!selectedKey && !held) selectMovie(verdict.key);
   return 'added';
 }
 
@@ -535,9 +539,20 @@ const withSelected = (fn) => { const it = find(selectedKey); if (it?.pool) fn(it
 
 function selectMovie(key) {
   selectedKey = key;
-  render();
   const it = find(key);
-  if (it) ensurePool(it);
+  if (it) it.held = false; // opening a film is approving it
+  render();
+  if (!it) return;
+  // A pool the background walk already loaded still needs its ranking.
+  if (it.pool) curateItem(it);
+  else ensurePool(it);
+}
+
+// "Load trivia": the queue is approved as it stands.
+function loadHeld() {
+  for (const it of queue) it.held = false;
+  render();
+  prefetchPools();
 }
 
 // Pull every trivia item IMDb has for this film, once, and hold the ranked
@@ -579,11 +594,12 @@ async function ensurePool(item) {
   if (selectedKey === item.key) renderPicker();
   refreshBuildButton();
 
-  // Curate in the background once the pool is on screen: the vote-ranked ten
-  // shows instantly, then re-ranks when the agent answers. Only the movie
-  // being looked at — the rest get curated during buildAll, so a ten-movie
-  // queue doesn't fire ten agent calls just from being queued.
-  if (item.state === 'ready' && selectedKey === item.key && format !== 'quotes') curateSelected(item);
+  // Rank every film as its pool lands, not only the one on screen. Ranking
+  // only the selected film left the rest in vote order until Write, which then
+  // swapped in the agent's choices — so what got written was not what had been
+  // reviewed. Films only load once the list is approved, so this is ten calls
+  // that Write was going to make anyway, just made in time to be checked.
+  if (item.state === 'ready' && format !== 'quotes') curateItem(item);
 }
 
 // Walk the queue loading pools one at a time. Sequential on purpose: ten
@@ -600,7 +616,7 @@ async function prefetchPools() {
       const generation = poolGeneration;
       for (const it of queue) {
         if (generation !== poolGeneration) break;
-        if (!it.pool && it.state === 'idle') await ensurePool(it);
+        if (!it.pool && it.state === 'idle' && !it.held) await ensurePool(it);
       }
       if (generation === poolGeneration) break;
     }
@@ -620,8 +636,9 @@ const CANDIDATES = 25;
 
 async function curatePool(item, { announce = () => {} } = {}) {
   if (batchFormat === 'quotes' || !els.curate.checked || !item?.pool || item.curated) return false;
-  const size = item.pool.size();
-  const all = item.pool.top(CANDIDATES);
+  const pool = item.pool;
+  const size = pool.size();
+  const all = pool.top(CANDIDATES);
   if (all.length <= size) return false; // nothing to choose between
 
   announce('Agent is picking the best of the top 25…');
@@ -633,6 +650,9 @@ async function curatePool(item, { announce = () => {} } = {}) {
       candidates: all.map((c) => ({ id: c.id, text: c.text })),
     });
     if (!res?.order?.length) return false;
+    // A spoiler or format toggle swapped the pool while the agent was busy;
+    // this ranking was for the old one, and the new pool ranks itself.
+    if (item.pool !== pool) return false;
     item.pool.applyOrder(res.order, res.why || {});
     item.curated = res.curated || 0;
     return true;
@@ -696,22 +716,35 @@ function onCurateToggle() {
   if (batchFormat === 'quotes') return;
   if (!els.curate.checked) {
     poolGeneration += 1;
-    for (const it of queue) { it.pool = null; it.state = 'idle'; it.curated = 0; }
+    for (const it of queue) { it.pool = null; it.state = 'idle'; it.curated = 0; it.curateError = ''; }
     render();
     const it = find(selectedKey);
     if (it) ensurePool(it);
     return;
   }
-  const it = find(selectedKey);
-  if (it?.pool) curateSelected(it);
+  for (const it of queue) if (it.pool) curateItem(it);
 }
 
-async function curateSelected(item) {
-  if (batchFormat === 'quotes') return false;
-  const changed = await curatePool(item, { announce: (m) => { els.curateNote.textContent = m; els.curateNote.classList.remove('hidden'); } });
-  if (find(selectedKey) === item) renderPicker();
+// One ranking per pool, however many things ask for it: the load, a click on
+// the film, and Write all share the same in-flight call.
+function curateItem(item) {
+  if (batchFormat === 'quotes' || !item?.pool) return Promise.resolve(false);
+  const pool = item.pool;
+  if (item.curating && item.curatingPool === pool) return item.curating;
+  const announce = (m) => {
+    if (find(selectedKey) !== item) return;
+    els.curateNote.textContent = m;
+    els.curateNote.classList.remove('hidden');
+  };
+  const run = curatePool(item, { announce }).finally(() => {
+    if (item.curating === run) { item.curating = null; item.curatingPool = null; }
+    if (find(selectedKey) === item) renderPicker();
+    renderQueue();
+  });
+  item.curating = run;
+  item.curatingPool = pool;
   renderQueue();
-  return changed;
+  return run;
 }
 
 function sizeValue() {
@@ -732,7 +765,7 @@ function onSizeChange() {
 // pool, and every "AI pick" label vanished the moment Spoilers was ticked.
 function onSpoilersChange() {
   poolGeneration += 1;
-  for (const it of queue) { it.pool = null; it.state = 'idle'; it.curated = 0; }
+  for (const it of queue) { it.pool = null; it.state = 'idle'; it.curated = 0; it.curateError = ''; }
   render();
   const it = find(selectedKey);
   if (it) ensurePool(it);
@@ -813,7 +846,11 @@ function statusLine(it) {
   if (it.state === 'written') return 'Draft written';
   if (it.pool) {
     const n = it.pool.visible().length;
-    return `${n} picked of ${it.pool.total()}${it.pool.exhausted() ? ' (all used)' : ''}`;
+    const ai = batchFormat === 'quotes' || !els.curate.checked ? ''
+      : it.curating ? ' · AI ranking…'
+        : it.curated ? ' · AI picks'
+          : it.curateError ? ' · AI ranking failed, vote order' : '';
+    return `${n} picked of ${it.pool.total()}${it.pool.exhausted() ? ' (all used)' : ''}${ai}`;
   }
   return it.why || 'Queued';
 }
@@ -955,6 +992,11 @@ function pendingMovies() {
 }
 
 function refreshBuildButton() {
+  const held = queue.filter((it) => it.held).length;
+  els.load.classList.toggle('hidden', !held);
+  els.load.classList.toggle('flex', !!held);
+  els.load.disabled = busy;
+  els.load.textContent = held ? `Load ${batchFormat === 'quotes' ? 'quotes' : 'trivia'} for ${held} movie${held === 1 ? '' : 's'}` : '';
   const n = pendingMovies().length;
   els.build.disabled = busy || !n;
   els.buildLabel.textContent = n ? `Write ${n} draft${n === 1 ? '' : 's'}` : 'Write every draft';
@@ -981,8 +1023,7 @@ async function buildAll() {
     // is the source, and Autopilot boils the picked lines itself.
     if (batchFormat !== 'quotes' && it.pool && !it.curated) {
       say(`Choosing the best trivia for ${it.title} (${i + 1} of ${ready.length})…`);
-      await curatePool(it);
-      if (selectedKey === it.key) renderPicker();
+      await curateItem(it);
     }
     const picked = it.pool?.visible() || [];
     if (!picked.length) {
