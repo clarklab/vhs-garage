@@ -478,6 +478,9 @@ const IMDB_BOOKMARKLET = 'javascript:' + encodeURIComponent(`(()=>{var P=documen
               <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Queue</h2>
               <span id="batch-queue-count" class="text-xs tabular-nums text-neutral-500"></span>
             </div>
+            <!-- Agent picks wait here as titles: weed the list first, then pay
+                 for the IMDb pulls and the AI ranking. -->
+            <button id="batch-load" class="mt-2 hidden w-full items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"></button>
             <ol id="batch-queue" class="mt-2 flex flex-col gap-1.5"></ol>
             <p id="batch-queue-empty" class="mt-2 rounded-lg border border-dashed border-neutral-800 p-4 text-center text-xs text-neutral-500">
               No movies yet. Let the agent pick, or add one by name.
