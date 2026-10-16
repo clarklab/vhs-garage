@@ -22,3 +22,6 @@ video/edits/
 
 # Superpowers brainstorm scratch
 .superpowers/
+
+# Local git worktrees
+.worktrees/

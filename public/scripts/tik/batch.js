@@ -21,9 +21,11 @@ import { createTriviaPool, helpfulLabel, DEFAULT_PICK } from './triviapool.js';
 // Step 2 lives in its own module: it owns the folder scan, the per-draft list
 // and the run, and nothing here reaches into it beyond showing and refreshing.
 import { initShoot, refreshShoot, isShooting } from './shoot.js';
-import { fetchTriviaPost } from './autopilot.js';
+import { fetchTriviaPost, fetchQuotesPost, fetchSubtitles } from './autopilot.js';
+import { fontScaleForQuote } from './caption.js';
 import { makeProject, defaultPostFields, pickOutro } from './project.js';
-import { parseTitleList, pickBestMatch } from './movielist.js';
+import { outroDesign, rememberedOutro } from './outros.js';
+import { parseTitleList, pickBestMatch, queueAdmission } from './movielist.js';
 import { houseSetAt } from './hashtags.js';
 import { putProject, listProjects } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
@@ -58,23 +60,37 @@ let selectedKey = null;
 let searchSeq = 0;
 let busy = false;
 let exitTo = () => {};
+let batchFormat = 'trivia';
+// Bumped whenever queued pools are thrown out (format toggle, spoilers, …)
+// so an IMDb fetch that started before the bump cannot write a stale pool.
+let poolGeneration = 0;
+// The row a render should scroll to and flash, and when it arrived.
+//
+// A window rather than a one-shot flag: adding a film kicks off its IMDb pool
+// fetch, which re-renders the queue a beat later and throws away the very DOM
+// node that was just highlighted. Keyed on time, every render inside the window
+// re-applies the highlight to whichever node currently represents that row.
+let justAdded = { key: null, at: 0 };
+const FLASH_MS = 1200;
 
 export function initBatch({ onExit = () => {} } = {}) {
   exitTo = onExit;
   els = {
     screen: $('screen-batch'), back: $('batch-back'), status: $('batch-status'),
+    format: $('batch-format'),
     tabWrite: $('batch-tab-write'), tabShoot: $('batch-tab-shoot'),
     write: $('batch-write'), shoot: $('batch-shoot'),
     // write
-    suggest: $('batch-suggest'), suggestNote: $('batch-suggest-note'),
+    suggest: $('batch-suggest'), suggestNote: $('batch-suggest-note'), steer: $('batch-steer'),
     search: $('batch-search'), results: $('batch-search-results'),
     pasteBox: $('batch-paste-box'), paste: $('batch-paste'),
     pasteMatch: $('batch-paste-match'), pasteNote: $('batch-paste-note'),
     pasteReport: $('batch-paste-report'),
     queue: $('batch-queue'), queueEmpty: $('batch-queue-empty'), queueCount: $('batch-queue-count'),
-    build: $('batch-build'), buildLabel: $('batch-build-label'),
+    build: $('batch-build'), buildLabel: $('batch-build-label'), load: $('batch-load'),
     pickerTitle: $('batch-picker-title'), pickerMeta: $('batch-picker-meta'),
     size: $('batch-size'), spoilers: $('batch-spoilers'), curate: $('batch-curate'),
+    curateWrap: $('batch-curate-wrap'),
     curateNote: $('batch-curate-note'),
     replaceAll: $('batch-replace-all'), reset: $('batch-reset'),
     trivia: $('batch-trivia'), triviaEmpty: $('batch-trivia-empty'),
@@ -87,16 +103,48 @@ export function initBatch({ onExit = () => {} } = {}) {
   els.search.addEventListener('input', onSearchInput);
   els.pasteMatch.addEventListener('click', matchPastedList);
   els.paste.addEventListener('input', updatePasteNote);
-  els.search.addEventListener('blur', () => setTimeout(hideResults, 150));
+  // Closing the dropdown must never race the click that is closing it.
+  //
+  // This used to be blur + setTimeout(hideResults, 150), and hideResults wipes
+  // innerHTML. Pressing the mouse on a result blurs the input, so a click held
+  // longer than 150ms had its row deleted out of the tree between mousedown and
+  // mouseup — and a click only fires when both land on the same, still-attached
+  // element. The film was silently not added, with no error to show for it,
+  // and whether it happened came down to how fast you let go of the button.
+  //
+  // focusout with relatedTarget replaces the timer outright: focus moving INTO
+  // the list is not focus leaving the widget, so there is nothing to time.
+  // Listened for on BOTH halves of the widget. focusout fires on whatever is
+  // losing focus, so a handler on the input alone never hears you tab from a
+  // RESULT to somewhere else, and the list would hang open for good.
+  const leftTheSearch = (e) => {
+    const to = e.relatedTarget;
+    if (to && (to === els.search || els.results.contains(to))) return;
+    hideResults();
+  };
+  els.search.addEventListener('focusout', leftTheSearch);
+  els.results.addEventListener('focusout', leftTheSearch);
+  // And a pointer anywhere outside closes it too. focusout covers the keyboard,
+  // but a dropdown that will not go away is its own bug, and this path does not
+  // depend on focus behaving. pointerdown fires before mousedown, so a press on
+  // a result is recognised as inside and left alone.
+  document.addEventListener('pointerdown', (e) => {
+    if (els.results.classList.contains('hidden')) return;
+    if (e.target === els.search || els.results.contains(e.target)) return;
+    hideResults();
+  });
   els.build.addEventListener('click', buildAll);
+  els.load.addEventListener('click', loadHeld);
   els.size.addEventListener('change', onSizeChange);
   els.spoilers.addEventListener('change', onSpoilersChange);
   els.curate.addEventListener('change', onCurateToggle);
+  els.format.addEventListener('click', onFormatClick);
   els.replaceAll.addEventListener('click', () => withSelected((it) => { it.pool.replaceAll(); renderPicker(); }));
   els.reset.addEventListener('click', () => withSelected((it) => { it.pool.reset(); renderPicker(); }));
   initShoot();
 
   showTab('write');
+  syncFormatChrome();
   render();
 }
 
@@ -141,7 +189,46 @@ function say(msg, tone = 'idle') {
 function setBusy(on) {
   busy = on;
   for (const b of [els.suggest, els.build, els.replaceAll, els.reset]) b.disabled = on;
+  if (els.format) {
+    for (const btn of els.format.querySelectorAll('[data-batch-format]')) btn.disabled = on;
+  }
   if (!on) refreshBuildButton();
+}
+
+function onFormatClick(e) {
+  const btn = e.target.closest('[data-batch-format]');
+  if (!btn || busy) return;
+  const next = btn.dataset.batchFormat;
+  if (next !== 'trivia' && next !== 'quotes') return;
+  if (next === batchFormat) return;
+  batchFormat = next;
+  poolGeneration += 1;
+  for (const it of queue) {
+    it.pool = null;
+    it.state = 'idle';
+    it.curated = 0;
+    it.curateError = '';
+  }
+  syncFormatChrome();
+  render();
+  const it = find(selectedKey);
+  if (it) ensurePool(it);
+}
+
+function syncFormatChrome() {
+  const on = 'rounded-md px-3 py-1.5 text-xs font-semibold bg-neutral-800 text-white';
+  const off = 'rounded-md px-3 py-1.5 text-xs font-semibold text-neutral-400 hover:text-neutral-200';
+  if (els.format) {
+    for (const btn of els.format.querySelectorAll('[data-batch-format]')) {
+      btn.className = btn.dataset.batchFormat === batchFormat ? on : off;
+    }
+  }
+  const quotes = batchFormat === 'quotes';
+  els.curateWrap?.classList.toggle('hidden', quotes);
+  if (quotes) {
+    els.curateNote.classList.add('hidden');
+    els.curateNote.textContent = '';
+  }
 }
 
 // ================= step 1: the queue =================
@@ -151,9 +238,13 @@ async function suggestMovies() {
   say('Working out what to cover next…');
   try {
     // Everything already made on this device, so the agent never repeats one.
+    // A post imported from TikTok before its caption could be read has no
+    // movie; its caption goes instead and the server names the film from it.
     const posted = (await listProjects().catch(() => []))
-      .filter((p) => p.format === 'trivia' && p.movie?.title)
-      .map((p) => ({ movie: p.movie.title }));
+      .filter((p) => p.format === batchFormat)
+      .map((p) => (p.movie?.title ? { movie: p.movie.title }
+        : p.imported?.title ? { caption: p.imported.title.slice(0, 300) } : null))
+      .filter(Boolean);
 
     // Real post performance if TikTok has granted video.list, otherwise the
     // library alone. Never fatal: a missing scope just means weaker signal.
@@ -165,21 +256,29 @@ async function suggestMovies() {
         body: JSON.stringify({ refreshToken: token }),
       }).catch(() => null);
       const data = res && res.ok ? await res.json().catch(() => ({})) : {};
-      history = Array.isArray(data.movies) ? data.movies : [];
+      const movies = batchFormat === 'quotes' ? data.quoteMovies : data.movies;
+      history = Array.isArray(movies) ? movies : [];
       els.suggestNote.textContent = data.scope === 'granted'
         ? `Reading ${history.length} of your posts for what performs.`
         : 'Using this device\'s library. Connect post history for real view counts.';
     }
 
-    const picks = await runQueueJob({ history, posted, count: 10 });
+    // Whatever the user typed above the button: an actor, a director, a theme,
+    // a decade. The picker already knew how to take steering; nothing had ever
+    // handed it any.
+    const guidance = els.steer?.value.trim() || '';
+    const picks = await runQueueJob({ history, posted, count: 10, format: batchFormat, guidance });
 
+    // Held: titles only until the list is approved. Ten IMDb pulls and ten AI
+    // rankings for a list that still has three films you'd never post is
+    // waste, and reading trivia before choosing the films is the wrong order.
     let added = 0;
-    for (const pick of picks) if (addToQueue(pick)) added++;
+    for (const pick of picks) if (addToQueue(pick, { held: true }) === 'added') added++;
+    const steered = guidance ? ` for “${guidance}”` : '';
     say(added
-      ? `Queued ${added} movie${added === 1 ? '' : 's'}.`
-      : 'Nothing new to add — all of those are already queued.', added ? 'good' : 'idle');
+      ? `Queued ${added} movie${added === 1 ? '' : 's'}${steered}. Remove any you don't want, then load their trivia.`
+      : `Nothing new to add${steered} — all of those are already queued.`, added ? 'good' : 'idle');
     render();
-    prefetchPools(); // fills in the per-movie counts without the user clicking each one
   } catch (e) {
     console.error('[tik-batch] suggest failed', e);
     say(e.message, 'bad');
@@ -278,8 +377,13 @@ function renderResults(titles) {
     row.innerHTML = `<span class="font-semibold"></span><span class="text-xs text-neutral-500"></span>`;
     row.children[0].textContent = t.title;
     row.children[1].textContent = [t.year, t.rating ? `${t.rating}` : ''].filter(Boolean).join(' · ');
+    // Belt to the focusout braces: swallowing mousedown keeps focus in the
+    // input, so picking a result never blurs it in the first place.
+    row.addEventListener('mousedown', (e) => e.preventDefault());
     row.addEventListener('click', () => {
-      if (addToQueue(t)) { render(); prefetchPools(); say(`Added ${t.title}.`, 'good'); }
+      const verdict = addToQueue(t);
+      if (verdict === 'added') { render(); prefetchPools(); say(`Added ${t.title}.`, 'good'); }
+      else if (verdict === 'full') say(`Queue is full (${MAX_QUEUE}) — remove one first.`, 'bad');
       else say(`${t.title} is already in the queue.`);
       els.search.value = '';
       hideResults();
@@ -354,9 +458,10 @@ async function matchPastedList() {
   let added = 0;
   const missed = [];
   for (const r of results) {
-    const ok = r.pick && addToQueue({ ...r.pick, why: r.row.raw });
+    const verdict = r.pick ? addToQueue({ ...r.pick, why: r.row.raw }) : 'nomatch';
+    const ok = verdict === 'added';
     if (ok) added++;
-    else if (r.pick) missed.push({ ...r, confidence: 'dupe' });
+    else if (r.pick) missed.push({ ...r, confidence: verdict });
     else missed.push(r);
     renderPasteRow(r, ok);
   }
@@ -381,6 +486,7 @@ const PASTE_TONE = {
   title: 'text-neutral-500',
   weak: 'text-amber-300',
   dupe: 'text-neutral-600',
+  full: 'text-amber-300',
   none: 'text-red-300',
   error: 'text-red-300',
 };
@@ -392,7 +498,9 @@ function renderPasteRow(r, added) {
   if (!r.pick) {
     li.textContent = r.confidence === 'error' ? `${asked} — lookup failed` : `${asked} — no match`;
   } else if (!added) {
-    li.textContent = `${asked} — already queued`;
+    li.textContent = r.confidence === 'full'
+      ? `${asked} — queue is full (${MAX_QUEUE})`
+      : `${asked} — already queued`;
   } else if (r.confidence === 'weak') {
     li.textContent = `${asked} → ${r.pick.title}${r.pick.year ? ` (${r.pick.year})` : ''} — check this one`;
   } else {
@@ -401,19 +509,23 @@ function renderPasteRow(r, added) {
   els.pasteReport.appendChild(li);
 }
 
-function addToQueue(pick) {
-  const title = String(pick?.title || '').trim();
-  if (!title || queue.length >= MAX_QUEUE) return false;
-  const key = `${title.toLowerCase()}|${pick.year || ''}`;
-  if (queue.some((q) => q.key === key)) return false;
+// Returns a reason, not a boolean: "already queued" and "queue is full" are
+// different things to be told, and callers used to conflate them.
+function addToQueue(pick, { held = false } = {}) {
+  const verdict = queueAdmission(pick, queue, MAX_QUEUE);
+  if (!verdict.ok) return verdict.reason;
   queue.push({
-    key, title, year: pick.year ?? null, why: pick.why || '',
+    held,
+    key: verdict.key, title: String(pick.title).trim(), year: pick.year ?? null, why: pick.why || '',
     imdbId: pick.imdbId || pick.id || null,
     runtimeSeconds: pick.runtimeSeconds || null,
     pool: null, state: 'idle', error: '', draftId: null,
   });
-  if (!selectedKey) selectMovie(key);
-  return true;
+  // The list grows downward, so with a few films queued a new row lands well
+  // below the search box that was just clicked. renderQueue scrolls to this.
+  justAdded = { key: verdict.key, at: Date.now() };
+  if (!selectedKey && !held) selectMovie(verdict.key);
+  return 'added';
 }
 
 function removeFromQueue(key) {
@@ -428,15 +540,28 @@ const withSelected = (fn) => { const it = find(selectedKey); if (it?.pool) fn(it
 
 function selectMovie(key) {
   selectedKey = key;
-  render();
   const it = find(key);
-  if (it) ensurePool(it);
+  if (it) it.held = false; // opening a film is approving it
+  render();
+  if (!it) return;
+  // A pool the background walk already loaded still needs its ranking.
+  if (it.pool) curateItem(it);
+  else ensurePool(it);
+}
+
+// "Load trivia": the queue is approved as it stands.
+function loadHeld() {
+  for (const it of queue) it.held = false;
+  render();
+  prefetchPools();
 }
 
 // Pull every trivia item IMDb has for this film, once, and hold the ranked
 // pool for as long as the movie stays queued.
 async function ensurePool(item) {
   if (!item || item.pool || item.state === 'loading') return;
+  const generation = poolGeneration;
+  const format = batchFormat;
   item.state = 'loading';
   item.error = '';
   renderQueue();
@@ -445,32 +570,37 @@ async function ensurePool(item) {
     const res = await fetchWithTimeout('/.netlify/functions/tik-imdb', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        action: 'trivia', imdbId: item.imdbId, query: item.title, year: item.year,
+        action: format === 'quotes' ? 'quotes' : 'trivia', imdbId: item.imdbId, query: item.title, year: item.year,
         includeSpoilers: els.spoilers.checked,
       }),
     });
     const data = await res.json().catch(() => ({}));
+    if (generation !== poolGeneration) return;
     if (!res.ok) throw new Error(data.error || `IMDb lookup failed (${res.status})`);
     item.imdbId = data.movie?.id || item.imdbId;
     item.year = data.movie?.year ?? item.year;
     item.runtimeSeconds = data.movie?.runtimeSeconds || item.runtimeSeconds;
-    item.pool = createTriviaPool(data.trivia || [], sizeValue());
-    item.total = data.total || (data.trivia || []).length;
+    const rows = format === 'quotes' ? (data.quotes || []) : (data.trivia || []);
+    item.pool = createTriviaPool(rows, sizeValue());
+    item.total = data.total || rows.length;
     item.state = 'ready';
   } catch (e) {
-    console.error(`[tik-batch] trivia fetch failed: ${item.title} — ${e.message}`, e);
+    if (generation !== poolGeneration) return;
+    console.error(`[tik-batch] ${format} fetch failed: ${item.title} — ${e.message}`, e);
     item.state = 'error';
     item.error = e.message;
   }
+  if (generation !== poolGeneration) return;
   renderQueue();
   if (selectedKey === item.key) renderPicker();
   refreshBuildButton();
 
-  // Curate in the background once the pool is on screen: the vote-ranked ten
-  // shows instantly, then re-ranks when the agent answers. Only the movie
-  // being looked at — the rest get curated during buildAll, so a ten-movie
-  // queue doesn't fire ten agent calls just from being queued.
-  if (item.state === 'ready' && selectedKey === item.key) curateSelected(item);
+  // Rank every film as its pool lands, not only the one on screen. Ranking
+  // only the selected film left the rest in vote order until Write, which then
+  // swapped in the agent's choices — so what got written was not what had been
+  // reviewed. Films only load once the list is approved, so this is ten calls
+  // that Write was going to make anyway, just made in time to be checked.
+  if (item.state === 'ready' && format !== 'quotes') curateItem(item);
 }
 
 // Walk the queue loading pools one at a time. Sequential on purpose: ten
@@ -481,8 +611,15 @@ async function prefetchPools() {
   if (prefetching) return;
   prefetching = true;
   try {
-    for (const it of queue) {
-      if (!it.pool && it.state === 'idle') await ensurePool(it);
+    // A format/spoilers bump mid-walk invalidates this pass. Restart so the
+    // remaining idle rows load the new format instead of stopping halfway.
+    while (true) {
+      const generation = poolGeneration;
+      for (const it of queue) {
+        if (generation !== poolGeneration) break;
+        if (!it.pool && it.state === 'idle' && !it.held) await ensurePool(it);
+      }
+      if (generation === poolGeneration) break;
     }
   } finally {
     prefetching = false;
@@ -499,9 +636,10 @@ async function prefetchPools() {
 const CANDIDATES = 25;
 
 async function curatePool(item, { announce = () => {} } = {}) {
-  if (!els.curate.checked || !item?.pool || item.curated) return false;
-  const size = item.pool.size();
-  const all = item.pool.top(CANDIDATES);
+  if (batchFormat === 'quotes' || !els.curate.checked || !item?.pool || item.curated) return false;
+  const pool = item.pool;
+  const size = pool.size();
+  const all = pool.top(CANDIDATES);
   if (all.length <= size) return false; // nothing to choose between
 
   announce('Agent is picking the best of the top 25…');
@@ -513,6 +651,9 @@ async function curatePool(item, { announce = () => {} } = {}) {
       candidates: all.map((c) => ({ id: c.id, text: c.text })),
     });
     if (!res?.order?.length) return false;
+    // A spoiler or format toggle swapped the pool while the agent was busy;
+    // this ranking was for the old one, and the new pool ranks itself.
+    if (item.pool !== pool) return false;
     item.pool.applyOrder(res.order, res.why || {});
     item.curated = res.curated || 0;
     return true;
@@ -573,22 +714,38 @@ async function runCurateSync(params) {
 // Turning it on re-ranks what's loaded; turning it off restores vote order by
 // reloading the pools (the original order is the server's, not ours to undo).
 function onCurateToggle() {
+  if (batchFormat === 'quotes') return;
   if (!els.curate.checked) {
-    for (const it of queue) { it.pool = null; it.state = 'idle'; it.curated = 0; }
+    poolGeneration += 1;
+    for (const it of queue) { it.pool = null; it.state = 'idle'; it.curated = 0; it.curateError = ''; }
     render();
     const it = find(selectedKey);
     if (it) ensurePool(it);
     return;
   }
-  const it = find(selectedKey);
-  if (it?.pool) curateSelected(it);
+  for (const it of queue) if (it.pool) curateItem(it);
 }
 
-async function curateSelected(item) {
-  const changed = await curatePool(item, { announce: (m) => { els.curateNote.textContent = m; els.curateNote.classList.remove('hidden'); } });
-  if (find(selectedKey) === item) renderPicker();
+// One ranking per pool, however many things ask for it: the load, a click on
+// the film, and Write all share the same in-flight call.
+function curateItem(item) {
+  if (batchFormat === 'quotes' || !item?.pool) return Promise.resolve(false);
+  const pool = item.pool;
+  if (item.curating && item.curatingPool === pool) return item.curating;
+  const announce = (m) => {
+    if (find(selectedKey) !== item) return;
+    els.curateNote.textContent = m;
+    els.curateNote.classList.remove('hidden');
+  };
+  const run = curatePool(item, { announce }).finally(() => {
+    if (item.curating === run) { item.curating = null; item.curatingPool = null; }
+    if (find(selectedKey) === item) renderPicker();
+    renderQueue();
+  });
+  item.curating = run;
+  item.curatingPool = pool;
   renderQueue();
-  return changed;
+  return run;
 }
 
 function sizeValue() {
@@ -604,9 +761,12 @@ function onSizeChange() {
   refreshBuildButton();
 }
 
-// Changing the spoiler rule changes what IMDb sends, so every pool is stale.
+// Changing the spoiler rule changes what IMDb sends, so every pool is stale —
+// and so is its curation. Leaving `curated` set made curatePool() skip the new
+// pool, and every "AI pick" label vanished the moment Spoilers was ticked.
 function onSpoilersChange() {
-  for (const it of queue) { it.pool = null; it.state = 'idle'; }
+  poolGeneration += 1;
+  for (const it of queue) { it.pool = null; it.state = 'idle'; it.curated = 0; it.curateError = ''; }
   render();
   const it = find(selectedKey);
   if (it) ensurePool(it);
@@ -622,6 +782,7 @@ function render() {
 
 function renderQueue() {
   els.queue.innerHTML = '';
+  let fresh = null;
   els.queueEmpty.classList.toggle('hidden', queue.length > 0);
   els.queueCount.textContent = queue.length ? `${queue.length}${queue.length >= MAX_QUEUE ? ' (max)' : ''}` : '';
 
@@ -653,6 +814,22 @@ function renderQueue() {
 
     li.append(pick, del);
     els.queue.appendChild(li);
+    if (it.key === justAdded.key && Date.now() - justAdded.at < FLASH_MS) fresh = li;
+  }
+
+  // Show the row that just arrived.
+  //
+  // The queue grows downward and a new film is appended at the bottom, so with
+  // a handful already queued it lands hundreds of pixels below the search box
+  // that was just clicked — off-screen on a laptop. Everything worked; you
+  // simply could not see it happen, which is indistinguishable from a click
+  // that did nothing.
+  if (fresh) {
+    fresh.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // And a beat of colour, for when it was already on screen and scrolling
+    // into view moves nothing at all.
+    fresh.classList.add('ring-2', 'ring-emerald-400');
+    setTimeout(() => fresh.classList.remove('ring-2', 'ring-emerald-400'), FLASH_MS);
   }
 }
 
@@ -664,12 +841,17 @@ function hiddenNote(it) {
 }
 
 function statusLine(it) {
-  if (it.state === 'loading') return 'Loading trivia…';
-  if (it.state === 'error') return it.error || 'Could not load trivia';
+  const noun = batchFormat === 'quotes' ? 'quotes' : 'trivia';
+  if (it.state === 'loading') return `Loading ${noun}…`;
+  if (it.state === 'error') return it.error || `Could not load ${noun}`;
   if (it.state === 'written') return 'Draft written';
   if (it.pool) {
     const n = it.pool.visible().length;
-    return `${n} picked of ${it.pool.total()}${it.pool.exhausted() ? ' (all used)' : ''}`;
+    const ai = batchFormat === 'quotes' || !els.curate.checked ? ''
+      : it.curating ? ' · AI ranking…'
+        : it.curated ? ' · AI picks'
+          : it.curateError ? ' · AI ranking failed, vote order' : '';
+    return `${n} picked of ${it.pool.total()}${it.pool.exhausted() ? ' (all used)' : ''}${ai}`;
   }
   return it.why || 'Queued';
 }
@@ -679,9 +861,11 @@ function renderPicker() {
   els.trivia.innerHTML = '';
 
   if (!it) {
-    els.pickerTitle.textContent = 'Trivia';
+    els.pickerTitle.textContent = batchFormat === 'quotes' ? 'Quotes' : 'Trivia';
     els.pickerMeta.textContent = '';
-    els.triviaEmpty.textContent = 'Pick a movie on the left to see its trivia.';
+    els.triviaEmpty.textContent = batchFormat === 'quotes'
+      ? 'Pick a movie on the left to see its quotes.'
+      : 'Pick a movie on the left to see its trivia.';
     els.triviaEmpty.classList.remove('hidden');
     return;
   }
@@ -689,7 +873,9 @@ function renderPicker() {
 
   if (it.state === 'loading') {
     els.pickerMeta.textContent = '';
-    els.triviaEmpty.textContent = 'Pulling every trivia item IMDb has…';
+    els.triviaEmpty.textContent = batchFormat === 'quotes'
+      ? 'Pulling every quote IMDb has…'
+      : 'Pulling every trivia item IMDb has…';
     els.triviaEmpty.classList.remove('hidden');
     return;
   }
@@ -712,17 +898,22 @@ function renderPicker() {
   els.pickerMeta.textContent =
     `${visible.length} of ${it.pool.total()} · ${it.pool.benchCount()} in reserve${hiddenNote(it)}`;
   const curated = it.pool.isCurated();
-  els.curateNote.textContent = it.curateError
-    ? `Agent ranking unavailable (${it.curateError}) — showing IMDb vote order.`
-    : curated
-      ? `Agent chose these ${it.curated} from the top ${Math.min(25, it.pool.total())} by votes.`
-      : '';
-  // Visibility and colour in ONE assignment: setting .className separately
-  // wipes whatever classList.toggle('hidden') just did, leaving an empty
-  // element holding layout space.
-  els.curateNote.className = `mt-1 text-[11px] leading-snug ${
-    els.curateNote.textContent ? '' : 'hidden '}${
-    it.curateError ? 'text-amber-300/80' : 'text-emerald-300/80'}`;
+  if (batchFormat === 'quotes') {
+    els.curateNote.textContent = '';
+    els.curateNote.className = 'mt-1 hidden text-[11px] leading-snug text-emerald-300/80';
+  } else {
+    els.curateNote.textContent = it.curateError
+      ? `Agent ranking unavailable (${it.curateError}) — showing IMDb vote order.`
+      : curated
+        ? `Agent chose these ${it.curated} from the top ${Math.min(25, it.pool.total())} by votes.`
+        : '';
+    // Visibility and colour in ONE assignment: setting .className separately
+    // wipes whatever classList.toggle('hidden') just did, leaving an empty
+    // element holding layout space.
+    els.curateNote.className = `mt-1 text-[11px] leading-snug ${
+      els.curateNote.textContent ? '' : 'hidden '}${
+      it.curateError ? 'text-amber-300/80' : 'text-emerald-300/80'}`;
+  }
   els.triviaEmpty.classList.toggle('hidden', visible.length > 0);
   if (!visible.length) els.triviaEmpty.textContent = 'Every item was thrown out. Hit Reset to bring them back.';
 
@@ -802,6 +993,11 @@ function pendingMovies() {
 }
 
 function refreshBuildButton() {
+  const held = queue.filter((it) => it.held).length;
+  els.load.classList.toggle('hidden', !held);
+  els.load.classList.toggle('flex', !!held);
+  els.load.disabled = busy;
+  els.load.textContent = held ? `Load ${batchFormat === 'quotes' ? 'quotes' : 'trivia'} for ${held} movie${held === 1 ? '' : 's'}` : '';
   const n = pendingMovies().length;
   els.build.disabled = busy || !n;
   els.buildLabel.textContent = n ? `Write ${n} draft${n === 1 ? '' : 's'}` : 'Write every draft';
@@ -820,43 +1016,74 @@ async function buildAll() {
     // A movie the user never opened has no pool yet. Load it now rather than
     // skipping it: "write every draft" has to mean every one in the queue.
     if (!it.pool) {
-      say(`Loading trivia for ${it.title} (${i + 1} of ${ready.length})…`);
+      say(`Loading ${batchFormat === 'quotes' ? 'quotes' : 'trivia'} for ${it.title} (${i + 1} of ${ready.length})…`);
       await ensurePool(it);
     }
     // Curate before writing so an unopened movie still gets the agent's ten
-    // rather than the raw vote order.
-    if (it.pool && !it.curated) {
+    // rather than the raw vote order. Quotes skip this: the ranked IMDb list
+    // is the source, and Autopilot boils the picked lines itself.
+    if (batchFormat !== 'quotes' && it.pool && !it.curated) {
       say(`Choosing the best trivia for ${it.title} (${i + 1} of ${ready.length})…`);
-      await curatePool(it);
-      if (selectedKey === it.key) renderPicker();
+      await curateItem(it);
     }
     const picked = it.pool?.visible() || [];
     if (!picked.length) {
-      console.warn('[tik-batch] no trivia to write', { movie: it.title, error: it.error });
-      failed.push(`${it.title} (${it.error || 'no trivia found'})`);
+      const miss = batchFormat === 'quotes' ? 'no quotes found' : 'no trivia found';
+      console.warn('[tik-batch] nothing to write', { movie: it.title, format: batchFormat, error: it.error });
+      failed.push(`${it.title} (${it.error || miss})`);
       continue;
     }
-    say(`Writing ${it.title} (${i + 1} of ${ready.length}) — ${picked.length} facts…`);
+    say(`Writing ${it.title} (${i + 1} of ${ready.length}) — ${picked.length} ${batchFormat === 'quotes' ? 'quotes' : 'facts'}…`);
     try {
-      // A blank-line separated list is what the server reads as USER-CHOSEN
-      // FACTS: it rewrites each one, in order, and adds nothing of its own.
-      const { suggestions, meta } = await fetchTriviaPost({
-        title: it.title,
-        year: it.year,
-        durationSeconds: it.runtimeSeconds || 0,
-        count: picked.length,
-        // Same opener the hand-driven flow gets: the server prepends a title
-        // slide ("Movie (Year)" + a lead-in) pointed at the film's title card,
-        // so it arrives as suggestions[0] and the count above stays the number
-        // of TRIVIA slides.
-        includeTitleSlide: true,
-        // Same call writes the post's own copy: hook, film hashtags, and
-        // soundtrack picks. Doing it here is what lets the prompt forbid the
-        // hook from spoiling a fact, since the model has the captions in hand.
-        includeMeta: true,
-        guidance: picked.map((p) => p.text).join('\n\n'),
-        onProgress: (m) => say(`${it.title} (${i + 1} of ${ready.length}) — ${m}`),
-      });
+      let suggestions;
+      let meta;
+      if (batchFormat === 'quotes') {
+        const packSubs = await fetchSubtitles({ imdbId: it.imdbId, query: it.title, year: it.year });
+        // Carried onto the draft so the editor can explain the guessed times
+        // later, when whoever opens it has no idea this call ever happened.
+        it.subsError = packSubs.missing ? (packSubs.error || 'Subtitle lookup failed') : null;
+        if (packSubs.missing) console.warn('[tik-batch] no subtitles', { movie: it.title, error: packSubs.error });
+        const result = await fetchQuotesPost({
+          title: it.title,
+          year: it.year,
+          durationSeconds: it.runtimeSeconds || 0,
+          count: Math.min(8, picked.length),
+          quotes: picked,
+          cues: packSubs.cues || [],
+          includeTitleSlide: true,
+          includeMeta: true,
+          guidance: '',
+          onProgress: (m) => say(`${it.title} — ${m}`),
+        });
+        suggestions = result.suggestions;
+        meta = result.meta;
+      } else {
+        // A blank-line separated list is what the server reads as USER-CHOSEN
+        // FACTS: it rewrites each one, in order, and adds nothing of its own.
+        const result = await fetchTriviaPost({
+          title: it.title,
+          year: it.year,
+          durationSeconds: it.runtimeSeconds || 0,
+          count: picked.length,
+          // Same opener the hand-driven flow gets: the server prepends a title
+          // slide ("Movie (Year)" + a lead-in) pointed at the film's title card,
+          // so it arrives as suggestions[0] and the count above stays the number
+          // of TRIVIA slides.
+          includeTitleSlide: true,
+          // Same call writes the post's own copy: hook, film hashtags, and
+          // soundtrack picks. Doing it here is what lets the prompt forbid the
+          // hook from spoiling a fact, since the model has the captions in hand.
+          includeMeta: true,
+          guidance: picked.map((p) => p.text).join('\n\n'),
+          onProgress: (m) => say(`${it.title} (${i + 1} of ${ready.length}) — ${m}`),
+        });
+        suggestions = result.suggestions;
+        meta = result.meta;
+      }
+      if (!suggestions?.length) {
+        failed.push(`${it.title} (${batchFormat === 'quotes' ? 'no quotes returned' : 'no trivia returned'})`);
+        continue;
+      }
       it.draftId = await saveDraft(it, suggestions, meta, made);
       it.state = 'written';
       made++;
@@ -908,11 +1135,12 @@ async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
   card.close?.();
   const outro = await fetchOutroFrame();
 
-  const project = makeProject({ id, format: 'trivia', now });
+  const project = makeProject({ id, format: batchFormat, now });
+  project.subsError = item.subsError || null;
   // Round-robin the house hashtag pair across the run rather than hashing ten
   // random ids: a batch of ten then covers all five sets twice, which is what
   // makes the tag report readable in weeks instead of months.
-  const post = defaultPostFields('trivia', label, {
+  const post = defaultPostFields(batchFormat, label, {
     meta, projectId: id, houseSetKey: houseSetAt(batchIndex).key,
   });
   Object.assign(project, {
@@ -939,18 +1167,23 @@ async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
         caption: s.caption,
         timecode: s.timecode,
         grabHint: s.grab || '',
-        fontScale: 1, role: null, kind: null, entry: null, section: null,
+        fontScale: i === 0 ? 1 : (batchFormat === 'quotes' ? fontScaleForQuote(s.caption) : 1),
+        role: null, kind: i === 0 ? 'title' : null, entry: null, section: null,
+        // Where the timecode came from, so Shoot and the editor can say whether
+        // it was matched against the subtitles or estimated.
+        cue: s.matched ? (s.cue || { start: s.start, end: s.end }) : null,
         frame,
-        batchShot: i === 0 ? 'title' : 'trivia',
+        batchShot: i === 0 ? 'title' : (batchFormat === 'quotes' ? 'quotes' : 'trivia'),
       })),
       ...(outro ? [{
         id: String(suggestions.length + 1),
-        caption: pickOutro('trivia'),
+        caption: pickOutro(batchFormat),
         timecode: null,
         grabHint: '',
         fontScale: 1, role: null, kind: 'outro', entry: null, section: null,
-        frame: outro,
-        batchShot: 'skip', // the logo IS the frame; never grab over it
+        outroStyle: outro.style,
+        frame: outro.blob,
+        batchShot: 'skip', // the end card IS the frame; never grab over it
       }] : []),
     ],
     thumb,
@@ -959,19 +1192,19 @@ async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
   return id;
 }
 
-// The branded sign-off, same logo and wording the hand-driven flow appends.
-// The caption now comes from project.js's shared pool rather than a copy kept
-// in step by hand, so batch drafts get the same rotating sign-off.
-const OUTRO_LOGO_URL = '/images/vhs-garage-logo-square.png';
-
-// Never fatal: a missing logo costs the outro slide, not the whole draft.
+// The branded sign-off: the same end card the editor last picked (the logo
+// unless one of the designed cards was chosen), and the same rotating wording
+// from project.js's shared pool.
+//
+// Never fatal: a missing card costs the outro slide, not the whole draft.
 async function fetchOutroFrame() {
+  const design = outroDesign(rememberedOutro());
   try {
-    const res = await fetch(OUTRO_LOGO_URL);
-    if (!res.ok) throw new Error(`logo ${res.status}`);
-    return await res.blob();
+    const res = await fetch(design.still);
+    if (!res.ok) throw new Error(`${design.label} end card ${res.status}`);
+    return { blob: await res.blob(), style: design.key };
   } catch (e) {
-    console.error('[tik-batch] outro logo failed; draft written without it', { message: e.message });
+    console.error('[tik-batch] end card failed; draft written without it', { message: e.message });
     return null;
   }
 }

@@ -8,11 +8,15 @@
 //
 // Job kinds (body.kind):
 // - 'trivia' (default): movie trivia suggestions → { suggestions }
+// - 'quotes': boiled IMDb quotes + subtitle spans → { suggestions }
 // - 'roles': an actor's memorable cult roles      → { roles }
 // - 'blurbs': slide blurbs for picked roles       → { intro, blurbs }
 // - 'year': one year's two ranked lists           → { intro, rated, boxoffice }
 import { getStore } from '@netlify/blobs';
-import { buildAutopilotPrompt, buildTitleSlidePrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
+import { buildAutopilotPrompt, buildTitleSlidePrompt, buildQuotesPrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, QUOTES_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
+import { quoteHints, applyCueTimes } from './lib/srt.mjs';
+import { groundQuoteSuggestions } from './lib/quote-dialogue.mjs';
+import { buildFreeformPrompt, normalizeFreeform, FREEFORM_COUNT } from './lib/freeform.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
@@ -30,6 +34,7 @@ const DEFAULT_MODEL = process.env.TIK_AUTOPILOT_MODEL || 'claude-opus-5';
 // sections, or the "<year> in film" article). Best-effort: a Wikipedia hiccup
 // must never sink the job.
 async function fetchSource(kind, { title, year, actor }, jobId) {
+  if (kind === 'quotes') return null;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10_000);
@@ -51,13 +56,17 @@ export default async (req) => {
   let body;
   try { body = await req.json(); } catch { return new Response(null, { status: 400 }); }
 
-  const {
+  let {
     jobId, kind = 'trivia',
-    title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta, titleOnly,
+    title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta, titleOnly, topic,
     actor, roles,
     minVotes, ratedGiven, boxofficeGiven,
+    quotes, cues, hints,
     model: requested,
   } = body;
+  if (kind === 'quotes' && !(Array.isArray(hints) && hints.length)) {
+    hints = quoteHints(quotes, cues);
+  }
   if (!jobId || !/^[a-zA-Z0-9-]{8,64}$/.test(jobId)) {
     console.error('[tik-autopilot-job] missing/invalid jobId');
     return new Response(null, { status: 400 });
@@ -68,10 +77,11 @@ export default async (req) => {
   let store;
   try {
     store = getStore(JOBS_STORE);
-    if (kind === 'trivia' && !title) throw new Error('Missing movie title');
+    if ((kind === 'trivia' || kind === 'quotes') && !title) throw new Error('Missing movie title');
     if ((kind === 'roles' || kind === 'blurbs') && !actor) throw new Error('Missing actor name');
     if (kind === 'blurbs' && !(Array.isArray(roles) && roles.length)) throw new Error('No roles picked');
     if (kind === 'year' && normalizeYearInput(year) === null) throw new Error('Enter a four digit year');
+    if (kind === 'freeform' && !String(topic || '').trim()) throw new Error('Describe what the slideshow is about');
 
     // Start marker: lets the poller distinguish "running" from "never started",
     // so the client can bail early instead of polling a dead job for minutes.
@@ -81,10 +91,12 @@ export default async (req) => {
     // Blurbs run on already-picked roles; no grounding needed there.
     // Blurbs need no grounding; an intro rewrite needs none either (it is
     // written from the film itself, not from production research).
-    const source = (kind === 'blurbs' || titleOnly) ? null : await fetchSource(kind, { title, year, actor }, jobId);
+    const source = (kind === 'blurbs' || kind === 'freeform' || titleOnly) ? null : await fetchSource(kind, { title, year, actor }, jobId);
 
     let prompt;
-    if (kind === 'roles') {
+    if (kind === 'freeform') {
+      prompt = buildFreeformPrompt({ topic, count, exclude, includeMeta: includeMeta !== false });
+    } else if (kind === 'roles') {
       prompt = buildRolesPrompt({
         actor, count: Number(count) || ROLES_COUNT, exclude,
         sourceMaterial: source?.text || '', sourceName: source?.pageTitle || '',
@@ -95,6 +107,15 @@ export default async (req) => {
       prompt = buildYearPrompt({
         year, count: Number(count) || LIST_COUNT, minVotes, ratedGiven, boxofficeGiven,
         sourceMaterial: source?.text || '', sourceName: source?.pageTitle || '',
+      });
+    } else if (kind === 'quotes') {
+      prompt = buildQuotesPrompt({
+        title, year, durationSeconds,
+        count: Number(count) || QUOTES_COUNT,
+        quotes: Array.isArray(quotes) ? quotes : [],
+        cues: Array.isArray(cues) ? cues : [],
+        hints: Array.isArray(hints) ? hints : [],
+        guidance, includeTitleSlide, includeMeta,
       });
     } else if (titleOnly) {
       prompt = buildTitleSlidePrompt({ title, year, durationSeconds, exclude });
@@ -131,11 +152,30 @@ export default async (req) => {
       result = hasAnyEntries(snapshot)
         ? { ok: true, model, year: normalizeYearInput(year), ...snapshot }
         : { ok: false, model, error: yearFailureReason(raw, parsed) };
-    } else {
-      const base = titleOnly ? 1 : (Number(count) || AUTOPILOT_COUNT);
-      const max = includeTitleSlide ? base + 1 : base;
+    } else if (kind === 'freeform') {
       const parsed = parseModelJson(raw);
-      const suggestions = normalizeSuggestions(parsed, durationSeconds, max);
+      const set = normalizeFreeform(parsed);
+      // Meta is a bonus, never a gate — same as trivia: a malformed one costs
+      // the post copy, not the slides we just paid for.
+      const meta = includeMeta !== false ? normalizeMeta(parsed) : null;
+      result = set.items.length
+        ? { ok: true, model, ...set, meta }
+        : { ok: false, model, error: 'The AI returned no usable slides — try again.' };
+    } else {
+      const base = titleOnly ? 1 : (Number(count) || (kind === 'quotes' ? QUOTES_COUNT : AUTOPILOT_COUNT));
+      const max = (kind === 'quotes' ? includeTitleSlide !== false : includeTitleSlide) ? base + 1 : base;
+      const parsed = parseModelJson(raw);
+      const grounded = kind === 'quotes'
+        ? groundQuoteSuggestions(parsed, quotes, { skipFirst: includeTitleSlide !== false }) : parsed;
+      let suggestions = normalizeSuggestions(grounded, durationSeconds, max, { verbatim: kind === 'quotes' });
+      // Arithmetic beats the model's own bookkeeping: re-match every caption
+      // against the FULL cue list and let that decide the timecode.
+      if (kind === 'quotes') {
+        suggestions = applyCueTimes(suggestions, cues, {
+          skipFirst: includeTitleSlide !== false,
+          durationSeconds,
+        });
+      }
       // Meta is a bonus, never a gate: a malformed one costs the post copy, not
       // the trivia we just paid for. The client falls back to the template.
       const meta = includeMeta ? normalizeMeta(parsed) : null;
@@ -144,7 +184,7 @@ export default async (req) => {
       }
       result = suggestions.length
         ? { ok: true, model, suggestions, meta }
-        : { ok: false, model, error: 'The AI returned no usable trivia — try again.' };
+        : { ok: false, model, error: kind === 'quotes' ? 'The AI returned no usable quotes — try again.' : 'The AI returned no usable trivia — try again.' };
     }
     if (!result.ok) console.warn('[tik-autopilot-job] no usable result', { jobId, kind, model, rawPreview: String(raw).slice(0, 300) });
     await store.setJSON(jobId, result, { metadata: { createdAt: Date.now() } });

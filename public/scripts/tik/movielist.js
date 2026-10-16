@@ -125,3 +125,27 @@ export function pickBestMatch(want, candidates) {
 
   return { pick: list[0], confidence: 'weak' };
 }
+
+// Why an add to the batch queue did or did not land.
+//
+// One function because the search box and the paste list have to agree. They
+// used to share a boolean, so BOTH reported a full queue as "already in the
+// list" — which sends you hunting for a film that was never added, and is a
+// worse lie than saying nothing.
+//
+// Duplicate is checked before full on purpose: when a film is already queued
+// AND the queue is at its cap, "you already have it" is the more useful of the
+// two true answers.
+export function queueKey(title, year) {
+  return `${String(title || '').trim().toLowerCase()}|${year ?? ''}`;
+}
+
+export function queueAdmission(pick, queue = [], max = Infinity) {
+  const title = String(pick?.title || '').trim();
+  if (!title) return { ok: false, reason: 'blank', key: null };
+  const key = queueKey(title, pick?.year);
+  const rows = Array.isArray(queue) ? queue : [];
+  if (rows.some((q) => q?.key === key)) return { ok: false, reason: 'dupe', key };
+  if (rows.length >= max) return { ok: false, reason: 'full', key };
+  return { ok: true, reason: 'added', key };
+}

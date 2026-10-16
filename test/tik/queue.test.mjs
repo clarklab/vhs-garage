@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parsePostedMovie, movieKey, isAlreadyPosted, summarizeHistory,
+  parsePostedMovie, parsePostedQuotes, movieKey, isAlreadyPosted, summarizeHistory,
   buildQueuePrompt, normalizeQueue, QUEUE_COUNT, parseHashtags, summarizeTagRows,
 } from '../../netlify/functions/lib/queue.mjs';
 import { parseTags } from '../../public/scripts/tik/tagreport.js';
@@ -46,6 +46,28 @@ test('parsePostedMovie returns null when there is no film in the title', () => {
 test('parsePostedMovie strips a trailing year and stray quotes', () => {
   assert.equal(parsePostedMovie('Alien (1979) — movie trivia & behind-the-scenes facts'), 'Alien');
   assert.equal(parsePostedMovie('"Alien" — movie trivia & behind-the-scenes facts'), 'Alien');
+});
+
+test('parsePostedQuotes reads the quotes title and ignores trivia', () => {
+  const q = defaultPostFields('quotes', 'Terminator 2');
+  assert.equal(parsePostedQuotes(q.title, q.description), 'Terminator 2');
+  const t = defaultPostFields('trivia', 'Terminator 2');
+  assert.equal(parsePostedQuotes(t.title, t.description), null);
+  assert.equal(parsePostedMovie(q.title, q.description), null);
+  assert.equal(parsePostedMovie(t.title, t.description), 'Terminator 2');
+});
+
+test('parsePostedQuotes handles dash variants', () => {
+  assert.equal(parsePostedQuotes('Jaws — movie quotes'), 'Jaws');
+  assert.equal(parsePostedQuotes('Jaws - movie quotes'), 'Jaws');
+  assert.equal(parsePostedQuotes('Alien (1979) — movie quotes'), 'Alien');
+});
+
+test('buildQueuePrompt quotes mode asks for quotable films', () => {
+  const p = buildQueuePrompt({ format: 'quotes', posted: ['Jaws'] });
+  assert.match(p, /quote/i);
+  assert.match(p, /Jaws/);
+  assert.doesNotMatch(p, /behind-the-scenes movie trivia/);
 });
 
 // ---- matching films ----
@@ -104,6 +126,15 @@ test('summarizeHistory nulls missing metrics instead of emitting NaN', () => {
 test('summarizeHistory survives junk', () => {
   assert.deepEqual(summarizeHistory(null), []);
   assert.deepEqual(summarizeHistory([null, 7, {}]), []);
+});
+
+test('summarizeHistory format quotes vs trivia splits posts', () => {
+  const posts = [
+    row('Jaws', { create_time: 100 }),
+    { title: 'Alien — movie quotes', view_count: 200, create_time: 200 },
+  ];
+  assert.deepEqual(summarizeHistory(posts).map((r) => r.movie), ['Jaws']);
+  assert.deepEqual(summarizeHistory(posts, { format: 'quotes' }).map((r) => r.movie), ['Alien']);
 });
 
 // ---- the prompt ----
@@ -285,4 +316,102 @@ test('summarizeTagRows sorts newest first and tolerates junk', () => {
   ]);
   assert.deepEqual(rows.map((r) => r.tags[0]), ['new', 'old']);
   assert.deepEqual(summarizeTagRows(null), []);
+});
+
+// ---- Coverage is not capped at the most recent sixty ----
+
+const postRow = (movie, i) => ({ movie, views: 1000 + i, likes: 10, comments: 1, postedAt: 1_700_000_000 - i * 86400 });
+
+test('every covered film reaches the prompt, not just the newest page of them', () => {
+  // A 132-post account was being told about its newest 60, which is how a film
+  // from last spring comes back around as a fresh idea.
+  const history = Array.from({ length: 132 }, (_, i) => postRow(`Film ${i}`, i));
+  const p = buildQueuePrompt({ history, count: 10 });
+  assert.match(p, /- Film 0\b/, 'the newest');
+  assert.match(p, /- Film 131\b/, 'and the oldest');
+  const covered = p.slice(p.indexOf('ALREADY COVERED'));
+  assert.equal((covered.match(/^- Film \d+$/gm) || []).length, 132);
+});
+
+test('the performance block stays capped even when coverage is not', () => {
+  // Names are cheap; 132 rows of view counts are not.
+  const history = Array.from({ length: 132 }, (_, i) => postRow(`Film ${i}`, i));
+  const p = buildQueuePrompt({ history, count: 10 });
+  const perf = p.slice(p.indexOf('HOW OUR POSTS HAVE DONE'), p.indexOf('ALREADY COVERED'));
+  const withViews = (perf.match(/views/g) || []).length;
+  assert.ok(withViews <= 60, `performance rows should stay capped, got ${withViews}`);
+  assert.ok(withViews > 0);
+});
+
+test('the library list and the API history merge without repeating a film', () => {
+  const history = [postRow('The Thing', 0), postRow('Aliens', 1)];
+  const posted = [{ movie: 'The Thing' }, { movie: 'RoboCop' }];
+  const p = buildQueuePrompt({ history, posted });
+  const covered = p.slice(p.indexOf('ALREADY COVERED'));
+  assert.equal((covered.match(/- The Thing/g) || []).length, 1, 'named in both, listed once');
+  assert.match(covered, /- RoboCop/);
+  assert.match(covered, /- Aliens/);
+});
+
+test('a runaway covered list is still bounded', () => {
+  const history = Array.from({ length: 900 }, (_, i) => postRow(`Film ${i}`, i));
+  const p = buildQueuePrompt({ history });
+  const covered = p.slice(p.indexOf('ALREADY COVERED'));
+  const n = (covered.match(/^- Film \d+$/gm) || []).length;
+  assert.ok(n <= 400 && n >= 300, `bounded but generous, got ${n}`);
+});
+
+// ---- free-form captions (every post since late summer) ----
+// Real captions from the account. Two thirds of them used to parse to nothing,
+// so the picker kept suggesting Raiders, Jaws and The Mask all over again.
+
+import { filmFromCaption, postedName } from '../../netlify/functions/lib/queue.mjs';
+
+const CAPTIONS = [
+  ['Raiders of the Lost Ark (1981), the Steven Spielberg and George Lucas adventure starring Harrison Ford', 'Raiders of the Lost Ark'],
+  ['Home Alone 2: Lost in New York (1992), directed by Chris Columbus and written by John Hughes', 'Home Alone 2: Lost in New York'],
+  ['Ace Ventura: Pet Detective (1994), Tom Shadyac\'s directing debut with Jim Carrey', 'Ace Ventura: Pet Detective'],
+  ['By popular fan request: it\'s Tremors (1990)! Ron Underwood\'s directorial debut', 'Tremors'],
+  ['Movie fan request! This one came in via channel request: Mr. Mom (1983), the Stan Dragoti comedy', 'Mr. Mom'],
+  ['Movie fan request! One of you asked for Super Troopers (2001), the Broken Lizard highway patrol comedy', 'Super Troopers'],
+  ['By follower request: The Rocketeer (1991)! Joe Johnston\'s Disney adventure', 'The Rocketeer'],
+  ['Hulk Hogan and Tommy Tiny Lister star in No Holds Barred (1989), the late eighties wrestling movie', 'No Holds Barred'],
+  ['The \'Burbs (1989) is Joe Dante\'s dark suburban comedy starring Tom Hanks', 'The \'Burbs'],
+  ['Honey, I Shrunk the Kids (1989) is the Walt Disney sci-fi comedy', 'Honey, I Shrunk the Kids'],
+  ['Airplane! from 1980, the disaster movie spoof directed by Jim Abrahams', 'Airplane!'],
+  ['The Nutty Professor from 1996, Tom Shadyac\'s Universal Pictures comedy remake', 'The Nutty Professor'],
+  ['Deep-cut trivia from Jurassic Park (1993). Which one surprised you? #movietrivia', 'Jurassic Park'],
+  ['Deep-cut trivia from jaws. Which one surprised you? #movietrivia #film #jaws', 'jaws'],
+  ['We\'re never gonna get another set like Dom and Brian. The Fast and The Furious (2001), directed by Rob Cohen', 'The Fast and The Furious'],
+  ['Rounders (1998), John Dahl\'s high stakes poker drama. What\'s your favorite line from the movie?', 'Rounders'],
+];
+
+test('a free-form caption names the film it opens on', () => {
+  for (const [caption, film] of CAPTIONS) {
+    assert.equal(parsePostedMovie(caption, caption), film, caption);
+  }
+});
+
+test('actor tributes and year round-ups do not cover a film', () => {
+  for (const caption of [
+    'Join us as we celebrate Tim Curry\'s most memorable roles. Which one is your favorite? Legend (1985)',
+    'Do you have a favorite Sam Neill movie? Drop it in the comments.',
+    'New series: Remembering Some Guys. Amazing actors that always play "that guy". Raiders (1981)',
+    'Some of y\'all commented what a crazy year 1994 was for movies, so we thought we should take a look at the data!',
+  ]) assert.equal(filmFromCaption(caption), null, caption);
+});
+
+test('the older caption style stops at the end of the name', () => {
+  assert.equal(parsePostedMovie('x', 'Behind-the-scenes facts and hidden details from 3 Ninjas (1992) — how many of these did you know? What’s your favorite scene?'), '3 Ninjas');
+  assert.equal(parsePostedMovie('x', 'Dive into some behind-the-scenes facts and hidden details from the classic RoboCop (1987)! 🤖'), 'RoboCop');
+  assert.equal(parsePostedMovie('x', 'Dive into some cool behind-the-scenes facts and hidden details from the 1994 classic, Airheads! 🎬'), 'Airheads');
+});
+
+test('a library post with only a caption is still covered', () => {
+  const posted = [{ caption: 'The Mask (1994), Chuck Russell\'s comic book comedy for New Line Cinema' }];
+  assert.equal(postedName(posted[0]), 'The Mask');
+  assert.equal(isAlreadyPosted('The Mask', posted), true);
+  assert.match(buildQueuePrompt({ posted }), /ALREADY COVERED[^]*- The Mask/);
+  const picks = normalizeQueue({ picks: [{ title: 'The Mask', year: 1994 }, { title: 'Elf', year: 2003 }] }, { posted });
+  assert.deepEqual(picks.map((p) => p.title), ['Elf']);
 });

@@ -138,6 +138,31 @@ export async function fetchTitleSlide(opts = {}) {
   return scene;
 }
 
+// Freeform: one brief in, a whole set out. No picking round — the prompt is
+// the brief, so this is a single call.
+//
+// opts: { topic, count?, exclude?, includeMeta?, model?, onProgress? }
+// Returns { title, intro, items: [{ heading, sub, caption, search }], meta }.
+export async function fetchFreeform(opts = {}) {
+  const data = await runJob({
+    kind: 'freeform',
+    topic: opts.topic,
+    count: opts.count,
+    exclude: opts.exclude || [],
+    includeMeta: opts.includeMeta !== false,
+    model: opts.model,
+  }, opts.onProgress);
+  if (!data.items?.length) {
+    throw new Error(data.error || 'The AI couldn’t write that set — try rewording the prompt.');
+  }
+  return {
+    title: data.title || '',
+    intro: data.intro || '',
+    items: data.items,
+    meta: data.meta || null,
+  };
+}
+
 // opts: { actor, count?, exclude?, model?, onProgress? }
 // Returns [{ movie, year, role, hook }]. Throws a clear message on failure.
 export async function fetchRoles(opts = {}) {
@@ -191,4 +216,64 @@ export async function fetchBlurbs(opts = {}) {
     throw new Error(data.error || 'The AI couldn’t write blurbs — try again.');
   }
   return { intro: data.intro || '', blurbs: data.blurbs };
+}
+
+// Twelve quotes + title card + sign-off = 14 slides.
+// MUST MATCH QUOTES_COUNT in netlify/functions/lib/autopilot.mjs.
+export const QUOTES_COUNT = 12;
+// How many ranked IMDb quotes the model gets to choose from.
+// MUST MATCH QUOTES_POOL in netlify/functions/lib/autopilot.mjs.
+export const QUOTES_POOL = 30;
+
+export async function fetchImdbQuotes({ imdbId, query, year, includeSpoilers = true } = {}) {
+  const res = await fetch('/.netlify/functions/tik-imdb', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'quotes', imdbId, query, year, includeSpoilers }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'IMDb quotes lookup failed');
+  return data;
+}
+
+// OpenSubtitles misses fail open: HTTP 200 with missing:true is the normal
+// "no English file" answer, not an error. !res.ok is treated the same way so
+// Autopilot can still boil quotes with guessed times.
+export async function fetchSubtitles({ imdbId, query, year } = {}) {
+  try {
+    const res = await fetch('/.netlify/functions/tik-subtitles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imdbId, query, year }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.missing) {
+      return { cues: Array.isArray(data.cues) ? data.cues : [], missing: true, error: data.error || 'Subtitle lookup failed' };
+    }
+    return { cues: Array.isArray(data.cues) ? data.cues : [], missing: false, error: data.error || null };
+  } catch (e) {
+    return { cues: [], missing: true, error: e.message || 'Subtitle lookup failed' };
+  }
+}
+
+export async function fetchQuotesPost(opts = {}) {
+  const data = await runJob({
+    kind: 'quotes',
+    title: opts.title,
+    year: opts.year,
+    durationSeconds: opts.durationSeconds || 0,
+    count: opts.count || QUOTES_COUNT,
+    quotes: opts.quotes || [],
+    cues: opts.cues || [],
+    hints: opts.hints || [],
+    exclude: opts.exclude || [],
+    guidance: opts.guidance || '',
+    includeTitleSlide: opts.includeTitleSlide !== false,
+    includeMeta: !!opts.includeMeta,
+    model: opts.model,
+  }, opts.onProgress);
+  if (!data.suggestions?.length) {
+    throw new Error(data.error || 'Autopilot couldn’t generate quotes — try again.');
+  }
+  return { suggestions: data.suggestions, meta: data.meta || null };
 }

@@ -28,8 +28,8 @@ test('providerFor routes by model prefix', () => {
 });
 
 // ---- output budget ----
-// The module reads its keys into consts at import time, so load a fresh copy
-// with the env in place (the query string defeats the ESM module cache).
+// A fresh copy per test (the query string defeats the ESM module cache) so one
+// test's env can't leak into another's.
 async function withStubbedFetch(run, envOverrides = {}) {
   const realFetch = globalThis.fetch;
   const env = { ...process.env };
@@ -247,6 +247,32 @@ test('a reply truncated before any text throws instead of returning empty', asyn
       () => mod.callModel('p', 'claude-sonnet-5'),
       /max_tokens before writing an answer/,
     );
+  } finally {
+    globalThis.fetch = realFetch;
+    process.env = env;
+  }
+});
+
+// ---- keys are read per call ----
+
+test('a key that arrives after the module loads is still used', async () => {
+  // Netlify's AI Gateway now fills these in after a function starts. Capturing
+  // them at import time sent every batch pick back as "Anthropic not configured".
+  const realFetch = globalThis.fetch;
+  const env = { ...process.env };
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_BASE_URL;
+  const mod = await import(`../../netlify/functions/lib/ai-providers.mjs?late=${Math.random()}`);
+  process.env.ANTHROPIC_API_KEY = 'late-key';
+  process.env.ANTHROPIC_BASE_URL = 'https://gateway.test';
+  let sent = null;
+  globalThis.fetch = async (url, opts) => {
+    sent = { url: String(url), key: opts.headers['x-api-key'] };
+    return { ok: true, json: async () => ({ content: [{ type: 'text', text: '{}' }] }) };
+  };
+  try {
+    await mod.callModel('hi', 'claude-haiku-4-5');
+    assert.deepEqual(sent, { url: 'https://gateway.test/v1/messages', key: 'late-key' });
   } finally {
     globalThis.fetch = realFetch;
     process.env = env;

@@ -17,6 +17,24 @@ export const FORMATS = {
     chip: 'bg-amber-400/15 text-amber-300',
     editorHint: 'Click a slide’s preview to re-grab its frame, or paste/drop/pick a custom image while it’s selected. Drag to reorder.',
   },
+  quotes: {
+    key: 'quotes',
+    label: 'Quote-a-long',
+    tagline: 'Famous lines over the frames they were spoken on',
+    icon: 'format_quote',
+    accent: 'rose',
+    chip: 'bg-rose-400/15 text-rose-300',
+    editorHint: 'Click a slide’s preview to re-grab its frame, or paste/drop/pick a custom image while it’s selected. Drag to reorder.',
+  },
+  freeform: {
+    key: 'freeform',
+    label: 'Freeform',
+    tagline: 'Any list you can describe, written from a prompt',
+    icon: 'auto_stories',
+    accent: 'lime',
+    chip: 'bg-lime-400/15 text-lime-300',
+    editorHint: 'Click a slide, then paste, drop, or pick an image. Each slide carries its own image search. Drag to reorder.',
+  },
   guys: {
     key: 'guys',
     label: 'Remembering Some Guys',
@@ -107,6 +125,12 @@ export function makeProject({ id, format, now }) {
     movie: null,               // { title, year, query } parsed from the filename
     titleOn: false,
     titleLine: '',
+    // Quote-a-long:
+    output: 'slides',          // 'slides' | 'video' — a clip cut from the movie file
+    captionStyle: 'pills',     // video only: 'pills' | 'cc' | 'karaoke'
+    // Freeform:
+    topic: '',                 // the brief the whole set was written from
+    freeformCount: null,       // how many slides were asked for
     // Remembering Some Guys:
     actor: '',
     roles: [],                 // [{ movie, year, role, hook, picked }]
@@ -172,6 +196,33 @@ export function defaultPostFields(format, name = '', { meta = null, projectId = 
       ].join(' '),
     };
   }
+  if (format === 'freeform') {
+    const houseSet = houseSetByKey(houseSetKey) || pickHouseSet(projectId || name);
+    const hashtags = buildHashtags({ filmTags: meta?.filmTags || [], houseSet });
+    return {
+      title: name || 'VHS Garage',
+      description: buildDescription({
+        hook: meta?.hook || '', movie: name, hashtags,
+        ask: POST_ASK.freeform, more: OUTRO_MORE.freeform,
+      }),
+      hashtags,
+      hashtagSet: houseSet.key,
+    };
+  }
+  if (format === 'quotes') {
+    const movie = name;
+    const houseSet = houseSetByKey(houseSetKey) || pickHouseSet(projectId || movie);
+    const hashtags = buildHashtags({ filmTags: meta?.filmTags || [], houseSet });
+    return {
+      title: movie ? `${movie} — movie quotes` : 'Movie quotes',
+      description: buildDescription({
+        hook: meta?.hook || '', movie, hashtags,
+        ask: POST_ASK.quotes, more: OUTRO_MORE.quotes,
+      }),
+      hashtags,
+      hashtagSet: houseSet.key,
+    };
+  }
   const movie = name;
   // An explicit key wins (batch mode balances a run of drafts across the sets).
   // Otherwise rotate on the project id, so a draft's tags never change under
@@ -215,8 +266,17 @@ const OUTRO_TEMPLATES = [
 ];
 
 // What "more" means per format, so one pool of templates serves all three.
+// What each format's post copy asks for, and what it promises more of. Trivia
+// is absent on purpose: buildDescription already defaults to its wording.
+const POST_ASK = {
+  quotes: 'Which line do you quote most? Drop it in the comments.',
+  freeform: 'Who did we miss? Drop it in the comments.',
+};
+
 const OUTRO_MORE = {
   trivia: 'more movie trivia',
+  freeform: 'more from the video store',
+  quotes: 'more movie quotes',
   guys: 'more forgotten legends',
   year: 'more trips back',
 };
@@ -300,6 +360,19 @@ export function matchesSearch(rec, query) {
 
 // Slide caption for a picked role: "Movie (Year)" heading line + the blurb
 // (falling back to the picker hook when the model dropped one).
+// Freeform: the heading line, then what the viewer reads.
+//
+// A middot rather than parentheses, because `sub` is free text the agent wrote
+// and it usually already carries its own — "Michael Myers (Halloween (1978))"
+// is what wrapping it produced.
+export function captionForFreeform(item) {
+  const heading = String(item?.heading || '').trim();
+  const sub = String(item?.sub || '').trim();
+  const caption = String(item?.caption || '').trim();
+  const head = [heading, sub].filter(Boolean).join(' · ');
+  return [head, caption].filter(Boolean).join('\n');
+}
+
 export function captionForRole(role, blurb = '') {
   const year = role.year ? ` (${role.year})` : '';
   const body = (blurb || role.hook || role.role || '').trim();
@@ -363,6 +436,9 @@ export function renumberYearEntries(slides) {
 // one click out to find artwork, one paste back in.
 export function photoQueryFor(project, slide) {
   if (!project || !slide) return '';
+  // Freeform writes its own search term per slide, because the pictures are the
+  // work and only the model knows what each entry actually is.
+  if (project.format === 'freeform') return String(slide.search || '').trim();
   if (project.format === 'guys') {
     if (slide.role) return [project.actor, slide.role.movie].filter(Boolean).join(' ').trim();
     return slide.kind === 'title' ? String(project.actor || '').trim() : '';
@@ -394,4 +470,79 @@ export function relativeTime(ts, now) {
 
 export function projectDisplayName(p) {
   return (p?.name || '').trim() || 'Untitled';
+}
+
+
+// ---- Posts made before the studio existed ----
+//
+// A couple of dozen TikToks went out before any of this was recording what it
+// made. They are real posts: they belong in the library, in the cadence
+// numbers, and in the "already covered" list the batch picker reads. This turns
+// a row from the TikTok API into a library record.
+//
+// Deliberately thin: no slides, no thumb. It is a receipt for a post, not a
+// draft to re-open and edit.
+export function importedProject(row, { id, now = Date.now(), thumb = null } = {}) {
+  const movie = String(row?.movie || '').trim();
+  const title = String(row?.title || '').trim();
+  const format = row?.format === 'quotes' ? 'quotes' : 'trivia';
+  const postedAt = Number(row?.postedAt) ? Number(row.postedAt) * 1000 : now;
+  const base = makeProject({ id, format, now: postedAt });
+  return {
+    ...base,
+    name: movie || title || 'Untitled post',
+    // The picker gates on movie.title, so a post whose title no longer names a
+    // film lands in the library without claiming to cover one.
+    movie: movie ? { title: movie, year: null, query: movie } : null,
+    status: 'posted',
+    postedAt,
+    updatedAt: postedAt,
+    slides: [],
+    // The post's own cover — its first slide — so the library looks like the
+    // feed it came from rather than a wall of placeholder icons.
+    thumb: thumb || null,
+    // Where it came from, and what it did. `id` is TikTok's, and is what stops
+    // a second import creating a second copy.
+    imported: {
+      source: 'tiktok',
+      id: String(row?.id || ''),
+      title,
+      // Where the post lives, so a card can open the real thing.
+      link: String(row?.link || ''),
+      views: Number.isFinite(Number(row?.views)) ? Number(row.views) : null,
+      likes: Number.isFinite(Number(row?.likes)) ? Number(row.likes) : null,
+      comments: Number.isFinite(Number(row?.comments)) ? Number(row.comments) : null,
+    },
+  };
+}
+
+export function isImported(rec) {
+  return !!rec?.imported?.id;
+}
+
+// Which of these posts the library does not already hold.
+//
+// Two ways to already have one: the same TikTok post id (a second import), or
+// a project of the same format already naming that film (it was made here and
+// posted). Both are "we have this", and neither should produce a duplicate.
+export function newImports(rows, existing = []) {
+  const seenIds = new Set();
+  const seenFilms = new Set();
+  for (const rec of Array.isArray(existing) ? existing : []) {
+    if (rec?.imported?.id) seenIds.add(String(rec.imported.id));
+    const film = rec?.movie?.title;
+    if (film && rec.format) seenFilms.add(`${rec.format}::${String(film).trim().toLowerCase()}`);
+  }
+  const out = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = String(row?.id || '').trim();
+    if (!id || seenIds.has(id)) continue;
+    const film = String(row?.movie || '').trim().toLowerCase();
+    const key = film ? `${row.format === 'quotes' ? 'quotes' : 'trivia'}::${film}` : '';
+    if (key && seenFilms.has(key)) continue;
+    seenIds.add(id);
+    if (key) seenFilms.add(key);
+    out.push(row);
+  }
+  return out;
 }

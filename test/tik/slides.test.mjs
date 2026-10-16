@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_SLIDES, addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, updateSlideFrame,
+  MAX_SLIDES, addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, canAddSlide, updateSlideFrame,
 } from '../../public/scripts/tik/slides.js';
+import { isOutroSlide } from '../../public/scripts/tik/project.js';
 
 const s = (id, caption = '') => ({ id, caption });
 
@@ -57,4 +58,139 @@ test('updateSlideFrame replaces bitmap+timecode for the matching slide only, imm
   assert.equal(b[0].caption, 'c1');  // caption preserved
   assert.equal(b[1].bitmap, 'b2');   // other slide untouched
   assert.equal(a[0].bitmap, 'b1');   // original untouched
+});
+
+
+// ---- addSlideBeforeOutro: a hand-added slide belongs ahead of the sign-off ----
+
+const outro = (id = 'out') => ({ id, caption: 'Follow VHS Garage for more', kind: 'outro' });
+
+test('addSlideBeforeOutro slips the slide in ahead of a trailing outro', () => {
+  const set = [s('1'), s('2'), outro()];
+  const next = addSlideBeforeOutro(set, s('new'), isOutroSlide);
+  assert.deepEqual(next.map(x => x.id), ['1', '2', 'new', 'out']);
+});
+
+test('addSlideBeforeOutro appends when the set has no outro yet', () => {
+  const next = addSlideBeforeOutro([s('1'), s('2')], s('new'), isOutroSlide);
+  assert.deepEqual(next.map(x => x.id), ['1', '2', 'new']);
+});
+
+test('addSlideBeforeOutro appends to an empty set', () => {
+  assert.deepEqual(addSlideBeforeOutro([], s('new'), isOutroSlide).map(x => x.id), ['new']);
+});
+
+test('addSlideBeforeOutro only looks at the LAST slide', () => {
+  // An outro dragged into the middle is the user's arrangement, not a reason to
+  // insert in front of it; the new slide still goes at the end.
+  const set = [s('1'), outro('moved'), s('2')];
+  const next = addSlideBeforeOutro(set, s('new'), isOutroSlide);
+  assert.deepEqual(next.map(x => x.id), ['1', 'moved', '2', 'new']);
+});
+
+test('addSlideBeforeOutro recognizes an unmarked outro by its follow line', () => {
+  // Older projects predate `kind`, so the caption is the only marker.
+  const legacy = { id: 'legacy', caption: 'Follow VHS Garage for more bad movies' };
+  const next = addSlideBeforeOutro([s('1'), legacy], s('new'), isOutroSlide);
+  assert.deepEqual(next.map(x => x.id), ['1', 'new', 'legacy']);
+});
+
+test('addSlideBeforeOutro respects the cap and never mutates', () => {
+  let arr = [];
+  for (let i = 0; i < MAX_SLIDES - 1; i++) arr = addSlide(arr, s(String(i)));
+  arr = addSlide(arr, outro());
+  const same = addSlideBeforeOutro(arr, s('overflow'), isOutroSlide);
+  assert.equal(same.length, MAX_SLIDES);
+  assert.equal(same.at(-1).id, 'out'); // rejected outright, outro untouched
+  const before = [s('1'), outro()];
+  addSlideBeforeOutro(before, s('new'), isOutroSlide);
+  assert.deepEqual(before.map(x => x.id), ['1', 'out']);
+});
+
+test('addSlideBeforeOutro without a predicate behaves like addSlide', () => {
+  const set = [s('1'), outro()];
+  assert.deepEqual(addSlideBeforeOutro(set, s('new')).map(x => x.id), ['1', 'out', 'new']);
+});
+
+
+// ---- A replaced frame is a different picture ----
+
+test('updateSlideFrame drops the correction with the old pixels', () => {
+  // A brighten set for a night scene, or a zoom framed on one shot's title
+  // card, is nonsense on the picture that replaces it — pasting an image into
+  // a zoomed slide came back zoomed, which reads as the app acting on its own.
+  const set = [{ id: '1', caption: 'a', adjust: { brightness: 1.2, zoom: 1.35 } }];
+  const next = updateSlideFrame(set, '1', 'newBitmap', 12.5);
+  assert.equal(next[0].adjust, null);
+  assert.equal(next[0].bitmap, 'newBitmap');
+  assert.equal(next[0].timecode, 12.5);
+  assert.equal(next[0].caption, 'a', 'everything else survives');
+  assert.deepEqual(set[0].adjust, { brightness: 1.2, zoom: 1.35 }, 'input untouched');
+});
+
+test('updateSlideFrame leaves other slides alone', () => {
+  const set = [
+    { id: '1', adjust: { zoom: 1.2 } },
+    { id: '2', adjust: { zoom: 1.35 } },
+  ];
+  const next = updateSlideFrame(set, '1', 'bmp', 1);
+  assert.equal(next[0].adjust, null);
+  assert.deepEqual(next[1].adjust, { zoom: 1.35 }, 'the slide that was not re-framed keeps its own');
+});
+
+// ---- A human fixing a batch frame is the measurement ----
+
+import { confirmFrame, flaggedCount } from '../../public/scripts/tik/slides.js';
+
+test('replacing a flagged frame clears the flag and records the fix', () => {
+  const set = [{ id: '1', frameScan: { source: 'scan', score: 61, review: true } }];
+  const [s] = updateSlideFrame(set, '1', 'bmp', 10);
+  assert.equal(s.frameScan.review, false);
+  assert.equal(s.frameScan.fixed, true);
+  assert.equal(s.frameScan.wasFlagged, true, 'the batch did ask for this one');
+});
+
+test('replacing an UNflagged frame records a miss', () => {
+  // The batch was sure and wrong — the case most worth counting.
+  const set = [{ id: '1', frameScan: { source: 'scan', score: 94, review: false } }];
+  const [s] = updateSlideFrame(set, '1', 'bmp', 10);
+  assert.equal(s.frameScan.fixed, true);
+  assert.equal(s.frameScan.wasFlagged, false);
+});
+
+test('a second fix keeps what the batch originally thought', () => {
+  let set = [{ id: '1', frameScan: { source: 'scan', score: 61, review: true } }];
+  set = updateSlideFrame(set, '1', 'a', 1);
+  set = updateSlideFrame(set, '1', 'b', 2);
+  assert.equal(set[0].frameScan.wasFlagged, true);
+});
+
+test('confirming a flagged frame clears it without calling it fixed', () => {
+  const set = [{ id: '1', frameScan: { source: 'scan', score: 61, review: true } }];
+  const [s] = confirmFrame(set, '1');
+  assert.equal(s.frameScan.review, false);
+  assert.equal(s.frameScan.confirmed, true);
+  assert.equal(s.frameScan.fixed, undefined);
+  assert.equal(s.frameScan.wasFlagged, true, 'a false alarm is still worth counting');
+});
+
+test('slides that never went through batch are left alone', () => {
+  const [s] = updateSlideFrame([{ id: '1' }], '1', 'bmp', 1);
+  assert.equal(s.frameScan ?? null, null);
+  const [c] = confirmFrame([{ id: '1' }], '1');
+  assert.equal(c.frameScan, undefined);
+});
+
+test('flaggedCount counts only frames still waiting for a look', () => {
+  const s = [
+    { id: 'a', frameScan: { review: true } },
+    { id: 'b', frameScan: { review: false } },
+    { id: 'c', frameScan: { review: true } },
+    { id: 'd' },
+  ];
+  assert.equal(flaggedCount(s), 2);
+  assert.equal(flaggedCount(confirmFrame(s, 'a')), 1, 'confirmed is no longer waiting');
+  assert.equal(flaggedCount(updateSlideFrame(s, 'c', null, 5)), 1, 'nor is a re-grabbed frame');
+  assert.equal(flaggedCount(undefined), 0);
+  assert.equal(flaggedCount([null]), 0);
 });

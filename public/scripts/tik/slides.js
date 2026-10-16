@@ -13,6 +13,23 @@ export function addSlide(slides, slide) {
   return [...slides, slide];
 }
 
+// Add a slide to the END OF THE SET — which is not the end of the array when a
+// branded sign-off is sitting there. A hand-added slide appended after the
+// outro reads as a mistake in the finished post, and nobody wants to drag a
+// slide up one place every single time.
+//
+// Only the last slide is tested, because that is the only place the sign-off
+// ever lives; a set with no outro yet appends exactly as before. `isOutro` is
+// passed in so this file stays free of format knowledge.
+export function addSlideBeforeOutro(slides, slide, isOutro = () => false) {
+  if (!canAddSlide(slides)) return slides;
+  const last = slides.length - 1;
+  if (last >= 0 && isOutro(slides[last])) {
+    return [...slides.slice(0, last), slide, slides[last]];
+  }
+  return [...slides, slide];
+}
+
 export function removeSlide(slides, id) {
   return slides.filter(x => x.id !== id);
 }
@@ -31,6 +48,38 @@ export function editCaption(slides, id, caption) {
 
 // Replace a slide's grabbed frame (and the timecode it came from), leaving its
 // caption and everything else intact. Used by the "re-grab this frame" flow.
+//
+// The colour/zoom correction does NOT survive. It was measured against the
+// pixels that just went away: a brighten set for a night scene, or a 35% zoom
+// framed on one shot's title card, is nonsense applied to a different picture —
+// pasting a fresh image into a zoomed slide came back zoomed, which reads as
+// the app doing something of its own accord.
+//
+// A batch frame verdict is kept but marked FIXED: a human replacing the frame is
+// the one honest signal of whether the batch got it right, and `wasFlagged`
+// keeps what the batch thought at the time — so "flagged and fixed", "missed
+// and fixed" and "flagged but fine" can all be told apart later.
 export function updateSlideFrame(slides, id, bitmap, timecode) {
-  return slides.map(x => (x.id === id ? { ...x, bitmap, timecode } : x));
+  return slides.map(x => (x.id === id
+    ? { ...x, bitmap, timecode, adjust: null, frameScan: markFixed(x.frameScan) }
+    : x));
+}
+
+function markFixed(scan) {
+  if (!scan) return scan ?? null;
+  return { ...scan, wasFlagged: scan.wasFlagged ?? !!scan.review, review: false, fixed: true };
+}
+
+// "I looked, it's right." Clears the flag without pretending it was fixed.
+export function confirmFrame(slides, id) {
+  return slides.map(x => (x.id === id && x.frameScan
+    ? { ...x, frameScan: { ...x.frameScan, wasFlagged: x.frameScan.wasFlagged ?? !!x.frameScan.review, review: false, confirmed: true } }
+    : x));
+}
+
+// How many slides batch still wants a human to look at. The library card shows
+// it, so a ten-film batch reads as "three films, five frames" from the grid
+// instead of a hunt through every draft.
+export function flaggedCount(slides) {
+  return (Array.isArray(slides) ? slides : []).filter((x) => x?.frameScan?.review).length;
 }

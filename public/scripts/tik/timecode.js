@@ -15,3 +15,17 @@ export function frameStep(currentTime, dir, fps = 30) {
   const next = (Number(currentTime) || 0) + dir / (fps || 30);
   return Math.max(0, next);
 }
+
+// Seconds → "1:23:45", or "4:07" for anything under an hour.
+//
+// Not the same job as formatTimecode: that one is a frame-accurate readout for
+// the scrubber and shows milliseconds. This is a place in a film you are about
+// to go and look at, where minutes past the hour is the useful unit and "83:45"
+// is a number you have to do arithmetic on.
+export function clockTimecode(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+}

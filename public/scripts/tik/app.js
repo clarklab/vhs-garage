@@ -4,23 +4,35 @@
 // itself can't persist (browser limitation), but every slide's frame does.
 import { loadVideoFile, grabFrame, awaitSeekSettled, seekAndSettle } from './capture.js';
 import { initScrubber } from './scrubber.js';
-import { addSlide, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame } from './slides.js';
-// getRefreshToken is no longer needed here: the only fetch in this file that
-// used it (the hashtag panel) now goes through reports.js loadPosts().
-import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory } from './auth.js';
-import { publishSlideshow } from './publish.js';
-import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot } from './autopilot.js';
+import { OUTRO_DESIGNS, outroDesign, outroKeyOf, outroHoldSeconds, rememberedOutro, OUTRO_STORAGE_KEY } from './outros.js';
+import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame, confirmFrame, flaggedCount } from './slides.js';
+// getRefreshToken is back for one caller: importing the posts that predate the
+// library reads them straight from TikTok. Everything else (the hashtag panel)
+// still goes through reports.js loadPosts().
+import { startAuth, handleRedirect, signOut, isSignedIn, clearLocalToken, connectHistory, getRefreshToken } from './auth.js';
+import { publishSlideshow, publishClip } from './publish.js';
+import { fetchScenes, fetchTriviaPost, fetchTitleSlide, fetchRoles, fetchBlurbs, fetchYearSnapshot, fetchQuotesPost, fetchImdbQuotes, fetchSubtitles, fetchFreeform, QUOTES_COUNT, QUOTES_POOL } from './autopilot.js';
+import { fontScaleForQuote, karaokeState } from './caption.js';
 import { parseMovieName } from './filename.js';
-import { composeToCanvas, composeSlide, captionFontReady } from './compose.js';
+import { composeToCanvas, composeSlide, captionFontReady, quoteStampReady, wantsQuoteStamp, clampStampNudge, canNudgeStamp, captionStyleOf } from './compose.js';
+import { clockTimecode, formatTimecode } from './timecode.js';
+import { PRESETS, applyPreset, autoLevels, describeAdjust, isNeutral, NEUTRAL } from './adjust.js';
 import {
   FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, renumberYearEntries,
-  relativeTime, projectDisplayName, pickOutro, nextOutro, isIntroSlide, isOutroSlide, matchesSearch,
+  relativeTime, projectDisplayName, pickOutro, nextOutro, isIntroSlide, isOutroSlide, matchesSearch, captionForFreeform,
   STATUSES, statusOf, statusLabel, statusAfterOutroEdit, toggleReady,
+  importedProject, newImports, isImported,
 } from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
+import { packLibrary, unpackLibrary, backupFileName, restorable, keepStorage, storageUsed } from './backup.js';
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
+import { composePair, pairLayoutOf, otherLayout, PAIR_LAYOUT_LABELS } from './pair.js';
+import { planClip, recordClip, describePlan, silenceReason, probeFilmAudio, NO_FILM_AUDIO_NOTE, CLIP_FPS,
+  sceneWindow, titleWindow, nudgeTrim, describeTrim, isTrimmed } from './clip.js';
+import { ffmpegAacCommand, ffmpegH264Command, NO_DECODE_NOTE } from './ffmpeg.js';
+import { fixNote } from './fixnote.js';
 import {
   parseImdbList, toRatedEntries, imdbSearchUrl, formatVotes,
   parseGrossList, toGrossEntries, boxOfficeMojoUrl, formatGross,
@@ -48,15 +60,21 @@ const els = {
   home: $('screen-home'), editor: $('screen-editor'), batch: $('screen-batch'),
   reports: $('screen-reports'),
   // home
-  newTrivia: $('new-trivia'), newGuys: $('new-guys'), newYear: $('new-year'),
+  newTrivia: $('new-trivia'), newQuotes: $('new-quotes'), newGuys: $('new-guys'), newYear: $('new-year'),
+  newFreeform: $('new-freeform'),
+  paneFreeform: $('pane-freeform'), freeformTopic: $('freeform-topic'),
+  freeformCount: $('freeform-count'), freeformWrite: $('freeform-write'), freeformWriteLabel: $('freeform-write-label'),
   newBatch: $('new-batch'),
   grid: $('project-grid'), libraryEmpty: $('library-empty'),
   statsCard: $('stats-card'), statsCount: $('stats-count'), statsDelta: $('stats-delta'),
   statsNote: $('stats-note'), statsPlot: $('stats-plot'), statsChart: $('stats-chart'), statsTip: $('stats-tip'),
   // editor bar
   back: $('back-btn'), formatChip: $('format-chip'), projectName: $('project-name'),
-  download: $('download-btn'), post: $('post-btn'), status: $('post-status'),
+  download: $('download-btn'), post: $('post-btn'), postLabel: $('post-label'), status: $('post-status'),
   statusChip: $('status-chip'), toast: $('toast'), toastBody: $('toast-body'),
+  adjustMenu: $('adjust-menu'), adjustHome: $('adjust-home'),
+  pairArmWrap: $('pair-arm-wrap'), pairArm: $('pair-arm'), pairArmLabel: $('pair-arm-label'),
+  subsNote: $('subs-note'), subsNoteText: $('subs-note-text'),
   cadenceCard: $('cadence-card'), cadenceGhost: $('cadence-ghost'), cadenceLive: $('cadence-live'),
   cadenceIcon: $('cadence-icon'), cadenceHeadline: $('cadence-headline'),
   cadenceLabel: $('cadence-label'), cadenceDetail: $('cadence-detail'),
@@ -67,8 +85,9 @@ const els = {
   triviaSeedShowLabel: $('trivia-seed-show-label'),
   slidePreview: $('slide-preview'), slidePreviewCanvas: $('slide-preview-canvas'),
   slidePreviewClose: $('slide-preview-close'), slidePreviewMeta: $('slide-preview-meta'),
+  clipTrim: $('clip-trim'), trimSpan: $('trim-span'), trimReset: $('trim-reset'),
   videoReload: $('video-reload'), videoReloadLabel: $('video-reload-label'),
-  video: $('video'), range: $('scrub-range'), timecode: $('timecode'),
+  video: $('video'), range: $('scrub-range'), timecode: $('timecode'), play: $('play-btn'),
   grab: $('grab-btn'), grabIcon: $('grab-icon'), grabLabel: $('grab-label'),
   cancelEdit: $('cancel-edit'),
   titleToggle: $('title-toggle'), movieTitle: $('movie-title'),
@@ -93,13 +112,25 @@ const els = {
   // hashtag performance, under the follower chart
   tagReport: $('tag-report'), tagReportNote: $('tag-report-note'), tagReportBody: $('tag-report-body'),
   openReports: $('open-reports'), connectHistoryBtn: $('connect-history'), reportsHint: $('reports-hint'),
+  importPosts: $('import-posts'),
+  backupSave: $('backup-save'), backupLoad: $('backup-load'), backupFile: $('backup-file'),
+  storageState: $('storage-state'),
   statsModes: $('stats-modes'), statsStyles: $('stats-styles'), statsForecast: $('stats-forecast'),
   statsLegend: $('stats-legend'),
   libraryFilters: $('library-filters'), libraryViews: $('library-views'),
   librarySearch: $('library-search'),
+  libraryNarrowed: $('library-narrowed'),
   homeNav: $('home-nav'), homeLink: $('home-link'), tabPosts: $('tab-posts'), tabStats: $('tab-stats'), tabModels: $('tab-models'),
   // slides pane
   count: $('slide-count'), list: $('slide-list'), addScene: $('add-scene'), slidesHint: $('slides-hint'),
+  addManual: $('add-manual'), addManualLabel: $('add-manual-label'),
+  // Quote-a-long video format
+  clipBar: $('clip-bar'), outSlides: $('out-slides'), outVideo: $('out-video'), clipPlan: $('clip-plan'),
+  clipControls: $('clip-controls'), clipRender: $('clip-render'), clipCancel: $('clip-cancel'),
+  clipDownload: $('clip-download'), clipPreview: $('clip-preview'), clipNote: $('clip-note'),
+  clipFix: $('clip-fix'), fileFix: $('file-fix'),
+  captionStyles: $('caption-styles'),
+  capPills: $('cap-pills'), capCc: $('cap-cc'), capKaraoke: $('cap-karaoke'),
   imgFile: $('img-file-input'),
 };
 
@@ -111,6 +142,7 @@ let dragFrom = null;
 let editingId = null;          // slide id whose frame is being replaced, or null
 let pickTargetId = null;       // slide id the hidden image-file input feeds
 let videoReady = false;        // metadata loaded → grabbing is possible
+let filmFileName = '';         // the movie file's own name, for the audio fix-up command
 let aiBusy = false;            // an AI action is in flight
 let movie = { title: '', year: null, query: '' }; // parsed from the filename (trivia)
 let dirty = false;
@@ -138,6 +170,7 @@ function iconSpan(name, sizeClass = 'text-[18px]') {
 initScrubber({
   video: els.video, range: els.range, timecode: els.timecode,
   steps: [...document.querySelectorAll('#scrubber [data-frames], #scrubber [data-seconds]')],
+  play: els.play,
 });
 
 els.video.addEventListener('loadedmetadata', () => {
@@ -146,6 +179,13 @@ els.video.addEventListener('loadedmetadata', () => {
   els.autopilot.disabled = aiBusy; // stay disabled if a job is mid-flight
   els.autopilot.title = '';
   render(); // updates the Add-scene button state
+  // Find out NOW whether a clip cut from this film could have sound, rather
+  // than after someone has spent a minute rendering a silent one. It plays a
+  // muted moment and puts the playhead back.
+  filmAudio = 'unknown';
+  probeFilmAudio(els.video)
+    .then((verdict) => { filmAudio = verdict; syncClipBar(); })
+    .catch((e) => console.warn('[tik] film audio probe failed:', e));
 });
 
 // One AI action at a time. Background jobs can run for minutes, so ALL the
@@ -175,19 +215,35 @@ async function grabAt(timecode) {
   return grabFrame(els.video);
 }
 
-// Branded outro slide: the VHS Garage logo as the "frame" + a follow CTA,
-// flowing through the normal slide pipeline (editable, reorderable).
-const OUTRO_LOGO_URL = '/images/vhs-garage-logo-square.png'; // yellow lockup (V mark), black field
-async function makeOutroSlide() {
-  const res = await fetch(OUTRO_LOGO_URL);
-  if (!res.ok) throw new Error(`Couldn't load the outro logo (${res.status})`);
+// Branded outro slide: the end card as the "frame" + a follow CTA, flowing
+// through the normal slide pipeline (editable, reorderable). The card is the
+// plain logo or one of the designed follow cards (outros.js); whichever was
+// picked last is what new sets end on.
+async function loadOutroStill(key) {
+  const design = outroDesign(key);
+  const res = await fetch(design.still);
+  if (!res.ok) throw new Error(`Couldn't load the ${design.label} end card (${res.status})`);
   const blob = await res.blob();
-  const bitmap = await createImageBitmap(blob);
+  return { blob, bitmap: await createImageBitmap(blob), key: design.key };
+}
+async function makeOutroSlide(key = rememberedOutro()) {
+  const { blob, bitmap, key: style } = await loadOutroStill(key);
   return {
     id: String(nextId++), bitmap, blob,
     caption: pickOutro(project?.format),
-    grabHint: '', fontScale: 1, role: null, kind: 'outro',
+    grabHint: '', fontScale: 1, role: null, kind: 'outro', outroStyle: style,
   };
+}
+
+// Swap the end card on an existing outro slide. The caption is kept: a
+// designed card doesn't draw it, but going back to the logo should bring it back.
+async function setOutroStyle(slideId, key) {
+  const { blob, bitmap, key: style } = await loadOutroStill(key);
+  slides = slides.map((x) => (x.id === slideId ? { ...x, bitmap, blob, outroStyle: style } : x));
+  try { localStorage.setItem(OUTRO_STORAGE_KEY, style); } catch { /* per-device nicety only */ }
+  markDirty();
+  render();
+  els.status.textContent = `End card: ${outroDesign(style).label}.`;
 }
 
 // ================= Persistence =================
@@ -213,6 +269,8 @@ async function makeThumbBlob(slide) {
   composeToCanvas(c, slide.bitmap, slide.caption, {
     titleLine: currentTitleLine(), scale: 0.12, fontScale: slide.fontScale || 1,
     maxFrameHeightRatio: frameHeightRatio(),
+    format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0,
+    captionStyle: captionStyleNow(),
   });
   return await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.7));
 }
@@ -224,6 +282,25 @@ async function serializeProject() {
       id: s.id, caption: s.caption, timecode: s.timecode, grabHint: s.grabHint || '',
       fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
       entry: s.entry || null, section: s.section || null,
+      // Present only when the subtitle matcher placed this line. Its absence is
+      // meaningful: the timecode was estimated, and the slide says so.
+      cue: s.cue || null,
+      // Freeform writes an image-search term per slide; it is the whole point.
+      search: s.search || '',
+      // The two source frames behind a paired slide, kept so switching layout
+      // rebuilds rather than asking for the grabs again.
+      pairFrames: s.pairFrames?.length === 2 ? s.pairFrames : null,
+      pairLayout: s.pairFrames?.length === 2 ? pairLayoutOf(s.pairLayout) : null,
+      // Correction is stored, never baked, so it stays reversible.
+      adjust: s.adjust || null,
+      // Where the Quote-a-long badge was nudged to on this title card.
+      stampNudge: clampStampNudge(s.stampNudge),
+      // Hand trim on this scene's span, in the video format.
+      trim: s.trim?.before || s.trim?.after ? { before: s.trim.before || 0, after: s.trim.after || 0 } : null,
+      // How batch Shoot chose this frame, and whether it asked for a look.
+      frameScan: s.frameScan || null,
+      // Which end card an outro slide shows; absent means the plain logo.
+      outroStyle: s.kind === 'outro' ? outroKeyOf(s) : null,
       frame: await frameBlobFor(s),
     });
   }
@@ -249,6 +326,13 @@ function setSaveState(state) {
 // Debounced autosave: call after ANY project/slide mutation.
 function markDirty() {
   if (!project) return;
+  // A rendered clip is a photograph of the set at one moment; any edit after it
+  // makes it a lie. Say so rather than posting yesterday's cut.
+  if (clip && !clipStale) clipStale = true;
+  // The clip plan is made of the slides, and captions change it — the sign-off
+  // is recognised BY its caption. This is the one hook every edit goes through.
+  syncClipBar();
+  updatePostButton();
   if (!storageAvailable()) return;
   dirty = true;
   setSaveState('saving');
@@ -307,6 +391,10 @@ async function teardownProject() {
   project = null;
   dirty = false;
   resetEditState();
+  // A rendered clip belongs to the project that was open; it is tens of
+  // megabytes and it is never right for the next one.
+  clipAbort?.abort();
+  releaseClip();
   pickTargetId = null;
   editingId = null;
   videoReady = false;
@@ -376,6 +464,13 @@ function syncThumbsToCaptionFont() {
     if (!ok) return;
     if (project) redrawAllThumbs();
   }).catch((e) => console.warn('[tik] caption font sync failed:', e));
+  // The stamp arrives on its own schedule too, and a title slide drawn before
+  // it decodes is missing its badge until something else forces a redraw.
+  if (project?.format === 'quotes') {
+    quoteStampReady().then((ok) => {
+      if (ok && project?.format === 'quotes') redrawAllThumbs();
+    }).catch((e) => console.warn('[tik] quote stamp sync failed:', e));
+  }
 }
 
 function enterEditor() {
@@ -383,6 +478,8 @@ function enterEditor() {
   history.replaceState({}, '', `${location.pathname}${location.search}#p/${project.id}`);
   applyFormatUI();
   renderStatusChip();
+  renderSubsNote();
+  syncGrabControls();
   els.projectName.value = project.name || '';
   els.postTitleInput.value = project.postTitle || '';
   els.postDescInput.value = project.postDesc || '';
@@ -391,6 +488,8 @@ function enterEditor() {
   els.movieTitle.value = project.titleLine || '';
   els.movieTitle.disabled = !project.titleOn;
   els.actorInput.value = project.actor || '';
+  els.freeformTopic.value = project.topic || '';
+  syncFreeformCount();
   els.yearInput.value = project.year || '';
   els.minVotes.value = project.minVotes ?? DEFAULT_MIN_VOTES;
   els.imdbPaste.value = project.imdbPaste || '';
@@ -411,6 +510,12 @@ function enterEditor() {
 // Appends a persistent warning when local saving can't work in this browser.
 function withStorageWarning(msg) {
   return storageAvailable() ? msg : `${msg} (Local saving is unavailable in this browser — work here won’t persist.)`;
+}
+
+// Trivia and Quote-a-long both drive a local movie file (seek, grab, reload).
+// Keep rewrite / Add-scene on trivia only — those still call fetchScenes.
+function isMovieFileFormat(format = project?.format) {
+  return format === 'trivia' || format === 'quotes';
 }
 
 async function newProject(format) {
@@ -454,7 +559,14 @@ async function openProject(id) {
         id: String(nextId++), bitmap, blob: s.frame,
         caption: s.caption || '', timecode: s.timecode, grabHint: s.grabHint || '',
         fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
-        entry: s.entry || null, section: s.section || null,
+        entry: s.entry || null, section: s.section || null, cue: s.cue || null,
+        search: s.search || '', adjust: s.adjust || null,
+        stampNudge: clampStampNudge(s.stampNudge),
+        trim: s.trim?.before || s.trim?.after ? { before: s.trim.before || 0, after: s.trim.after || 0 } : null,
+        frameScan: s.frameScan || null,
+        outroStyle: s.kind === 'outro' ? outroKeyOf(s) : null,
+        pairFrames: s.pairFrames?.length === 2 ? s.pairFrames : null,
+        pairLayout: s.pairFrames?.length === 2 ? pairLayoutOf(s.pairLayout) : null,
       });
     } catch (e) {
       console.error('[tik] could not decode a saved frame; slide dropped', e);
@@ -464,7 +576,7 @@ async function openProject(id) {
   slides = loaded;
   dirty = false;
   enterEditor();
-  if (project.format === 'trivia') {
+  if (isMovieFileFormat()) {
     els.videoNote.classList.toggle('hidden', slides.length === 0);
     els.status.textContent = withStorageWarning(slides.length
       ? 'Reopened from your library — captions, fonts, and posting all work; re-pick the movie file to grab new frames.'
@@ -478,18 +590,43 @@ async function openProject(id) {
 // ---- Format-specific UI wiring ----
 // One source pane per format; only the active one is shown (panes are flex
 // columns, so "hidden" has to be swapped for "flex", not just removed).
-const PANES = { trivia: els.paneTrivia, guys: els.paneGuys, year: els.paneYear };
+const PANES = { trivia: els.paneTrivia, quotes: els.paneTrivia, freeform: els.paneFreeform, guys: els.paneGuys, year: els.paneYear };
+const TRIVIA_PASTE_PLACEHOLDER = 'Optional starter prompt — paste trivia you found (IMDb, Reddit, anywhere) or give a direction; autopilot verifies and riffs on it';
+const QUOTES_PASTE_PLACEHOLDER = 'Optional — paste quotes you want, or a direction';
 function applyFormatUI() {
   const f = formatOf(project);
-  for (const [key, pane] of Object.entries(PANES)) {
-    const on = key === f.key;
+  // quotes reuses the trivia movie-file pane. Unique the values so iterating
+  // both keys can't hide Tape Trivia when the quotes entry runs second.
+  const activePane = PANES[f.key];
+  for (const pane of new Set(Object.values(PANES))) {
+    const on = pane === activePane;
     pane.classList.toggle('hidden', !on);
     pane.classList.toggle('flex', on);
   }
   els.addScene.classList.toggle('hidden', f.key !== 'trivia');
+  // Hand-written slide: for a quote you already know, or a fact the agent
+  // missed. Both movie-file formats get it — the frame comes from the playhead,
+  // which only those two have.
+  const manual = isMovieFileFormat(f.key);
+  els.addManual.classList.toggle('hidden', !manual);
+  els.addManual.classList.toggle('flex', manual);
+  els.addManualLabel.textContent = f.key === 'quotes' ? 'Add quote' : 'Add slide';
+  els.addManual.title = f.key === 'quotes'
+    ? 'Add a slide at this frame and type the quote yourself'
+    : 'Add a slide at this frame and write it yourself';
+  syncClipBar();
   els.formatChip.textContent = f.label;
   els.formatChip.className = `rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${f.chip}`;
   els.slidesHint.textContent = f.editorHint;
+  const quotes = f.key === 'quotes';
+  if (els.autopilot?.lastChild) {
+    els.autopilot.lastChild.textContent = quotes
+      ? 'Autopilot — title slide + quotes'
+      : 'Autopilot — title slide + trivia scenes';
+  }
+  if (els.autopilotPrompt) {
+    els.autopilotPrompt.placeholder = quotes ? QUOTES_PASTE_PLACEHOLDER : TRIVIA_PASTE_PLACEHOLDER;
+  }
 }
 
 // Once a set is written, the starter prompt / bookmarklet help / Autopilot
@@ -498,7 +635,7 @@ function applyFormatUI() {
 let seedForced = false;
 function syncSeedControls() {
   if (!els.triviaSeed) return;
-  const trivia = project?.format === 'trivia';
+  const trivia = isMovieFileFormat();
   const written = slides.length > 0;
   const show = trivia && (!written || seedForced);
   els.triviaSeed.classList.toggle('hidden', !show);
@@ -555,6 +692,22 @@ function toast(message, tone = 'ready') {
   els.toast.classList.remove('hidden');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => els.toast.classList.add('hidden'), 2600);
+}
+
+// Why every timecode on this set is a guess.
+//
+// Without subtitles the matcher has nothing to match against, so every slide
+// falls back to the model's estimate. That is a legitimate outcome, but it is
+// also what a broken install looks like, and the two are indistinguishable
+// unless the reason is written down where it survives a reload.
+function renderSubsNote() {
+  const show = project?.format === 'quotes' && !!project?.subsError;
+  els.subsNote.classList.toggle('hidden', !show);
+  els.subsNote.classList.toggle('flex', show);
+  if (show) {
+    els.subsNoteText.textContent =
+      `No subtitles for this film, so every timecode below is the model's estimate rather than a subtitle match. Reason: ${project.subsError}`;
+  }
 }
 
 function renderStatusChip() {
@@ -701,6 +854,33 @@ els.libraryViews.addEventListener('click', (e) => {
   renderLibrary();
 });
 
+// "Showing 3 of 136" whenever a search or a status pill is hiding cards. The
+// status pill is remembered between visits and the pills count only search
+// matches, so without this a narrowed grid looks exactly like a lost library.
+function renderNarrowed(shown, total) {
+  const q = librarySearch.trim();
+  const status = STATUSES.find((st) => st.key === libFilter);
+  const narrowed = shown < total && (q || status);
+  els.libraryNarrowed.classList.toggle('hidden', !narrowed);
+  els.libraryNarrowed.innerHTML = '';
+  if (!narrowed) return;
+  const why = [status && status.plural.toLowerCase(), q && `matching “${q}”`].filter(Boolean).join(', ');
+  const text = document.createElement('span');
+  text.textContent = `Showing ${shown} of ${total} — ${why}.`;
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'rounded-md border border-neutral-700 px-2 py-0.5 font-semibold text-neutral-200 hover:border-neutral-500';
+  all.textContent = 'Show all';
+  all.addEventListener('click', () => {
+    librarySearch = '';
+    els.librarySearch.value = '';
+    libFilter = 'all';
+    localStorage.setItem(LS_LIB_FILTER, 'all');
+    renderLibrary();
+  });
+  els.libraryNarrowed.append(text, all);
+}
+
 async function renderLibrary() {
   thumbUrls.forEach((u) => URL.revokeObjectURL(u));
   thumbUrls = [];
@@ -726,6 +906,7 @@ async function renderLibrary() {
   // posted or how many sets are queued.
   refreshCadence(list).catch((e) => console.error('[tik] cadence render failed:', e));
 
+  const total = list.length;
   const q = librarySearch.trim().toLowerCase();
   if (q) list = list.filter((r) => matchesSearch(r, q));
 
@@ -737,6 +918,7 @@ async function renderLibrary() {
   renderLibraryChrome(counts);
 
   const shown = libFilter === 'all' ? list : list.filter((r) => statusOf(r) === libFilter);
+  renderNarrowed(shown.length, total);
   els.grid.className = GRID_CLASS[libView] || GRID_CLASS.grid;
   els.libraryEmpty.classList.toggle('hidden', shown.length > 0);
   if (!shown.length) {
@@ -751,7 +933,9 @@ async function renderLibrary() {
     card.className = listView
       ? 'group relative flex w-full items-center gap-3 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-left transition hover:border-neutral-600'
       : 'group relative overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900 text-left transition hover:border-neutral-600';
-    card.title = `Open ${projectDisplayName(rec)}`;
+    card.title = isImported(rec) && rec.imported.link
+      ? `Open “${projectDisplayName(rec)}” on TikTok`
+      : `Open ${projectDisplayName(rec)}`;
 
     const frame = document.createElement('div');
     frame.className = listView
@@ -826,12 +1010,37 @@ async function renderLibrary() {
     name.textContent = projectDisplayName(rec);
     const sub = document.createElement('span');
     sub.className = 'flex items-center gap-1.5 text-[11px] text-neutral-500';
-    sub.innerHTML = `${formatBadge(rec)} <span>${(rec.slides || []).length} slides · ${relativeTime(rec.updatedAt || 0, Date.now())}</span>`;
+    // An imported post has no slides here and never will: it was published
+    // before this library existed, so say where it came from rather than
+    // reporting "0 slides" as though something went wrong.
+    const detail = isImported(rec)
+      ? `from TikTok · ${relativeTime(rec.postedAt || rec.updatedAt || 0, Date.now())}`
+      : `${(rec.slides || []).length} slides · ${relativeTime(rec.updatedAt || 0, Date.now())}`;
+    sub.innerHTML = `${formatBadge(rec)} <span>${detail}</span>`;
+    // Frames batch Shoot was unsure of and nobody has looked at yet. Posted
+    // sets are past caring, so only the queue shows it.
+    const flagged = key === 'posted' ? 0 : flaggedCount(rec.slides);
+    if (flagged) {
+      const chip = document.createElement('span');
+      chip.className = listView
+        ? 'ml-auto flex flex-none items-center gap-0.5 rounded-md bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200'
+        : 'absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold text-neutral-950 shadow';
+      chip.title = `${flagged} frame${flagged === 1 ? '' : 's'} flagged by batch to check — open the set and look for the amber “check frame” pills.`;
+      chip.append(iconSpan('visibility', 'text-[13px]'), document.createTextNode(listView ? String(flagged) : `${flagged} to check`));
+      (listView ? sub : frame).appendChild(chip);
+    }
     meta.append(name, sub);
 
     card.append(frame, meta);
     if (listView) card.append(badge, del);
     card.addEventListener('click', () => {
+      // An imported post has no slides to edit — it was published before this
+      // library existed. Opening an empty editor would be a dead end, so the
+      // card goes to the post itself.
+      if (isImported(rec) && rec.imported.link) {
+        window.open(rec.imported.link, '_blank', 'noopener,noreferrer');
+        return;
+      }
       openProject(rec.id).catch((e) => {
         console.error('[tik] open failed:', e);
         alert('Couldn’t open that project — check the console.');
@@ -842,7 +1051,9 @@ async function renderLibrary() {
 }
 
 els.newTrivia.addEventListener('click', () => { newProject('trivia').catch((e) => console.error('[tik] new project failed:', e)); });
+els.newQuotes.addEventListener('click', () => { newProject('quotes').catch((e) => console.error('[tik] new project failed:', e)); });
 els.newGuys.addEventListener('click', () => { newProject('guys').catch((e) => console.error('[tik] new project failed:', e)); });
+els.newFreeform.addEventListener('click', () => { newProject('freeform').catch((e) => console.error('[tik] new project failed:', e)); });
 els.newYear.addEventListener('click', () => { newProject('year').catch((e) => console.error('[tik] new project failed:', e)); });
 
 // ---- Batch mode (beta) ----
@@ -872,6 +1083,145 @@ els.connectHistoryBtn.addEventListener('click', async () => {
   }
 });
 
+// ---- Getting a copy of the library out, and back in ----
+//
+// Everything here lives in one browser profile's IndexedDB. That is why the
+// movie files never leave the machine, and it is also why clearing site data,
+// a new profile, or a browser deciding to reclaim space takes the lot. A
+// library with no way out is one bad day from nothing.
+els.backupSave.addEventListener('click', async () => {
+  if (!storageAvailable()) { alert('The local library is unavailable.'); return; }
+  els.backupSave.disabled = true;
+  const say = (msg) => { els.reportsHint.textContent = msg; };
+  try {
+    say('Packing the library…');
+    const list = await listProjects();
+    if (!list.length) { say('Nothing in the library to back up yet.'); return; }
+    const blob = packLibrary(list);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = backupFileName(new Date());
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    const mb = (blob.size / 1024 / 1024).toFixed(1);
+    say(`Backed up ${list.length} project${list.length === 1 ? '' : 's'} (${mb}MB). Keep it somewhere that is not this browser.`);
+  } catch (e) {
+    console.error('[tik] library backup failed:', e);
+    say(`Backup failed: ${e.message}`);
+  } finally {
+    els.backupSave.disabled = false;
+  }
+});
+
+els.backupLoad.addEventListener('click', () => els.backupFile.click());
+els.backupFile.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  els.backupFile.value = ''; // same file can be restored again later
+  if (!file) return;
+  const say = (msg) => { els.reportsHint.textContent = msg; };
+  els.backupLoad.disabled = true;
+  try {
+    say('Reading the library file…');
+    const projects = await unpackLibrary(file);
+    if (!projects.length) { say('That file holds no projects.'); return; }
+    const existing = await listProjects().catch(() => []);
+    // Restoring never overwrites what is here: a project already in the
+    // library keeps the copy you have been working on.
+    const fresh = restorable(projects, existing.map((p) => p.id));
+    if (!fresh.length) { say(`All ${projects.length} project(s) in that file are already in the library.`); return; }
+    let added = 0;
+    for (const p of fresh) {
+      try { await putProject(p); added++; }
+      catch (err) { console.error('[tik] could not restore a project:', err, { id: p.id }); }
+    }
+    const skipped = projects.length - fresh.length;
+    say(`Restored ${added} project${added === 1 ? '' : 's'}.`
+      + (skipped ? ` ${skipped} were already here and were left alone.` : ''));
+    await renderLibrary();
+  } catch (err) {
+    console.error('[tik] restoring the library failed:', err);
+    say(err.message);
+  } finally {
+    els.backupLoad.disabled = false;
+  }
+});
+
+// ---- Posts made before the studio existed ----
+//
+// Two dozen TikToks went out before any of this was recording what it made.
+// They are real posts and they belong in the library: in the list, in the
+// cadence numbers, and in the "already covered" list the batch picker reads off
+// the library. This pulls them from TikTok and writes one thin record each.
+els.importPosts.addEventListener('click', async () => {
+  if (!isSignedIn()) { alert('Sign in to TikTok first.'); return; }
+  if (!storageAvailable()) { alert('The local library is unavailable, so there is nowhere to put them.'); return; }
+  const token = getRefreshToken();
+  if (!token) { alert('Sign in to TikTok first.'); return; }
+  els.importPosts.disabled = true;
+  const say = (msg) => { els.reportsHint.textContent = msg; };
+  try {
+    say('Reading your TikTok posts…');
+    const res = await fetch('/.netlify/functions/tik-history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: token }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Could not read your posts (${res.status})`);
+    if (data.scope === 'missing') {
+      console.warn('[tik] import needs the video.list scope', { hint: data.hint });
+      say(`${data.error} ${data.hint || ''}`.trim());
+      return;
+    }
+    const rows = Array.isArray(data.rows) ? data.rows : [];
+    if (!rows.length) { say('TikTok returned no posts for this account.'); return; }
+
+    const existing = await listProjects().catch((e) => {
+      console.error('[tik] could not read the library before importing:', e);
+      return [];
+    });
+    const fresh = newImports(rows, existing);
+    if (!fresh.length) {
+      say(`Read ${rows.length} post${rows.length === 1 ? '' : 's'} — the library already has all of them.`);
+      return;
+    }
+    let added = 0;
+    let covers = 0;
+    for (const [i, row] of fresh.entries()) {
+      say(`Importing ${i + 1} of ${fresh.length}…`);
+      // The cover is the post's first slide. Its CDN address expires in days,
+      // so the bytes get stored, not the link — and a cover that will not come
+      // down is a missing picture, never a missing post.
+      let thumb = null;
+      if (row.cover) {
+        try {
+          const img = await fetch(`/.netlify/functions/tik-cover?url=${encodeURIComponent(row.cover)}`);
+          if (img.ok) { thumb = await img.blob(); covers++; }
+          else console.warn('[tik] cover unavailable for an imported post', { id: row.id, status: img.status });
+        } catch (e) {
+          console.warn('[tik] cover fetch failed for an imported post:', e, { id: row.id });
+        }
+      }
+      try {
+        await putProject(importedProject(row, { id: uuid(), thumb }));
+        added++;
+      } catch (e) {
+        console.error('[tik] could not save an imported post:', e, { id: row.id });
+      }
+    }
+    const unnamed = fresh.filter((r) => !r.movie).length;
+    say(`Added ${added} past post${added === 1 ? '' : 's'} to the library, ${covers} with their cover.`
+      + (unnamed ? ` ${unnamed} had no film in the title, so they count as posts but not as coverage.` : ''));
+    await renderLibrary();
+  } catch (e) {
+    console.error('[tik] importing past posts failed:', e);
+    say(e.message);
+  } finally {
+    els.importPosts.disabled = false;
+  }
+});
+
 // ---- Remembered movie file (batch mode's folder grant) ----
 // When a reopened trivia project's file is remembered (the movies folder, or a
 // past pick in batch mode), offer a one-click reload. The File is injected
@@ -880,7 +1230,7 @@ els.connectHistoryBtn.addEventListener('click', async () => {
 async function offerRememberedReload() {
   els.videoReload.classList.add('hidden');
   try {
-    if (!fsSupported() || !project || project.format !== 'trivia' || videoReady) return;
+    if (!fsSupported() || !project || !isMovieFileFormat() || videoReady) return;
     const title = project.movie?.title;
     if (!title) return;
     const openedFor = project.id;
@@ -917,11 +1267,327 @@ async function offerRememberedReload() {
 els.file.addEventListener('change', () => els.videoReload.classList.add('hidden'));
 els.triviaSeedShow.addEventListener('click', () => { seedForced = !seedForced; syncSeedControls(); });
 
+// ================= Two frames on one slide =================
+//
+// A Quote-a-long middle slide can hold two grabs, for the setup and the payoff
+// of an exchange. Only the middle ones: the opener is a title card and the
+// sign-off is house art, and neither has a second half.
+//
+// The two source frames live on the slide and the composite is rebuilt from
+// them, so switching layout is not a re-grab. Same shape as the Some Guys
+// mosaic, and for the same reason.
+function canPairSlide(slide) {
+  return project?.format === 'quotes' && slide && slide.kind !== 'title' && !isOutroSlide(slide);
+}
+
+// The grab button REPLACES by default and always has; that is the muscle
+// memory. Adding is opt-in per grab, and disarms itself the moment it fires so
+// the next grab behaves the way every other grab in the app does.
+let pairArmed = false;
+
+function syncPairArm() {
+  const slide = grabTarget();
+  const usable = !!(project?.format === 'quotes' && slide && canPairSlide(slide) && slide.bitmap);
+  els.pairArmWrap.classList.toggle('hidden', !usable);
+  els.pairArmWrap.classList.toggle('flex', usable);
+  if (!usable && pairArmed) { pairArmed = false; els.pairArm.checked = false; }
+  const paired = !!slide?.pairFrames?.length;
+  els.pairArmLabel.textContent = paired ? 'Replace 2nd frame' : 'Add 2nd frame';
+  els.pairArmWrap.title = paired
+    ? 'The next grab replaces the second frame instead of the whole slide'
+    : 'Keep this slide’s current frame and add the next grab beside it';
+}
+
+els.pairArm.addEventListener('change', () => {
+  pairArmed = els.pairArm.checked;
+  const slide = grabTarget();
+  if (pairArmed) {
+    els.status.textContent = slide?.pairFrames?.length
+      ? 'Next grab replaces the second frame.'
+      : 'Next grab lands beside this slide’s frame. Grab as normal.';
+  }
+});
+
+// Build (or rebuild) a slide's composite from its two source frames.
+async function applyPair(id, frames, layout) {
+  const slide = slides.find((s) => s.id === id);
+  if (!slide || frames.length < 2) return false;
+  const ticket = project?.id;
+  try {
+    const bitmap = await composePair(frames, layout);
+    if (project?.id !== ticket) return false;
+    const old = slide.bitmap;
+    slides = slides.map((sl) => (sl.id === id
+      ? { ...sl, bitmap, blob: null, pairFrames: frames, pairLayout: pairLayoutOf(layout) }
+      : sl));
+    old?.close?.();
+    return true;
+  } catch (e) {
+    console.error('[tik] pairing the frames failed:', e);
+    els.status.textContent = 'Couldn’t put the two frames together.';
+    return false;
+  }
+}
+
+async function togglePairLayout(id) {
+  const slide = slides.find((s) => s.id === id);
+  if (!slide?.pairFrames?.length) return;
+  const next = otherLayout(slide.pairLayout);
+  if (await applyPair(id, slide.pairFrames, next)) {
+    render();
+    markDirty();
+    els.status.textContent = `${PAIR_LAYOUT_LABELS[next]}.`;
+  }
+}
+
+// ================= Frame correction =================
+//
+// Films are dark. A grabbed still often needs a lift before a caption sits on
+// it legibly, and doing that here beats re-grabbing and hoping.
+//
+// Correction is stored on the slide as multipliers rather than baked into the
+// pixels, so every step is reversible and repeatable — and it is applied from
+// the slide's own row, never from a toolbar that has to guess which slide is
+// meant. Guessing is what made a zoom land on a slide the user was not looking
+// at, and made the reset appear not to work: both hit the last slide in the set.
+//
+// This one still guesses, and has to: it answers "which slide will the next
+// GRAB act on", which is a question about a button that has no slide of its own.
+function grabTarget() {
+  if (editingId) return slides.find((s) => s.id === editingId) || null;
+  return slides.length ? slides[slides.length - 1] : null;
+}
+
+// Measure the frame so Auto has something to stretch against.
+//
+// Sampled small and on a stride: a full 1080p read is two million pixels for a
+// number that only needs to be roughly right, and this runs on a click.
+function measureLevels(bitmap) {
+  const W = 160;
+  const H = Math.max(1, Math.round((bitmap.height / bitmap.width) * W));
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0, W, H);
+  const d = ctx.getImageData(0, 0, W, H).data;
+  const hist = new Array(256).fill(0);
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    // Rec. 601 luma is close enough for deciding how dark a frame is.
+    hist[(d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0]++;
+    n++;
+  }
+  // Percentiles, not min and max: one specular highlight or one crushed pixel
+  // would otherwise decide the stretch for the whole frame.
+  const at = (p) => {
+    let seen = 0;
+    const want = n * p;
+    for (let v = 0; v < 256; v++) { seen += hist[v]; if (seen >= want) return v / 255; }
+    return 1;
+  };
+  return { black: at(0.01), white: at(0.99) };
+}
+
+// The pair checkbox is the only frame control left in the video toolbar, and it
+// is about the NEXT grab, not about a slide. Correction moved to the slides.
+function syncGrabControls() {
+  syncPairArm();
+}
+
+// Which slide the open correction menu belongs to. Set when a slide's own
+// Adjust button opens it, and null the rest of the time — there is no such
+// thing as adjusting without a slide in hand.
+let adjustSlideId = null;
+let adjustOpenBtn = null;
+
+function closeAdjustMenu() {
+  els.adjustMenu.classList.add('hidden');
+  // Back to its home before the next render tears the slide list down and
+  // takes the menu with it.
+  if (els.adjustMenu.parentElement !== els.adjustHome) els.adjustHome.appendChild(els.adjustMenu);
+  adjustSlideId = null;
+  adjustOpenBtn = null;
+}
+
+function renderAdjustMenu(target) {
+  els.adjustMenu.innerHTML = '';
+  for (const preset of PRESETS) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'block w-full px-3 py-2 text-left hover:bg-neutral-800';
+    const label = document.createElement('span');
+    label.className = 'block text-sm font-semibold text-neutral-100';
+    label.textContent = preset.label;
+    const hint = document.createElement('span');
+    hint.className = 'block text-[11px] leading-snug text-neutral-500';
+    hint.textContent = preset.hint;
+    item.append(label, hint);
+    if (preset.key === 'reset' && isNeutral(target.adjust)) item.disabled = true;
+    if (item.disabled) item.classList.add('opacity-40');
+    else item.addEventListener('click', () => applyAdjust(target.id, preset.key));
+    els.adjustMenu.appendChild(item);
+  }
+}
+
+function applyAdjust(id, key) {
+  const target = slides.find((s) => s.id === id);
+  if (!target) return;
+  // Auto is the only one that has to look at the picture.
+  const levels = key === 'auto' ? autoLevels(measureLevels(target.bitmap)) : null;
+  const next = applyPreset(target.adjust || NEUTRAL, key, levels);
+  slides = slides.map((s) => (s.id === id ? { ...s, adjust: next, blob: null } : s));
+  closeAdjustMenu();
+  render();
+  markDirty();
+  const summary = describeAdjust(next);
+  const which = `Slide ${slides.findIndex((s) => s.id === id) + 1}`;
+  els.status.textContent = summary
+    ? `${which} corrected: ${summary}.`
+    : `${which} back to how it was grabbed.`;
+}
+
+// Hang the menu off this slide's own button. One menu element, moved to
+// whichever row asked for it, so it can only ever act on the slide it is
+// visibly attached to.
+function openAdjustMenu(target, btn, wrap) {
+  const reopen = adjustSlideId === target.id && !els.adjustMenu.classList.contains('hidden');
+  closeAdjustMenu();
+  if (reopen) return;
+  adjustSlideId = target.id;
+  adjustOpenBtn = btn;
+  renderAdjustMenu(target);
+  wrap.appendChild(els.adjustMenu);
+  els.adjustMenu.classList.remove('hidden');
+}
+
+// Same lesson as the batch search box: a menu that will not close is its own
+// bug, and pointerdown does not depend on focus behaving.
+document.addEventListener('pointerdown', (e) => {
+  if (els.adjustMenu.classList.contains('hidden')) return;
+  if (els.adjustMenu.contains(e.target) || adjustOpenBtn?.contains(e.target)) return;
+  closeAdjustMenu();
+});
+
 // ================= Full-slide preview =================
 // The thumbnail is 72px wide, which is enough to spot a missing frame and not
 // enough to judge a line break. This renders the same composed slide big, from
 // the same code path the upload uses, so what you tune is what ships.
 const PREVIEW_MODAL_SCALE = 0.5;
+
+// ---- Previewing a scene, and trimming it ----
+//
+// In the video format a slide is not a still: it is a span of film. Showing the
+// frozen frame tells you nothing about whether the line finishes inside it,
+// which is exactly the thing that needs checking. So the preview PLAYS the
+// span, on a loop, through the same compose code the clip uses — and the two
+// buttons under it move each end half a second or a second at a time.
+let previewLoop = null;   // { id, timer, wasMuted } while a scene is looping
+
+function stopPreviewLoop() {
+  if (!previewLoop) return;
+  clearInterval(previewLoop.timer);
+  try { els.video.pause(); } catch { /* already stopped */ }
+  els.video.muted = previewLoop.wasMuted;
+  previewLoop = null;
+}
+
+// The span this slide would contribute to the clip, trim included.
+function previewWindow(slide) {
+  if (!slide || project?.format !== 'quotes') return null;
+  const duration = videoReady ? els.video.duration : 0;
+  const index = slides.findIndex((s) => s.id === slide.id);
+  if (isOutroSlide(slide)) return null;             // the sign-off is a held card
+  if (isIntroSlide(slide, index, project?.format)) return titleWindow(slide, { duration });
+  return sceneWindow(slide, { duration });
+}
+
+function syncTrimControls(slide, win) {
+  const on = !!win && videoOutput() && videoReady;
+  els.clipTrim.classList.toggle('hidden', !on);
+  els.clipTrim.classList.toggle('flex', on);
+  if (!on) return;
+  const len = (win.end - win.start).toFixed(1);
+  const hand = describeTrim(slide);
+  els.trimSpan.textContent = `${formatTimecode(win.start)} – ${formatTimecode(win.end)} · ${len}s${hand ? ` · ${hand}` : ''}`;
+  els.trimReset.disabled = !isTrimmed(slide);
+  els.trimReset.classList.toggle('opacity-40', !isTrimmed(slide));
+  for (const button of els.clipTrim.querySelectorAll('[data-trim-edge]')) {
+    const trim = nudgeTrim(slide, button.dataset.trimEdge, Number(button.dataset.trimDir), Number(button.dataset.trimStep));
+    const next = previewWindow({ ...slide, trim });
+    button.disabled = !next || (Math.abs(next.start - win.start) < 0.001 && Math.abs(next.end - win.end) < 0.001);
+    button.classList.toggle('opacity-40', button.disabled);
+  }
+}
+
+// Loop the span, drawing the full composed slide every frame.
+function playPreviewScene(slide, win) {
+  stopPreviewLoop();
+  const loop = { id: slide.id, timer: null, wasMuted: els.video.muted };
+  previewLoop = loop;
+  const byKaraoke = () => karaokeState(els.video.currentTime, slide.cue, slide.caption);
+  const draw = () => composeToCanvas(els.slidePreviewCanvas, els.video, slide.caption, {
+    titleLine: currentTitleLine(),
+    scale: PREVIEW_MODAL_SCALE,
+    fontScale: slide.fontScale || 1,
+    maxFrameHeightRatio: frameHeightRatio(),
+    format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0,
+    captionStyle: captionStyleNow(),
+    karaokeState: isIntroSlide(slide, slides.indexOf(slide), project?.format) ? null : byKaraoke(),
+  });
+  const restart = () => {
+    els.video.currentTime = win.start;
+    els.video.play().catch((e) => {
+      // A quick nudge cancels the previous play() promise. Its rejection must
+      // not mute or restart the replacement preview.
+      if (previewLoop !== loop || e.name === 'AbortError') return;
+      // A browser can refuse to play audio without a gesture. Motion is the
+      // point here, so fall back to a silent loop rather than a frozen frame.
+      console.warn('[tik] preview playback refused with sound; retrying muted:', e);
+      els.video.muted = true;
+      els.video.play().catch((e2) => console.error('[tik] preview would not play at all:', e2));
+    });
+  };
+  // Out loud: the whole question here is whether the line finishes inside the
+  // span, and that is a question about the audio.
+  els.video.muted = false;
+  restart();
+  loop.timer = setInterval(() => {
+    draw();
+    if (els.video.currentTime >= win.end || els.video.ended) restart(); // loop the span
+  }, 1000 / 30);
+}
+
+function nudgePreview(edge, dir, step = 1) {
+  const slide = slides.find((s) => s.id === previewLoop?.id) || null;
+  if (!slide) return;
+  const trim = nudgeTrim(slide, edge, dir, step);
+  const previous = previewWindow(slide);
+  const win = previewWindow({ ...slide, trim });
+  if (!win || (previous && Math.abs(win.start - previous.start) < 0.001 && Math.abs(win.end - previous.end) < 0.001)) return;
+  slide.trim = trim;
+  slides = slides.map((s) => (s.id === slide.id ? { ...s, trim } : s));
+  markDirty();          // also marks any rendered clip stale
+  syncTrimControls(slide, win);
+  playPreviewScene(slide, win);   // restart on the new span so the change is audible
+  els.status.textContent = `Scene ${(win.end - win.start).toFixed(1)}s. Render again to put it in the clip.`;
+}
+
+for (const button of els.clipTrim.querySelectorAll('[data-trim-edge]')) {
+  button.addEventListener('click', () => nudgePreview(
+    button.dataset.trimEdge, Number(button.dataset.trimDir), Number(button.dataset.trimStep),
+  ));
+}
+els.trimReset.addEventListener('click', () => {
+  const slide = slides.find((s) => s.id === previewLoop?.id);
+  if (!slide) return;
+  slide.trim = null;
+  slides = slides.map((s) => (s.id === slide.id ? { ...s, trim: null } : s));
+  markDirty();
+  const win = previewWindow(slide);
+  if (win) { syncTrimControls(slide, win); playPreviewScene(slide, win); }
+  els.status.textContent = 'Scene back to its matched span.';
+});
+
 function openSlidePreview(slide) {
   captionFontReady().then(() => {
     composeToCanvas(els.slidePreviewCanvas, slide.bitmap, slide.caption, {
@@ -929,6 +1595,8 @@ function openSlidePreview(slide) {
       scale: PREVIEW_MODAL_SCALE,
       fontScale: slide.fontScale || 1,
       maxFrameHeightRatio: frameHeightRatio(),
+      format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0,
+    captionStyle: captionStyleNow(),
     });
     const idx = slides.findIndex((s) => s.id === slide.id);
     const scale = Math.round((slide.fontScale || 1) * 100);
@@ -936,9 +1604,15 @@ function openSlidePreview(slide) {
       `Slide ${idx + 1} of ${slides.length} · text ${scale}%${scale === 100 ? ' (auto)' : ''}`;
     els.slidePreview.classList.remove('hidden');
     els.slidePreview.classList.add('flex');
+    // Video format: this slide is a span of film, so play it rather than
+    // showing the frame it happens to start on.
+    const win = videoOutput() && videoReady ? previewWindow(slide) : null;
+    syncTrimControls(slide, win);
+    if (win) playPreviewScene(slide, win); else stopPreviewLoop();
   }).catch((e) => console.error('[tik] slide preview failed:', e));
 }
 function closeSlidePreview() {
+  stopPreviewLoop();
   els.slidePreview.classList.add('hidden');
   els.slidePreview.classList.remove('flex');
 }
@@ -953,6 +1627,11 @@ document.addEventListener('keydown', (e) => {
 // Current count from TikTok when signed in (snapshotted at most hourly);
 // the accumulated series renders as a line chart once it has 2+ days.
 let lastStatsSeries = null;
+// When each post went out, in ms, for the dots on the follower line. Cached
+// alongside the series so a redraw (style toggle, resize) does not re-ask
+// TikTok — and stays an empty list when the history is not connected, which
+// simply means no dots rather than a broken chart.
+let lastPostTimes = [];
 
 // 'history' (what happened, with the fitted trend) or 'forecast' (both paces
 // extended into dated future). The milestone table only belongs to the latter.
@@ -965,6 +1644,7 @@ function drawStats(series, { animate = false } = {}) {
   if (!series?.length) return;
   renderFollowerChart(els.statsChart, series, els.statsTip, {
     mode: statsMode, style: statsStyle, legendEl: els.statsLegend, animate,
+    posts: lastPostTimes,
   });
   for (const btn of els.statsStyles.querySelectorAll('button')) {
     const on = btn.dataset.style === statsStyle;
@@ -995,6 +1675,23 @@ els.statsModes.addEventListener('click', (e) => {
   statsMode = btn.dataset.mode;
   drawStats(lastStatsSeries, { animate: true });
 });
+// Post dates for the chart's dots. Shares loadPosts()'s cache with the tag
+// report and the cadence row, so this is not a third call to TikTok. A failure
+// is not fatal: no dots is a fine chart.
+async function loadPostTimes() {
+  if (!isSignedIn() || tagReportScopeMissing) return [];
+  try {
+    const data = await loadPosts();
+    if (data.scope === 'missing') return [];
+    return (data.posts || [])
+      .map((p) => Number(p?.created) * 1000)
+      .filter((t) => Number.isFinite(t) && t > 0);
+  } catch (e) {
+    console.warn('[tik] post dates for the chart unavailable:', e);
+    return [];
+  }
+}
+
 async function refreshStatsCard() {
   refreshTagReport(); // non-blocking, separate scope, handles its own errors
   try {
@@ -1020,6 +1717,13 @@ async function refreshStatsCard() {
       // Render on the next frame so layout reflects the just-unhidden plot —
       // measuring too early bakes a 0-width fallback into the raster.
       requestAnimationFrame(() => drawStats(series, { animate: true }));
+      // The dots arrive on their own schedule; redraw when they do rather than
+      // holding the whole chart behind a TikTok call.
+      loadPostTimes().then((times) => {
+        if (!times.length || lastStatsSeries !== series) return;
+        lastPostTimes = times;
+        drawStats(series);
+      });
     } else {
       els.statsPlot.classList.add('hidden');
       lastStatsSeries = null;
@@ -1197,7 +1901,10 @@ async function refreshTagReport() {
 // hand in the app while finishing the draft.
 function renderSongPicks() {
   const songs = project?.postMeta?.songs || [];
-  const show = project?.format === 'trivia' && songs.length > 0;
+  // Any format whose writing call returns song picks, not just trivia. The
+  // panel is driven by whether there ARE picks, so a format that does not ask
+  // for them simply never shows it.
+  const show = songs.length > 0;
   els.songPicks.classList.toggle('hidden', !show);
   // Picks buried in a collapsed panel are picks nobody uses: badge the summary
   // so they are visible without expanding, and open it once when they arrive.
@@ -1219,7 +1926,9 @@ let statsResizeTimer = null;
 window.addEventListener('resize', () => {
   if (!lastStatsSeries || els.home.classList.contains('hidden')) return;
   clearTimeout(statsResizeTimer);
-  statsResizeTimer = setTimeout(() => renderFollowerChart(els.statsChart, lastStatsSeries, els.statsTip), 150);
+  statsResizeTimer = setTimeout(() => renderFollowerChart(els.statsChart, lastStatsSeries, els.statsTip, {
+    mode: statsMode, style: statsStyle, legendEl: els.statsLegend, posts: lastPostTimes,
+  }), 150);
 });
 
 // A drop that misses a slide card must not navigate the tab away to the
@@ -1266,6 +1975,7 @@ els.authBtn.addEventListener('click', async () => {
 els.file.addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   if (!file || !project) return;
+  filmFileName = file.name; // the ffmpeg fix-up command names this exact file
   movie = parseMovieName(file.name);
   project.movie = movie;
   if (!project.name) {
@@ -1273,12 +1983,22 @@ els.file.addEventListener('change', async (e) => {
     els.projectName.value = movie.query;
   }
   syncPostDefaults();
+  showFix(els.fileFix, null); // a new pick clears the last file's complaint
   try {
     await loadVideoFile(file, els.video);
     els.status.textContent = `Loaded ${movie.query}. Scrub and grab frames, or run Autopilot.`;
   } catch (err) {
     console.error('[tik] failed to load video file:', err);
     els.status.textContent = err.message;
+    // Same deal as the Shoot page: a file the browser cannot open is a codec,
+    // not a mystery, so hand over the command that makes a copy it can read.
+    if (/can.t decode/i.test(err.message)) {
+      showFix(els.fileFix, {
+        note: NO_DECODE_NOTE,
+        label: 'Re-encode it (both streams, so give it a while)',
+        command: ffmpegH264Command(file.name),
+      });
+    }
   }
   markDirty();
 });
@@ -1307,15 +2027,41 @@ els.grab.addEventListener('click', async () => {
   try {
     await awaitSeekSettled(els.video); // don't grab a stale frame mid-seek
     const bitmap = await grabFrame(els.video);
+
+    // Opted in for this grab only: keep what is there and put this beside it.
+    const pairTarget = pairArmed ? grabTarget() : null;
+    if (pairTarget && canPairSlide(pairTarget) && pairTarget.bitmap) {
+      pairArmed = false;
+      els.pairArm.checked = false;
+      const shot = await bitmapToBlob(bitmap);
+      bitmap.close?.();
+      // Already a pair? This replaces its SECOND frame, so a bad second grab
+      // costs one grab rather than the whole slide.
+      const first = pairTarget.pairFrames?.[0] || await frameBlobFor(pairTarget);
+      const layout = pairLayoutOf(pairTarget.pairLayout);
+      if (await applyPair(pairTarget.id, [first, shot], layout)) {
+        if (editingId === pairTarget.id) exitEdit(); else render();
+        syncGrabControls();
+        markDirty();
+        els.status.textContent = `Two frames on this slide, ${PAIR_LAYOUT_LABELS[layout].toLowerCase()}. Use the slide's own button to switch.`;
+      }
+      return;
+    }
+
     if (editingId) {
       slides = updateSlideFrame(slides, editingId, bitmap, els.video.currentTime);
-      slides = slides.map((s) => (s.id === editingId ? { ...s, blob: null } : s));
+      // A replace is a replace: whatever pairing was on this slide is gone,
+      // which is also the only way back to a single frame.
+      slides = slides.map((s) => (s.id === editingId ? { ...s, blob: null, pairFrames: null, pairLayout: null } : s));
       exitEdit();
+      syncGrabControls();
       els.status.textContent = 'Frame updated.';
     } else {
       if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
-      slides = addSlide(slides, { id: String(nextId++), bitmap, blob: null, caption: '', timecode: els.video.currentTime, fontScale: 1 });
+      // Same rule as the Add button: a new frame belongs before the sign-off.
+      slides = addSlideBeforeOutro(slides, { id: String(nextId++), bitmap, blob: null, caption: '', timecode: els.video.currentTime, fontScale: 1 }, isOutroSlide);
       render();
+      syncGrabControls();
     }
     markDirty();
   } catch (err) { console.error('[tik] grab failed:', err); els.status.textContent = err.message; }
@@ -1329,20 +2075,55 @@ els.autopilot.addEventListener('click', async () => {
   setAiBusy(true);
   const ticket = project?.id; // bail if the user opens another project mid-job
   try {
-    els.status.textContent = `Researching ${movie.query || 'the film'}…`;
-    // If the starter box holds a list of pasted facts, make one slide per fact
-    // (capped); otherwise the default 5. Title slide is always added on top.
-    const guidance = els.autopilotPrompt.value.trim();
-    const pasteItems = guidance.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
-    const count = pasteItems.length >= 2 ? Math.min(pasteItems.length, 12) : 5;
-    // Same call writes the post's own copy (hook, film hashtags, songs). Doing
-    // it here rather than in a second call is what lets the prompt forbid the
-    // hook from spoiling a fact: the model has the captions it just wrote.
-    const { suggestions: scenes, meta } = await fetchTriviaPost({
-      title: movie.title, year: movie.year, durationSeconds: els.video.duration,
-      count, includeTitleSlide: true, includeMeta: true, guidance,
-      onProgress: (m) => { els.status.textContent = `Researching ${movie.query || 'the film'} — ${m}`; },
-    });
+    const quotesMode = project.format === 'quotes';
+    const duration = els.video.duration;
+    let scenes;
+    let meta;
+    let subMissing = false;
+    if (quotesMode) {
+      els.status.textContent = 'Fetching IMDb quotes…';
+      const pack = await fetchImdbQuotes({ query: movie.title || movie.query, year: movie.year });
+      if (!pack.quotes?.length) throw new Error('IMDb has no quotes for this title.');
+      els.status.textContent = 'Fetching English subtitles…';
+      const subs = await fetchSubtitles({ imdbId: pack.movie?.id, query: movie.title, year: movie.year });
+      subMissing = !!subs.missing;
+      // Keep the REASON on the project, not just in a status line that the next
+      // message overwrites. A whole set of guessed timecodes with no
+      // explanation anywhere is how a broken install passes for a bad matcher.
+      project.subsError = subMissing ? (subs.error || 'Subtitle lookup failed') : null;
+      const pool = pack.quotes.slice(0, QUOTES_POOL);
+      const result = await fetchQuotesPost({
+        title: movie.title || movie.query,
+        year: movie.year,
+        durationSeconds: duration,
+        count: QUOTES_COUNT,
+        quotes: pool,
+        cues: subs.cues,
+        includeTitleSlide: true,
+        includeMeta: true,
+        guidance: els.autopilotPrompt?.value || '',
+        onProgress: (msg) => { els.status.textContent = msg; },
+      });
+      scenes = result.suggestions;
+      meta = result.meta;
+    } else {
+      els.status.textContent = `Researching ${movie.query || 'the film'}…`;
+      // If the starter box holds a list of pasted facts, make one slide per fact
+      // (capped); otherwise the default 5. Title slide is always added on top.
+      const guidance = els.autopilotPrompt.value.trim();
+      const pasteItems = guidance.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+      const count = pasteItems.length >= 2 ? Math.min(pasteItems.length, 12) : 5;
+      // Same call writes the post's own copy (hook, film hashtags, songs). Doing
+      // it here rather than in a second call is what lets the prompt forbid the
+      // hook from spoiling a fact: the model has the captions it just wrote.
+      const result = await fetchTriviaPost({
+        title: movie.title, year: movie.year, durationSeconds: duration,
+        count, includeTitleSlide: true, includeMeta: true, guidance,
+        onProgress: (m) => { els.status.textContent = `Researching ${movie.query || 'the film'} — ${m}`; },
+      });
+      scenes = result.suggestions;
+      meta = result.meta;
+    }
     if (project?.id === ticket && meta) {
       project.postMeta = meta;
       syncPostDefaults();  // no-op once the user has hand-edited the copy
@@ -1354,9 +2135,13 @@ els.autopilot.addEventListener('click', async () => {
       if (!canAddSlide(slides)) break;
       els.status.textContent = `Grabbing frame ${i + 1}/${scenes.length}…`;
       const bitmap = await grabAt(scenes[i].timecode);
+      const caption = scenes[i].caption;
       slides = addSlide(slides, {
         id: String(nextId++), bitmap, blob: null,
-        caption: scenes[i].caption, timecode: scenes[i].timecode, grabHint: scenes[i].grab || '', fontScale: 1,
+        caption, timecode: scenes[i].timecode, grabHint: scenes[i].grab || '',
+        // Only when applyCueTimes actually matched it — a model guess is not a cue.
+        cue: scenes[i].matched ? (scenes[i].cue || { start: scenes[i].start, end: scenes[i].end }) : null,
+        fontScale: quotesMode ? (i === 0 ? 1 : fontScaleForQuote(caption)) : 1,
         // includeTitleSlide above means the first item is the intro, not a
         // fact. Marking it is what lets its editor buttons differ from a
         // fact's — an unmarked intro gets rewritten as another fact.
@@ -1365,6 +2150,7 @@ els.autopilot.addEventListener('click', async () => {
       added++;
     }
     // Cap off with the branded outro (logo + follow CTA). Never fatal.
+    // pickOutro(project.format) so quotes get "more movie quotes".
     if (project?.id !== ticket) return;
     let outroAdded = false;
     if (added > 0 && canAddSlide(slides)) {
@@ -1377,6 +2163,11 @@ els.autopilot.addEventListener('click', async () => {
     markDirty();
     if (added === 0) {
       els.status.textContent = `Slide cap reached (${MAX_SLIDES}) — nothing added.`;
+    } else if (quotesMode) {
+      const quotes = added - 1; // first added slide is the title slide
+      renderSubsNote();
+      const guessNote = subMissing ? ' — no subtitles, every time is a guess' : '';
+      els.status.textContent = `Added a title slide + ${quotes} quote${quotes === 1 ? '' : 's'}${outroAdded ? ' + outro' : ''}${guessNote} — verify captions & frames, then post.`;
     } else {
       const trivia = added - 1; // first added slide is the title slide
       els.status.textContent = `Added a title slide + ${trivia} AI scene${trivia === 1 ? '' : 's'}${outroAdded ? ' + outro' : ''} — verify the trivia, tweak captions & frames, then post.`;
@@ -1388,6 +2179,46 @@ els.autopilot.addEventListener('click', async () => {
     setAiBusy(false);
   }
 });
+
+// ---- Add one slide by hand, at the current frame ----
+//
+// The agent is not always the one who knows the quote. This grabs the playhead
+// frame, drops the slide in ahead of the sign-off, and puts the cursor in its
+// caption box so the line can be typed straight away.
+els.addManual.addEventListener('click', async () => {
+  if (!videoReady) { els.status.textContent = 'Load a video first.'; return; }
+  if (!canAddSlide(slides)) { els.status.textContent = `Max ${MAX_SLIDES} slides.`; return; }
+  const quotes = project?.format === 'quotes';
+  try {
+    if (editingId) exitEdit(); // a hand-added slide is a new one, never a re-grab
+    await awaitSeekSettled(els.video); // don't grab a stale frame mid-seek
+    const bitmap = await grabFrame(els.video);
+    const id = String(nextId++);
+    slides = addSlideBeforeOutro(slides, {
+      id, bitmap, blob: null, caption: '', timecode: els.video.currentTime, grabHint: '', fontScale: 1,
+    }, isOutroSlide);
+    render();
+    syncGrabControls();
+    markDirty();
+    focusSlideCaption(id);
+    els.status.textContent = quotes
+      ? 'Blank slide added at this frame — type the quote.'
+      : 'Blank slide added at this frame — write it.';
+  } catch (err) {
+    console.error('[tik] manual add failed:', err);
+    els.status.textContent = err.message;
+  }
+});
+
+// Put the cursor in a slide's caption box and bring the row into view. A new
+// blank slide is added to be typed into, and on a long set it lands off-screen.
+function focusSlideCaption(id) {
+  const thumb = els.list.querySelector(`canvas[data-thumb="${CSS.escape(String(id))}"]`);
+  const ta = thumb?.closest('li')?.querySelector('textarea');
+  if (!ta) return;
+  ta.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  ta.focus();
+}
 
 // ---- Add one more AI scene (with context so it doesn't repeat) ----
 els.addScene.addEventListener('click', async () => {
@@ -1543,7 +2374,7 @@ els.writeBlurbs.addEventListener('click', async () => {
     const next = [];
     // Title slide: the actor's name card; paste a good photo of the guy over it.
     const titleBitmap = await makeCardBitmap({
-      heading: project.actor, sub: 'Remembering some guys', hint: 'Paste 2–4 photos for a mosaic', accent: GUYS_ACCENT,
+      heading: project.actor, sub: 'Remembering some guys', hint: 'Paste one photo, or 2–4 to tile them', accent: GUYS_ACCENT,
     });
     next.push({
       id: String(nextId++), bitmap: titleBitmap, blob: null,
@@ -1570,9 +2401,94 @@ els.writeBlurbs.addEventListener('click', async () => {
     slides = next;
     render();
     markDirty();
-    els.status.textContent = 'Slides ready — the opener takes 2–4 photos as a mosaic; other slides take one photo of the guy. Click a slide, then paste, drop, or pick. Captions are editable.';
+    els.status.textContent = 'Slides ready — the opener takes one photo whole, or 2–4 tiled; other slides take one photo of the guy. Click a slide, then paste, drop, or pick. Captions are editable.';
   } catch (err) {
     console.error('[tik] write blurbs failed:', err);
+    els.status.textContent = err.message;
+  } finally {
+    setAiBusy(false);
+  }
+});
+
+// ================= Freeform =================
+//
+// One brief, one call, a whole set. Some Guys needs two rounds because IMDb
+// supplies the roles and the user picks among them; here the prompt IS the
+// brief, so there is nothing to choose between and nothing to wait for twice.
+//
+// Every slide lands as a placeholder card carrying its own image-search term,
+// because on this format the pictures are the whole job.
+const FREEFORM_ACCENT = '#a3e635';
+const FREEFORM_MIN = 3;
+const FREEFORM_MAX = 15;
+const FREEFORM_DEFAULT = 8;
+
+function syncFreeformCount() {
+  const want = Number(project?.freeformCount) || FREEFORM_DEFAULT;
+  if (!els.freeformCount.options.length) {
+    for (let n = FREEFORM_MIN; n <= FREEFORM_MAX; n++) {
+      els.freeformCount.appendChild(new Option(`${n}`, String(n)));
+    }
+  }
+  els.freeformCount.value = String(Math.min(FREEFORM_MAX, Math.max(FREEFORM_MIN, want)));
+}
+
+els.freeformWrite.addEventListener('click', async () => {
+  if (aiBusy || !project) return;
+  const topic = els.freeformTopic.value.trim();
+  if (!topic) { els.status.textContent = 'Say what the set is about first.'; els.freeformTopic.focus(); return; }
+  const count = Number(els.freeformCount.value) || FREEFORM_DEFAULT;
+  setAiBusy(true);
+  const ticket = project.id; // bail if the user opens another project mid-job
+  try {
+    els.status.textContent = `Writing ${count} slides…`;
+    const { title, intro, items, meta } = await fetchFreeform({
+      topic, count, includeMeta: true,
+      onProgress: (m) => { els.status.textContent = `Writing the set — ${m}`; },
+    });
+    if (project?.id !== ticket) return;
+
+    project.topic = topic;
+    project.freeformCount = count;
+    // The agent names the set; the brief is the fallback so a project is never
+    // called "Untitled" in the library.
+    if (!project.name?.trim()) project.name = title || topic.slice(0, 60);
+    els.projectName.value = project.name;
+    if (meta) { project.postMeta = meta; syncPostDefaults(); renderSongPicks(); }
+
+    resetEditState();  // the selected slide is about to be replaced wholesale
+    pickTargetId = null;
+    slides.forEach((s) => s.bitmap?.close?.());
+    const next = [];
+    next.push({
+      id: String(nextId++), bitmap: await makeCardBitmap({
+        heading: title || project.name, sub: 'VHS Garage', hint: 'Paste, drop, or pick an image', accent: FREEFORM_ACCENT,
+      }), blob: null,
+      caption: `${title || project.name}\n${intro || ''}`.trim(),
+      grabHint: '', fontScale: 1, kind: 'title',
+      // The opener searches for the subject itself.
+      search: title || topic.slice(0, 80),
+    });
+    for (let i = 0; i < items.length && next.length < MAX_SLIDES - 1; i++) {
+      const it = items[i];
+      next.push({
+        id: String(nextId++), bitmap: await makeCardBitmap({
+          heading: it.heading, sub: it.sub || '', accent: FREEFORM_ACCENT,
+        }), blob: null,
+        caption: captionForFreeform(it),
+        grabHint: '', fontScale: 1,
+        // What photoQueryFor reads for this slide's image-search button.
+        search: it.search,
+      });
+    }
+    try { next.push(await makeOutroSlide()); }
+    catch (e) { console.error('[tik] outro slide failed:', e); }
+    slides = next;
+    render();
+    markDirty();
+    els.status.textContent = `${items.length} slides ready — click a slide, hit Find images, and drop the picture in. Captions are editable.`;
+  } catch (err) {
+    console.error('[tik] freeform write failed:', err);
     els.status.textContent = err.message;
   } finally {
     setAiBusy(false);
@@ -1998,14 +2914,14 @@ async function enterEdit(id) {
   els.grabLabel.textContent = 'Save frame';
   els.cancelEdit.classList.remove('hidden');
   render(); // apply the highlight
-  const isTrivia = project?.format === 'trivia';
-  if (isTrivia) {
+  syncGrabControls(); // the menu now points at this slide
+  if (isMovieFileFormat()) {
     els.status.textContent = slide.grabHint
       ? `Editing — GRAB: ${slide.grabHint}  (or paste/drop an image)`
       : 'Editing this slide — scrub to a new frame and Save, or paste/drop an image. Esc cancels.';
     if (videoReady && Number.isFinite(slide.timecode)) await seekAndSettle(els.video, slide.timecode);
   } else if (isMosaicSlide(slide)) {
-    els.status.textContent = 'Opener selected — paste, drop, or pick 2–4 images for a mosaic. Esc cancels.';
+    els.status.textContent = 'Opener selected — paste, drop, or pick one photo to show it whole, or 2–4 to tile them. Esc cancels.';
   } else {
     els.status.textContent = 'Slide selected — paste, drop, or pick an image for it. Esc cancels.';
   }
@@ -2016,6 +2932,8 @@ function resetEditState() {
   els.grabIcon.textContent = 'photo_camera';
   els.grabLabel.textContent = 'Grab frame';
   els.cancelEdit.classList.add('hidden');
+  closeAdjustMenu();
+  syncGrabControls();
 }
 function exitEdit() { resetEditState(); render(); }
 els.cancelEdit.addEventListener('click', () => { exitEdit(); els.status.textContent = 'Edit cancelled.'; });
@@ -2051,14 +2969,14 @@ async function setMosaicPhotos(id, blobs) {
     if (project?.id !== ticket) return; // navigated away mid-decode/compose
     const old = slide.bitmap;
     slides = slides.map((s) => (s.id === id
-      ? { ...s, bitmap, blob: null, grabHint: '', timecode: undefined, mosaicPhotos: next }
+      ? { ...s, bitmap, blob: null, grabHint: '', timecode: undefined, mosaicPhotos: next, adjust: null }
       : s));
     old?.close?.();
     if (id === editingId) exitEdit(); else render();
     markDirty();
     const n = next.length;
     els.status.textContent = n === 1
-      ? 'Mosaic: 1 photo. Paste, drop, or pick up to 3 more for a side-by-side or 2×2.'
+      ? 'One photo, shown whole. Paste, drop, or pick up to 3 more to tile them instead.'
       : `Mosaic: ${n} photos ${n === 4 ? 'in a 2×2 grid' : 'side by side'}. ` +
         (n < MOSAIC_MAX ? 'Paste another to add one, or a fresh set to restart.'
                         : 'Paste a new photo to start the mosaic over.');
@@ -2121,6 +3039,8 @@ function render() {
   els.count.textContent = String(slides.length);
   els.grab.disabled = !editingId && !canAddSlide(slides); // Save stays enabled at the cap
   els.addScene.disabled = aiBusy || !videoReady || !canAddSlide(slides);
+  els.addManual.disabled = !videoReady || !canAddSlide(slides); // no model involved, so aiBusy is irrelevant
+  syncClipBar(); // the plan is made of the slides, so it moves with them
   els.download.disabled = slides.length === 0;
   els.list.innerHTML = '';
   slides.forEach((slide, index) => els.list.appendChild(renderSlide(slide, index)));
@@ -2141,12 +3061,13 @@ function frameHeightRatio() {
 function redrawAllThumbs() {
   slides.forEach((slide) => {
     const thumb = els.list.querySelector(`canvas[data-thumb="${slide.id}"]`);
-    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, maxFrameHeightRatio: frameHeightRatio() });
+    if (thumb) composeToCanvas(thumb, slide.bitmap, slide.caption, { titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0, captionStyle: captionStyleNow() });
   });
 }
 
 function renderSlide(slide, index) {
   const isTrivia = project?.format === 'trivia';
+  const movieFile = isMovieFileFormat();
   const li = document.createElement('li');
   li.className = 'flex flex-col gap-2 rounded-xl border border-neutral-800 bg-neutral-900 p-2';
   if (slide.id === editingId) li.className += ' ring-2 ring-red-500';
@@ -2161,7 +3082,7 @@ function renderSlide(slide, index) {
   const thumb = document.createElement('canvas');
   thumb.dataset.thumb = slide.id;
   thumb.className = 'w-[72px] flex-none cursor-pointer rounded-md bg-black h-auto';
-  thumb.title = isTrivia ? 'Click to re-grab or replace this frame' : 'Click to select, then paste/drop/pick an image';
+  thumb.title = movieFile ? 'Click to re-grab or replace this frame' : 'Click to select, then paste/drop/pick an image';
   thumb.addEventListener('click', () => {
     if (slide.id === editingId) { exitEdit(); els.status.textContent = 'Edit cancelled.'; return; }
     enterEdit(slide.id);
@@ -2181,16 +3102,27 @@ function renderSlide(slide, index) {
   ta.className = 'w-full rounded-md border border-neutral-800 bg-neutral-950 p-2 text-sm text-neutral-100';
   ta.rows = 3;
   ta.maxLength = 300; // AI caps at 180; give manual edits headroom but keep slides renderable
-  ta.placeholder = isTrivia ? 'Trivia for this frame…'
+  ta.placeholder = project?.format === 'quotes' ? 'Quote for this frame…'
+    : isTrivia ? 'Trivia for this frame…'
     : project?.format === 'year' ? 'Caption for this slide…'
       : 'Blurb for this guy…';
   ta.value = slide.caption;
   suspendDragWhileEditing(ta);
+  // A designed end card carries its own words, so the sign-off line is kept
+  // but not drawn; editing text nobody will see would be a trap.
+  const endDesigned = isOutroSlide(slide) && !!outroDesign(slide.outroStyle).video;
+  if (endDesigned) {
+    ta.disabled = true;
+    ta.classList.add('opacity-50');
+    ta.title = 'This end card has its own words. Switch it to Logo to use a sign-off line.';
+  }
 
   // Redraw this slide's preview from the live caption + its per-slide font scale.
   const redrawThumb = () => composeToCanvas(thumb, slide.bitmap, ta.value, {
     titleLine: currentTitleLine(), scale: PREVIEW_SCALE, fontScale: slide.fontScale || 1,
     maxFrameHeightRatio: frameHeightRatio(),
+    format: project.format, kind: slide.kind, adjust: slide.adjust, stampNudge: slide.stampNudge || 0,
+    captionStyle: captionStyleNow(),
   });
   redrawThumb();
 
@@ -2201,6 +3133,74 @@ function renderSlide(slide, index) {
     markDirty();
   });
   mid.append(ta);
+
+  // Where in the film this slide is supposed to come from.
+  //
+  // The number was invisible until you clicked the thumbnail and watched the
+  // scrubber move, which is no way to check eight slides. Clicking it parks the
+  // playhead there so Play can confirm the line by ear — the fastest way to know
+  // a quote slide is on the wrong scene is to hear the wrong words.
+  //
+  // On a Quote-a-long it also says where the number came from: a cue span the
+  // subtitle matcher found, or an estimate the model made because nothing
+  // matched. Those two deserve very different amounts of trust.
+  if (isMovieFileFormat() && Number.isFinite(Number(slide.timecode))) {
+    const row = document.createElement('div');
+    row.className = 'flex flex-wrap items-center gap-1.5';
+
+    const jump = document.createElement('button');
+    const matched = !!slide.cue;
+    jump.className = `flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold tabular-nums transition ${
+      matched ? 'bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}`;
+    jump.append(iconSpan('schedule', 'text-[13px]'), document.createTextNode(clockTimecode(slide.timecode)));
+    jump.title = videoReady
+      ? 'Jump the player here, then press play to hear it'
+      : 'Load the movie file to jump here';
+    jump.addEventListener('click', () => {
+      if (!videoReady) { els.status.textContent = 'Load the movie file first.'; return; }
+      els.video.pause();
+      els.video.currentTime = Math.min(slide.timecode, els.video.duration || slide.timecode);
+      els.video.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      els.status.textContent = `Player at ${clockTimecode(slide.timecode)} — press play to hear it.`;
+    });
+    row.append(jump);
+
+    if (project?.format === 'quotes' && slide.kind !== 'title' && slide.kind !== 'outro') {
+      const src = document.createElement('span');
+      src.className = `text-[10px] uppercase tracking-wide ${matched ? 'text-emerald-400/70' : 'text-amber-300/70'}`;
+      src.textContent = matched ? 'from subtitles' : 'estimated';
+      src.title = matched
+        ? `Matched to the subtitle cue at ${clockTimecode(slide.cue.start)}–${clockTimecode(slide.cue.end)}.`
+        : 'No subtitle cue matched this line, so the time is the model\u2019s guess. Worth checking.';
+      row.append(src);
+    }
+
+    // Batch Shoot asked for a look at this one. The point of the flag is that
+    // a ten-film batch hands back a short list instead of a hundred frames to
+    // inspect; clicking it says "I looked, it's right" and clears it. Replacing
+    // the frame clears it too, and records that it needed fixing.
+    if (slide.frameScan?.review) {
+      const flag = document.createElement('button');
+      flag.type = 'button';
+      flag.className = 'flex items-center gap-1 rounded-md bg-amber-400/15 px-1.5 py-0.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-400/25';
+      flag.append(iconSpan('visibility', 'text-[14px]'), document.createTextNode('check frame'));
+      const fs = slide.frameScan;
+      const how = fs.source === 'scan' ? `whole-film scan, ${fs.score ?? '?'}% sure`
+        : fs.source === 'verify' ? 'the old checker never passed a frame'
+          : fs.source === 'failed' ? 'the frame could not be found'
+            : 'a guess';
+      flag.title = `Batch flagged this frame (${how})${fs.why ? `: ${fs.why}` : ''}. Re-grab it if it is wrong; click here if it is right.`;
+      flag.addEventListener('click', (e) => {
+        e.stopPropagation();
+        slides = confirmFrame(slides, slide.id);
+        markDirty();
+        render();
+        els.status.textContent = 'Frame confirmed.';
+      });
+      row.append(flag);
+    }
+    mid.append(row);
+  }
 
   // Editor-only hint from the AI: what shot to look for when (re)grabbing.
   // Never baked into the slide or sent to TikTok.
@@ -2231,6 +3231,28 @@ function renderSlide(slide, index) {
     els.imgFile.click();
   });
 
+  // Brightness / contrast / centre zoom for THIS slide's frame.
+  //
+  // It used to live up by Grab frame, where it had to guess which slide was
+  // meant and guessed the last one in the set — so a zoom landed on a slide the
+  // user was not looking at, and the reset looked broken because it reset that
+  // same wrong slide. Here there is nothing to guess.
+  let adjustWrap = null;
+  if (movieFile) {
+    adjustWrap = document.createElement('div');
+    adjustWrap.className = 'relative';
+    const summary = describeAdjust(slide.adjust);
+    const adjustBtn = tbBtn('exposure', summary || '', summary
+      ? `This slide: ${summary}. Reset from the menu.`
+      : 'Brighten or zoom this slide\u2019s frame', summary ? 'text-amber-300' : '');
+    adjustBtn.disabled = !slide.bitmap;
+    adjustBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openAdjustMenu(slide, adjustBtn, adjustWrap);
+    });
+    adjustWrap.append(adjustBtn);
+  }
+
   // Font sizing (per slide): scales the caption up/down for the amount of text.
   const fontDown = tbBtn('text_decrease', '', 'Smaller caption');
   const fontUp = tbBtn('text_increase', '', 'Bigger caption');
@@ -2244,6 +3266,42 @@ function renderSlide(slide, index) {
   };
   fontDown.addEventListener('click', () => nudgeFont(-0.1));
   fontUp.addEventListener('click', () => nudgeFont(0.1));
+
+  // Quote-a-long title card: slide the badge up or down the poster.
+  //
+  // The badge sits high by default, and posters put their own lettering
+  // wherever they like — on plenty of them the wordmark lands right on the
+  // film's title. Nothing here can guess that, so it is a pair of arrows.
+  let stampUp = null;
+  let stampDown = null;
+  if (wantsQuoteStamp({ format: project?.format, kind: slide.kind })) {
+    const at = () => clampStampNudge(slide.stampNudge);
+    stampUp = tbBtn('keyboard_arrow_up', '', 'Move the Quote-a-long badge up', 'text-amber-300');
+    stampDown = tbBtn('keyboard_arrow_down', '', 'Move the Quote-a-long badge down', 'text-amber-300');
+    // How far the badge can go depends on the frame it is on, so the arrows go
+    // by where the last draw actually put it, not by a step count.
+    const syncArrows = (placement) => {
+      stampUp.disabled = !canNudgeStamp(at(), -1, placement);
+      stampDown.disabled = !canNudgeStamp(at(), 1, placement);
+      stampUp.classList.toggle('opacity-40', stampUp.disabled);
+      stampDown.classList.toggle('opacity-40', stampDown.disabled);
+    };
+    const nudgeStamp = (delta) => {
+      const next = clampStampNudge(at() + delta);
+      if (next === at()) return;
+      slide.stampNudge = next; // keep the closure current for redraws
+      slides = slides.map((x) => (x.id === slide.id ? { ...x, stampNudge: next } : x));
+      const drawn = redrawThumb();
+      syncArrows(drawn?.stamp);
+      markDirty();
+      els.status.textContent = next === 0 ? 'Badge back at its default height.' : 'Badge moved.';
+    };
+    stampUp.addEventListener('click', () => nudgeStamp(-1));
+    stampDown.addEventListener('click', () => nudgeStamp(1));
+    // The badge may not have decoded yet on a first paint; a null placement
+    // leaves both arrows live, which is the harmless way to be wrong.
+    syncArrows(redrawThumb()?.stamp);
+  }
 
   // Bring-your-own-image formats get a one-tap link to a Google image search for
   // this slide's subject — the actor or "actor + movie" for Some Guys, the film
@@ -2272,9 +3330,28 @@ function renderSlide(slide, index) {
     insertBtn.addEventListener('click', () => openInsertForm(li, index));
   }
 
-  toolbar.append(pickBtn, ...(photoSearch ? [photoSearch] : []), ...(insertBtn ? [insertBtn] : []), fontDown, fontUp);
+  // A paired slide can flip between the two arrangements from its own row,
+  // which is where the slide is and where its other controls already live.
+  let pairBtn = null;
+  if (slide.pairFrames?.length === 2) {
+    const layout = pairLayoutOf(slide.pairLayout);
+    pairBtn = tbBtn(
+      layout === 'stack' ? 'vertical_split' : 'horizontal_split',
+      PAIR_LAYOUT_LABELS[otherLayout(layout)],
+      `Two frames, ${PAIR_LAYOUT_LABELS[layout].toLowerCase()} — switch to ${PAIR_LAYOUT_LABELS[otherLayout(layout)].toLowerCase()}`,
+      'text-rose-300',
+    );
+    pairBtn.addEventListener('click', () => {
+      togglePairLayout(slide.id).catch((e) => console.error('[tik] layout switch failed:', e));
+    });
+  }
 
-  if (isTrivia && isOutroSlide(slide)) {
+  toolbar.append(pickBtn, ...(adjustWrap ? [adjustWrap] : []), ...(photoSearch ? [photoSearch] : []), ...(pairBtn ? [pairBtn] : []), ...(insertBtn ? [insertBtn] : []), ...(stampUp ? [stampUp, stampDown] : []), fontDown, fontUp);
+
+  // The sign-off is house copy and format-agnostic (nextOutro knows what
+  // "more" means per format), so Quote-a-long gets the swap too even though it
+  // has no per-slide AI actions of its own.
+  if (isMovieFileFormat() && isOutroSlide(slide) && !endDesigned) {
     // The sign-off is house copy from a fixed pool, so "another one" is a pool
     // pick, not a model call: there is nothing here for an LLM to know, and
     // paying Opus to re-say "follow VHS Garage" would be silly.
@@ -2309,21 +3386,27 @@ function renderSlide(slide, index) {
       for (const b of btns) b.disabled = true;
       try {
         if (mode === 'rewrite' && isIntro) {
-          // A fresh opener; the title card stays. Every other caption goes in
-          // as "already used" so the new intro can neither repeat itself nor
-          // spoil a fact the slides are about to pay off.
-          els.status.textContent = 'Rewriting the intro…';
-          const scene = await fetchTitleSlide({
-            title: movie.title || project.name, year: movie.year,
-            durationSeconds: els.video.duration || 7200,
-            exclude: slides.map((s) => s.caption),
-            onProgress: (m) => { els.status.textContent = `Rewriting the intro — ${m}`; },
-          });
-          if (project?.id !== ticket) return;
-          slides = editCaption(slides, slide.id, scene.caption);
-          ta.value = scene.caption;
-          redrawThumb();
-          els.status.textContent = 'Intro rewritten.';
+          // Quote-a-long title is the movie name only — never the two-sentence
+          // trivia intro rewrite.
+          if (project?.format === 'quotes') {
+            els.status.textContent = 'Quote-a-long intro stays the movie name.';
+          } else {
+            // A fresh opener; the title card stays. Every other caption goes in
+            // as "already used" so the new intro can neither repeat itself nor
+            // spoil a fact the slides are about to pay off.
+            els.status.textContent = 'Rewriting the intro…';
+            const scene = await fetchTitleSlide({
+              title: movie.title || project.name, year: movie.year,
+              durationSeconds: els.video.duration || 7200,
+              exclude: slides.map((s) => s.caption),
+              onProgress: (m) => { els.status.textContent = `Rewriting the intro — ${m}`; },
+            });
+            if (project?.id !== ticket) return;
+            slides = editCaption(slides, slide.id, scene.caption);
+            ta.value = scene.caption;
+            redrawThumb();
+            els.status.textContent = 'Intro rewritten.';
+          }
         } else if (mode === 'rewrite') {
           // A fresh take on THIS fact; the frame stays.
           els.status.textContent = 'Rewriting this fact…';
@@ -2402,6 +3485,42 @@ function renderSlide(slide, index) {
   }
   mid.append(toolbar);
 
+  // Which end card closes the set. The plain logo takes the sign-off line; the
+  // three designed cards are finished pictures (and, in a video, animations).
+  if (isOutroSlide(slide)) {
+    const current = outroKeyOf(slide);
+    const row = document.createElement('div');
+    row.className = 'flex flex-wrap items-center gap-1';
+    const lab = document.createElement('span');
+    lab.className = 'mr-1 text-[11px] uppercase tracking-wide text-neutral-500';
+    lab.textContent = 'End card';
+    row.append(lab);
+    for (const d of OUTRO_DESIGNS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.outro = d.key;
+      const on = d.key === current;
+      b.className = `rounded-md px-2 py-1 text-xs font-semibold ${on
+        ? 'bg-yellow-400 text-neutral-950' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}`;
+      b.textContent = d.label;
+      b.title = d.video
+        ? `${d.label}: a full designed card (it animates in the video version). Becomes the default for new sets.`
+        : 'The logo with the sign-off line under it. Becomes the default for new sets.';
+      if (!on) {
+        b.addEventListener('click', () => {
+          setOutroStyle(slide.id, d.key)
+            .then(() => noteOutroReviewed(slide))
+            .catch((e) => {
+              console.error('[tik] end card swap failed:', e);
+              els.status.textContent = e.message;
+            });
+        });
+      }
+      row.append(b);
+    }
+    mid.append(row);
+  }
+
   // Delete, then preview, stacked at the top-right.
   const side = document.createElement('div');
   side.className = 'flex flex-none flex-col gap-1';
@@ -2460,7 +3579,7 @@ els.download.addEventListener('click', async () => {
     const titleLine = currentTitleLine();
     for (let i = 0; i < slides.length; i++) {
       els.status.textContent = `Rendering slide ${i + 1}/${slides.length}…`;
-      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio: frameHeightRatio() });
+      const blob = await composeSlide(slides[i].bitmap, slides[i].caption, { titleLine, fontScale: slides[i].fontScale || 1, maxFrameHeightRatio: frameHeightRatio(), format: project.format, kind: slides[i].kind, adjust: slides[i].adjust, stampNudge: slides[i].stampNudge || 0, captionStyle: captionStyleNow() });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `${slug}-${String(i + 1).padStart(2, '0')}.jpg`;
@@ -2498,11 +3617,294 @@ els.postReset.addEventListener('click', () => {
   markDirty();
 });
 
+// ================= Quote-a-long: the video format =================
+//
+// The same set, cut out of the movie file instead of screenshotted. Every
+// timecode on these slides came from a matched subtitle cue, which is exactly
+// what a cut needs: the spans are already known, so this plays them into a
+// 1080x1920 canvas — through the SAME compose code the slideshow posts, so the
+// clip looks like the slides and moves — and records that canvas.
+//
+// The slideshow is untouched by all of this. `output` is a per-project switch
+// and everything below is inert while it says 'slides'.
+
+let clip = null;          // { blob, url, mimeType, seconds } once rendered
+let filmAudio = 'unknown'; // 'yes' | 'no' | 'unknown' — can this browser decode the film's audio
+let clipStale = false;    // the set changed after the render
+let clipAbort = null;     // AbortController while recording
+
+function videoOutput() {
+  return project?.format === 'quotes' && project?.output === 'video';
+}
+
+function currentClipPlan() {
+  if (project?.format !== 'quotes') return null;
+  return planClip(slides, {
+    duration: videoReady ? els.video.duration : 0,
+    isTitle: (s, i) => isIntroSlide(s, slides.indexOf(s), project?.format),
+    isOutro: isOutroSlide,
+    holdSeconds: (s) => (isOutroSlide(s) ? outroHoldSeconds(s) : null),
+  });
+}
+
+function releaseClip() {
+  if (clip?.url) URL.revokeObjectURL(clip.url);
+  clip = null;
+  clipStale = false;
+  els.clipPreview.removeAttribute('src');
+  els.clipPreview.classList.add('hidden');
+  els.clipDownload.classList.add('hidden');
+  els.clipDownload.classList.remove('flex');
+  els.clipDownload.removeAttribute('href');
+}
+
+// Put a fix-up command in `host`, or clear it. `spec` is falsy when there is
+// nothing wrong, which is the common case.
+// Which caption look to draw. Only the video format offers a choice; a
+// slideshow is always the house pills, so nothing here can change what the
+// photo post has always looked like.
+function captionStyleNow() {
+  return videoOutput() ? captionStyleOf(project?.captionStyle) : 'pills';
+}
+
+function showFix(host, spec) {
+  host.innerHTML = '';
+  host.classList.toggle('hidden', !spec);
+  if (!spec) return;
+  host.append(fixNote(spec));
+}
+
+function syncClipBar() {
+  const quotes = project?.format === 'quotes';
+  els.clipBar.classList.toggle('hidden', !quotes);
+  els.clipBar.classList.toggle('flex', quotes);
+  if (!quotes) return;
+
+  const video = videoOutput();
+  const on = 'bg-red-600 text-white';
+  const off = 'text-neutral-300 hover:bg-neutral-800';
+  els.outSlides.className = `px-3 py-1.5 text-xs font-semibold ${video ? off : on}`;
+  els.outVideo.className = `px-3 py-1.5 text-xs font-semibold ${video ? on : off}`;
+  els.clipControls.classList.toggle('hidden', !video);
+  els.clipControls.classList.toggle('flex', video);
+  els.captionStyles.classList.toggle('hidden', !video);
+  els.captionStyles.classList.toggle('flex', video);
+  const cap = captionStyleOf(project?.captionStyle);
+  for (const [key, btn] of [['pills', els.capPills], ['cc', els.capCc], ['karaoke', els.capKaraoke]]) {
+    btn.className = `px-3 py-1.5 text-xs font-semibold ${cap === key ? on : off}`;
+  }
+
+  const plan = currentClipPlan();
+  els.clipPlan.textContent = video ? describePlan(plan) : '';
+  els.clipRender.disabled = !!clipAbort || !videoReady || !plan?.scenes;
+
+  if (!video) {
+    els.clipNote.textContent = 'Slides: the usual photo post.';
+    showFix(els.clipFix, null);
+    return;
+  }
+  if (clipAbort) return; // the recorder owns the note while it runs
+
+  const notes = [];
+  // First, and before anything about the set: it decides whether rendering is
+  // worth doing at all, and it is known the moment the film loads — long
+  // before there are any slides to plan.
+  const noAudio = filmAudio === 'no';
+  if (noAudio) notes.push(NO_FILM_AUDIO_NOTE);
+  showFix(els.clipFix, noAudio && {
+    label: 'Re-encode the audio (the video is copied, so it’s quick)',
+    command: ffmpegAacCommand(filmFileName),
+  });
+  if (!videoReady) {
+    notes.push('Load the movie file to cut the clip from it.');
+    els.clipNote.textContent = notes.join(' ');
+    return;
+  }
+  if (!plan?.scenes) {
+    notes.push('No quote slide has a timecode yet — run autopilot first.');
+    els.clipNote.textContent = notes.join(' ');
+    return;
+  }
+  if (plan.skipped.length) notes.push(`${plan.skipped.length} slide${plan.skipped.length === 1 ? '' : 's'} skipped for having no timecode.`);
+  if (plan.overlaps) notes.push(`${plan.overlaps} scene${plan.overlaps === 1 ? '' : 's'} overlap the one before — same footage twice, on purpose or not.`);
+  if (plan.long) notes.push('Over three minutes — worth trimming.');
+  if (clip && clipStale) notes.push('The set changed since this render — render again before posting.');
+  else if (clip) {
+    notes.push(`Rendered: ${(clip.blob.size / 1024 / 1024).toFixed(1)}MB ${clip.extension.toUpperCase()}, ${clip.silence ? 'movie audio missing' : 'with sound'}. It lives in memory only, so a reload means rendering again.`);
+    if (clip.silence) notes.push(clip.silence);
+  }
+  else notes.push('Rendering plays the film through once, so it takes about as long as the clip is.');
+  els.clipNote.textContent = notes.join(' ');
+}
+
+function setOutput(mode) {
+  if (!project || project.format !== 'quotes') return;
+  const next = mode === 'video' ? 'video' : 'slides';
+  if (project.output === next) return;
+  project.output = next;
+  markDirty();
+  syncClipBar();
+  updatePostButton();
+  els.status.textContent = next === 'video'
+    ? 'Video format: render the clip, then post it.'
+    : 'Back to the slideshow.';
+}
+function setCaptionStyle(style) {
+  if (!project || project.format !== 'quotes') return;
+  const next = captionStyleOf(style);
+  if (project.captionStyle === next) return;
+  project.captionStyle = next;
+  markDirty();
+  render();       // every thumbnail is drawn in the chosen look
+  syncClipBar();
+  els.status.textContent = next === 'karaoke'
+    ? 'Karaoke uses approximate word timing within each subtitle cue, with pauses between cues.'
+    : next === 'cc' ? 'Subtitle captions — white on black, under the picture.'
+      : 'House pills.';
+}
+els.capPills.addEventListener('click', () => setCaptionStyle('pills'));
+els.capCc.addEventListener('click', () => setCaptionStyle('cc'));
+els.capKaraoke.addEventListener('click', () => setCaptionStyle('karaoke'));
+
+els.outSlides.addEventListener('click', () => setOutput('slides'));
+els.outVideo.addEventListener('click', () => setOutput('video'));
+
+// The end card's animation as a muted <video>, ready to draw from. Never fatal.
+async function loadEndCardVideo(src) {
+  if (!src) return null;
+  const v = document.createElement('video');
+  v.muted = true;
+  v.playsInline = true;
+  v.preload = 'auto';
+  v.src = src;
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('timed out')), 15000);
+      v.addEventListener('canplaythrough', () => { clearTimeout(timer); resolve(); }, { once: true });
+      v.addEventListener('error', () => { clearTimeout(timer); reject(new Error(v.error?.message || 'load failed')); }, { once: true });
+    });
+    return v;
+  } catch (e) {
+    console.warn('[tik] end card video unavailable; the clip will hold its still', { src, message: e.message });
+    return null;
+  }
+}
+
+els.clipRender.addEventListener('click', async () => {
+  if (clipAbort || !project) return;
+  const plan = currentClipPlan();
+  if (!plan?.scenes) { els.status.textContent = 'Nothing to cut — no slide has a timecode.'; return; }
+  const ticket = project.id;
+  releaseClip();
+  clipAbort = new AbortController();
+  els.clipCancel.classList.remove('hidden');
+  syncClipBar();
+
+  // One offscreen canvas at full size; compose draws the whole slide into it
+  // every frame, live video and all.
+  const canvas = document.createElement('canvas');
+  const byId = new Map(slides.map((sl) => [sl.id, sl]));
+  // A designed end card plays its own animation where the logo would hold.
+  // Loaded up front; if it can't be, the card's still holds instead.
+  const endSlide = slides.find(isOutroSlide);
+  const endCard = endSlide ? await loadEndCardVideo(outroDesign(endSlide.outroStyle).video) : null;
+  let endCardStarted = false;
+  const paint = (part) => {
+    const slide = byId.get(part.slideId);
+    if (!slide) return;
+    if (endCard && slide === endSlide && part.kind === 'still') {
+      if (!endCardStarted) {
+        endCardStarted = true;
+        endCard.currentTime = 0;
+        endCard.play().catch((e) => console.warn('[tik] end card would not play; holding its still', e));
+      }
+      composeToCanvas(canvas, endCard.readyState >= 2 ? endCard : slide.bitmap, '', { kind: 'outro' });
+      return;
+    }
+    // Karaoke follows the line's own subtitle cue: where the playhead sits
+    // inside each cue estimates the word; gaps preserve pauses. A line the matcher
+    // never placed has no honest timing, so it just sits there, lit or not.
+    const progress = part.kind === 'scene' && !part.title
+      ? karaokeState(els.video.currentTime, slide.cue, slide.caption)
+      : null;
+    composeToCanvas(canvas, part.kind === 'scene' ? els.video : slide.bitmap, slide.caption, {
+      titleLine: currentTitleLine(),
+      fontScale: slide.fontScale || 1,
+      maxFrameHeightRatio: frameHeightRatio(),
+      format: project.format,
+      kind: slide.kind,
+      // Whatever correction the slide carries applies to the moving frame too:
+      // a scene that needed brightening is dark for its whole span, and a zoom
+      // is a framing choice, not a property of one frozen frame. Neutral is the
+      // usual case and costs nothing.
+      adjust: slide.adjust,
+      stampNudge: slide.stampNudge || 0,
+      captionStyle: captionStyleNow(),
+      karaokeState: progress,
+    });
+  };
+
+  try {
+    els.status.textContent = 'Getting the fonts and the badge ready…';
+    await Promise.all([captionFontReady(), quoteStampReady()]);
+    const started = Date.now();
+    const out = await recordClip({
+      video: els.video,
+      plan,
+      canvas,
+      paint,
+      fps: CLIP_FPS,
+      signal: clipAbort.signal,
+      onProgress: (m) => {
+        els.status.textContent = m;
+        els.clipNote.textContent = `${m} — the film is playing through; leave this tab in front.`;
+      },
+    });
+    if (project?.id !== ticket) return; // opened another project mid-render
+    clip = { ...out, seconds: (Date.now() - started) / 1000 };
+    clip.silence = silenceReason(out);
+    clipStale = false;
+    clip.url = URL.createObjectURL(out.blob);
+    els.clipPreview.src = clip.url;
+    els.clipPreview.classList.remove('hidden');
+    els.clipDownload.href = clip.url;
+    els.clipDownload.download = `${(projectDisplayName(project) || 'quote-a-long').replace(/[^\w.-]+/g, '-')}.${out.extension}`;
+    els.clipDownload.classList.remove('hidden');
+    els.clipDownload.classList.add('flex');
+    els.status.textContent = clip.silence
+      ? `Clip ready, but movie audio is missing — ${clip.silence}`
+      : `Clip ready with sound — ${(out.blob.size / 1024 / 1024).toFixed(1)}MB. Watch it, then post it.`;
+  } catch (err) {
+    if (err.cancelled) els.status.textContent = 'Clip cancelled.';
+    else {
+      console.error('[tik] clip render failed:', err);
+      els.status.textContent = err.message;
+    }
+  } finally {
+    clipAbort = null;
+    els.clipCancel.classList.add('hidden');
+    syncClipBar();
+    updatePostButton();
+  }
+});
+
+els.clipCancel.addEventListener('click', () => {
+  clipAbort?.abort();
+  els.status.textContent = 'Stopping the render…';
+});
+
 // ================= Post =================
 function updatePostButton() {
   const publicOrigin = isPublicOrigin();
-  els.post.disabled = !(project && isSignedIn() && slides.length > 0 && publicOrigin);
-  els.post.title = publicOrigin ? '' : 'Posting to TikTok needs the deployed site';
+  const video = videoOutput();
+  const ready = video ? !!clip && !clipStale : slides.length > 0;
+  els.post.disabled = !(project && isSignedIn() && ready && publicOrigin);
+  els.postLabel.textContent = video ? 'Post video to TikTok' : 'Post to TikTok';
+  els.post.title = !publicOrigin
+    ? 'Posting to TikTok needs the deployed site'
+    : video && !clip ? 'Render the clip first'
+      : video && clipStale ? 'The set changed — render the clip again'
+        : '';
 }
 els.post.addEventListener('click', async () => {
   els.post.disabled = true;
@@ -2510,13 +3912,18 @@ els.post.addEventListener('click', async () => {
   try {
     const titleLine = currentTitleLine();
     const fallback = defaultPostFields(project.format, projectDisplayName(project));
-    const result = await publishSlideshow(slides, {
-      titleLine,
-      maxFrameHeightRatio: frameHeightRatio(),
-      title: (project.postTitle || '').trim() || fallback.title,
-      description: (project.postDesc || '').trim() || fallback.description,
-      onProgress: (m) => { els.status.textContent = m; },
-    });
+    // One branch, at the top: the slideshow path below it is the one that runs
+    // every day and is left exactly as it was.
+    const result = videoOutput()
+      ? await publishClip(clip?.blob, { onProgress: (m) => { els.status.textContent = m; } })
+      : await publishSlideshow(slides, {
+        titleLine,
+        maxFrameHeightRatio: frameHeightRatio(),
+        format: project.format,
+        title: (project.postTitle || '').trim() || fallback.title,
+        description: (project.postDesc || '').trim() || fallback.description,
+        onProgress: (m) => { els.status.textContent = m; },
+      });
     if (project?.id !== ticket) {
       console.warn('[tik] post finished after navigating away; library status left as draft', { ticket, status: result?.status });
       return;
@@ -2558,6 +3965,27 @@ els.post.addEventListener('click', async () => {
     if (await handleRedirect()) authMsg = 'Signed in to TikTok.';
   } catch (e) { console.error('[tik] sign-in failed:', e); authMsg = e.message; }
   refreshAuthUI();
+
+  // Ask the browser to KEEP the library before anything is written into it.
+  //
+  // Without this the data is "best effort": Chrome may evict it when the disk
+  // gets tight and Safari deletes script-writable storage after seven days of
+  // not visiting. Everything the studio makes lives there, so a silent eviction
+  // is the whole library.
+  keepStorage().then(async (state) => {
+    const { usage } = await storageUsed();
+    const mb = usage ? `${(usage / 1e6).toFixed(0)}MB` : 'nothing yet';
+    if (state === 'granted') {
+      els.storageState.textContent = `Library: ${mb} in this browser, marked persistent. Still worth a backup — it only exists here.`;
+      els.storageState.className = 'w-full text-[11px] leading-snug text-neutral-600';
+      return;
+    }
+    // Worth saying out loud. Everything the studio makes lives in this one
+    // browser profile, and in this state the browser is free to bin it.
+    console.warn('[tik] this library is NOT marked persistent; the browser may evict it', { state, usage });
+    els.storageState.textContent = `Library: ${mb} in this browser, NOT marked persistent — the browser can clear it on its own. Back it up.`;
+    els.storageState.className = 'w-full text-[11px] leading-snug font-semibold text-amber-300/90';
+  }).catch((e) => console.error('[tik] storage persistence check failed:', e));
 
   // Font readiness is armed once here and re-checked whenever a project opens
   // (see enterEditor). The old one-shot fired at boot behind `if (project)`,

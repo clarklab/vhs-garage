@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  AUTOPILOT_COUNT, buildAutopilotPrompt, buildTitleSlidePrompt, normalizeSuggestions, normalizeMeta, META_HOOK_MAX,
+  AUTOPILOT_COUNT, QUOTES_COUNT, QUOTES_POOL, buildAutopilotPrompt, buildQuotesPrompt, buildTitleSlidePrompt,
+  normalizeSuggestions, applyCueSeek, normalizeMeta, META_HOOK_MAX,
   clampText, CAPTION_TARGET, CAPTION_MAX, META_HOOK_TARGET,
 } from '../../netlify/functions/lib/autopilot.mjs';
 
@@ -441,4 +442,72 @@ test('buildTitleSlidePrompt feeds back the wording already on the post', () => {
 test('buildTitleSlidePrompt without exclusions has no dangling block', () => {
   const p = buildTitleSlidePrompt({ title: 'Jaws', durationSeconds: 7440 });
   assert.doesNotMatch(p, /Already used on this post/i);
+});
+
+test('buildQuotesPrompt asks for 8 boiled lines plus a name-only title', () => {
+  const p = buildQuotesPrompt({
+    title: 'Terminator 2',
+    year: 1991,
+    durationSeconds: 8220,
+    quotes: [{ text: "Terminator: I'll be back.", score: 900 }],
+    cues: [{ start: 72, end: 76, text: "I'll be back." }],
+  });
+  assert.match(p, /Quote-a-long|quote-a-long|movie quotes/i);
+  assert.match(p, new RegExp(String(QUOTES_COUNT)));
+  assert.match(p, /I'll be back/);
+  assert.match(p, /TITLE slide/);
+  assert.match(p, /movie name only|first line is the movie name/i);
+  assert.doesNotMatch(p, /TWO short sentences/);
+  assert.match(p, /character names/i);
+  assert.match(p, /"start"/);
+  assert.match(p, /"end"/);
+});
+
+test('buildQuotesPrompt still works with no cues', () => {
+  const p = buildQuotesPrompt({ title: 'Jaws', durationSeconds: 7000, quotes: [{ text: "You're gonna need a bigger boat." }] });
+  assert.match(p, /guess/i);
+});
+
+test('applyCueSeek prefers start/end quarter over model timecode', () => {
+  assert.equal(applyCueSeek({ caption: 'x', timecode: 9, start: 12, end: 16 }, 1000).timecode, 13);
+  assert.equal(applyCueSeek({ caption: 'x', timecode: 9 }, 1000).timecode, 9);
+});
+
+test('normalizeSuggestions keeps start and end when present', () => {
+  const out = normalizeSuggestions({
+    suggestions: [{ caption: "I'll be back.", timecode: 0, grab: 'close-up', start: 72, end: 76 }],
+  }, 8000, 8);
+  assert.equal(out[0].start, 72);
+  assert.equal(out[0].end, 76);
+  assert.equal(out[0].timecode, 73);
+});
+
+test('normalizeSuggestions keeps seek times when durationSeconds is 0', () => {
+  const out = normalizeSuggestions({
+    suggestions: [{ caption: "I'll be back.", timecode: 0, start: 72, end: 76 }],
+  }, 0, 8);
+  assert.equal(out[0].timecode, 73);
+});
+
+
+// ---- A Quote-a-long is twelve quotes between a title card and a sign-off ----
+
+test('a default Quote-a-long asks for 12 quotes plus a title slide', () => {
+  const p = buildQuotesPrompt({
+    title: 'The Princess Bride', year: 1987, durationSeconds: 5000,
+    quotes: [{ text: 'Inconceivable!', votes: 900 }],
+    includeTitleSlide: true,
+  });
+  assert.equal(QUOTES_COUNT, 12);
+  assert.match(p, /12 quote slides/, 'the title-slide rule counts the quotes');
+  // 12 quotes + title card + the sign-off the client appends = 14 slides.
+  assert.ok(QUOTES_COUNT + 2 <= 35, 'still inside the TikTok slide cap');
+});
+
+test('the quote pool is deeper than the number of quotes asked for', () => {
+  // Picking 12 of 12 is not picking. The model needs room to leave the weak
+  // ones behind.
+  assert.ok(QUOTES_POOL >= QUOTES_COUNT * 2, `pool ${QUOTES_POOL} vs count ${QUOTES_COUNT}`);
+  const p = buildQuotesPrompt({ title: 'X', quotes: [{ text: 'a', votes: 1 }] });
+  assert.match(p, new RegExp(`top ${QUOTES_POOL}`), 'and the prompt says how deep it is');
 });

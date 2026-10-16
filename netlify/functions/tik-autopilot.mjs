@@ -7,7 +7,9 @@
 // - POST → legacy SYNCHRONOUS call, kept as a fallback for stale clients; it
 //   lives under Netlify's 10s function ceiling so it uses a fast model + 9s abort.
 import { getStore } from '@netlify/blobs';
-import { buildAutopilotPrompt, buildTitleSlidePrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
+import { buildAutopilotPrompt, buildTitleSlidePrompt, buildQuotesPrompt, normalizeSuggestions, normalizeMeta, AUTOPILOT_COUNT, QUOTES_COUNT, JOBS_STORE, ALLOWED_MODELS } from './lib/autopilot.mjs';
+import { quoteHints, applyCueTimes } from './lib/srt.mjs';
+import { buildFreeformPrompt, normalizeFreeform, FREEFORM_COUNT } from './lib/freeform.mjs';
 import { buildRolesPrompt, normalizeRoles, buildBlurbsPrompt, normalizeBlurbs, ROLES_COUNT } from './lib/someguys.mjs';
 import { buildYearPrompt, normalizeYearSnapshot, normalizeYearInput, hasAnyEntries, yearFailureReason, LIST_COUNT, YEAR_MAX_TOKENS } from './lib/yearsnapshot.mjs';
 import { callModel, parseModelJson } from './lib/ai-providers.mjs';
@@ -48,21 +50,36 @@ export default async (req) => {
   let body;
   try { body = await req.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
 
-  const { kind = 'trivia', title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta, titleOnly, actor, roles, minVotes, ratedGiven, boxofficeGiven, model: requested } = body;
-  if (kind === 'trivia' && !title) return json({ error: 'Missing movie title' }, 400);
+  let { kind = 'trivia', title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta, titleOnly, topic, actor, roles, minVotes, ratedGiven, boxofficeGiven, quotes, cues, hints, model: requested } = body;
+  if (kind === 'quotes' && !(Array.isArray(hints) && hints.length)) {
+    hints = quoteHints(quotes, cues);
+  }
+  if ((kind === 'trivia' || kind === 'quotes') && !title) return json({ error: 'Missing movie title' }, 400);
   if ((kind === 'roles' || kind === 'blurbs') && !actor) return json({ error: 'Missing actor name' }, 400);
   if (kind === 'blurbs' && !(Array.isArray(roles) && roles.length)) return json({ error: 'No roles picked' }, 400);
   if (kind === 'year' && normalizeYearInput(year) === null) return json({ error: 'Enter a four digit year' }, 400);
+  if (kind === 'freeform' && !String(topic || '').trim()) return json({ error: 'Describe what the slideshow is about' }, 400);
   const model = pickModel(requested);
-  const prompt = kind === 'roles'
-    ? buildRolesPrompt({ actor, count: Number(count) || ROLES_COUNT, exclude })
-    : kind === 'blurbs'
-      ? buildBlurbsPrompt({ actor, roles, exclude })
-      : kind === 'year'
-        ? buildYearPrompt({ year, count: Number(count) || LIST_COUNT, minVotes, ratedGiven, boxofficeGiven })
-        : titleOnly
-          ? buildTitleSlidePrompt({ title, year, durationSeconds, exclude })
-          : buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta });
+  const prompt = kind === 'freeform'
+    ? buildFreeformPrompt({ topic, count, exclude, includeMeta: includeMeta !== false })
+    : kind === 'roles'
+      ? buildRolesPrompt({ actor, count: Number(count) || ROLES_COUNT, exclude })
+      : kind === 'blurbs'
+        ? buildBlurbsPrompt({ actor, roles, exclude })
+        : kind === 'year'
+          ? buildYearPrompt({ year, count: Number(count) || LIST_COUNT, minVotes, ratedGiven, boxofficeGiven })
+          : kind === 'quotes'
+            ? buildQuotesPrompt({
+              title, year, durationSeconds,
+              count: Number(count) || QUOTES_COUNT,
+              quotes: Array.isArray(quotes) ? quotes : [],
+              cues: Array.isArray(cues) ? cues : [],
+              hints: Array.isArray(hints) ? hints : [],
+              guidance, includeTitleSlide, includeMeta,
+            })
+            : titleOnly
+              ? buildTitleSlidePrompt({ title, year, durationSeconds, exclude })
+              : buildAutopilotPrompt({ title, year, durationSeconds, count, exclude, focusTimecode, guidance, includeTitleSlide, includeMeta });
 
   // Abort before Netlify's 10s function ceiling so we return a graceful
   // fallback instead of a platform 502.
@@ -70,6 +87,16 @@ export default async (req) => {
   const timer = setTimeout(() => controller.abort(), 9000);
   try {
     const raw = await callModel(prompt, model, controller.signal, kind === 'year' ? YEAR_MAX_TOKENS : undefined);
+    if (kind === 'freeform') {
+      const parsed = parseModelJson(raw);
+      const set = normalizeFreeform(parsed);
+      const meta = includeMeta !== false ? normalizeMeta(parsed) : null;
+      if (!set.items.length) {
+        console.warn('[tik-autopilot] model returned no usable freeform items', { model, rawPreview: String(raw).slice(0, 300) });
+        return json({ items: [], model, aiFallback: true, error: 'The AI returned no usable slides — try again.' });
+      }
+      return json({ ...set, meta, model, aiFallback: false });
+    }
     if (kind === 'roles') {
       const list = normalizeRoles(parseModelJson(raw));
       if (!list.length) {
@@ -95,14 +122,21 @@ export default async (req) => {
       }
       return json({ year: normalizeYearInput(year), ...snapshot, model, aiFallback: false });
     }
-    const base = titleOnly ? 1 : (Number(count) || AUTOPILOT_COUNT);
-    const max = includeTitleSlide ? base + 1 : base;
+    const base = titleOnly ? 1 : (Number(count) || (kind === 'quotes' ? QUOTES_COUNT : AUTOPILOT_COUNT));
+    const max = (kind === 'quotes' ? includeTitleSlide !== false : includeTitleSlide) ? base + 1 : base;
     const parsed = parseModelJson(raw);
-    const suggestions = normalizeSuggestions(parsed, durationSeconds, max);
+    let suggestions = normalizeSuggestions(parsed, durationSeconds, max);
+    // Same override as the background job — see applyCueTimes.
+    if (kind === 'quotes') {
+      suggestions = applyCueTimes(suggestions, cues, {
+        skipFirst: includeTitleSlide !== false,
+        durationSeconds,
+      });
+    }
     const meta = includeMeta ? normalizeMeta(parsed) : null;
     if (!suggestions.length) {
       console.warn('[tik-autopilot] model returned no usable suggestions', { model, rawPreview: String(raw).slice(0, 300) });
-      return json({ suggestions: [], model, aiFallback: true, error: 'The AI returned no usable trivia — try again.' });
+      return json({ suggestions: [], model, aiFallback: true, error: kind === 'quotes' ? 'The AI returned no usable quotes — try again.' : 'The AI returned no usable trivia — try again.' });
     }
     return json({ suggestions, meta, model, aiFallback: false });
   } catch (e) {

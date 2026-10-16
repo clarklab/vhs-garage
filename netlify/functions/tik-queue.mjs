@@ -45,7 +45,7 @@ export default async (req) => {
   const history = Array.isArray(body?.history) ? body.history : [];
   const posted = Array.isArray(body?.posted) ? body.posted : [];
   const count = Number(body?.count) || QUEUE_COUNT;
-  const prompt = buildQueuePrompt({ history, posted, count, guidance: body?.guidance });
+  const prompt = buildQueuePrompt({ history, posted, count, guidance: body?.guidance, format: body?.format });
 
   try {
     const controller = new AbortController();

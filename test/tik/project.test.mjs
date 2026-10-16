@@ -5,7 +5,9 @@ import {
   sectionCaption, captionForYearEntry, photoQueryFor, relativeTime, projectDisplayName,
   YEAR_LIST_SIZE, numberWord, renumberYearEntries, matchesSearch,
   STATUSES, statusOf, statusLabel, statusAfterOutroEdit, toggleReady,
+  importedProject, newImports, isImported,
 } from '../../public/scripts/tik/project.js';
+import { importablePosts } from '../../netlify/functions/lib/queue.mjs';
 import { houseSetByKey } from '../../public/scripts/tik/hashtags.js';
 
 test('makeProject builds a draft with the right shape and format fallback', () => {
@@ -50,6 +52,25 @@ test('guys post defaults ask for a favorite role, ≤5 hashtags, name-safe fallb
   assert.ok(tags.length <= 5, `expected ≤5 hashtags, got ${tags.length}`);
   const empty = defaultPostFields('guys', '');
   assert.match(empty.title, /Remembering some guys/);
+});
+
+test('quotes post defaults use the load-bearing quotes title', () => {
+  const d = defaultPostFields('quotes', 'Terminator 2 (1991)');
+  assert.equal(d.title, 'Terminator 2 (1991) — movie quotes');
+  assert.match(d.description, /follow VHS Garage/i);
+  const tags = d.description.match(/#\w+/g) || [];
+  assert.ok(tags.length <= 5, `expected ≤5 hashtags, got ${tags.length}`);
+  const empty = defaultPostFields('quotes', '');
+  assert.match(empty.title, /movie quotes/i);
+  assert.doesNotMatch(empty.title, /trivia/i);
+});
+
+test('quotes is a registered format with chrome', () => {
+  assert.equal(FORMATS.quotes.key, 'quotes');
+  assert.equal(FORMATS.quotes.label, 'Quote-a-long');
+  assert.equal(formatOf({ format: 'quotes' }).label, 'Quote-a-long');
+  const p = makeProject({ id: 'q', format: 'quotes', now: 1 });
+  assert.equal(p.format, 'quotes');
 });
 
 test('captionForRole formats "Movie (Year)" + blurb, hook fallback, no year fallback', () => {
@@ -382,4 +403,104 @@ test('searching finds sets by status word', () => {
   assert.ok(!matchesSearch(rec, 'posted'));
   // A legacy record with no status is still findable as a draft.
   assert.ok(matchesSearch({ name: 'Alien', format: 'trivia' }, 'draft'));
+});
+
+
+// ---- Posts made before the studio existed ----
+
+const apiRow = (over = {}) => ({
+  id: '7300000000000000001',
+  title: 'The Thing — movie trivia & behind-the-scenes facts',
+  video_description: 'Behind-the-scenes facts and hidden details from The Thing. #movietrivia',
+  create_time: 1735689600, // 2025-01-01
+  view_count: 12000, like_count: 900, comment_count: 40,
+  ...over,
+});
+
+test('a posted TikTok becomes a library record of the post', () => {
+  const [row] = importablePosts([apiRow()]);
+  const rec = importedProject(row, { id: 'p1' });
+  assert.equal(rec.status, 'posted');
+  assert.equal(rec.format, 'trivia');
+  assert.equal(rec.name, 'The Thing');
+  assert.equal(rec.movie.title, 'The Thing');
+  assert.equal(rec.postedAt, 1735689600 * 1000, 'posted when TikTok says, not when imported');
+  assert.deepEqual(rec.slides, [], 'a receipt, not a draft');
+  assert.equal(rec.imported.id, '7300000000000000001');
+  assert.equal(rec.imported.views, 12000);
+  assert.equal(isImported(rec), true);
+  assert.equal(isImported(makeProject({ id: 'x', format: 'trivia', now: 1 })), false);
+});
+
+test('a quotes post is imported as a quotes post', () => {
+  const [row] = importablePosts([apiRow({ title: 'Aliens — movie quotes', video_description: '' })]);
+  assert.equal(row.format, 'quotes');
+  assert.equal(importedProject(row, { id: 'p2' }).format, 'quotes');
+});
+
+test('a post whose title names no film is still a post', () => {
+  // Hand-retitled in the TikTok app. It counts for cadence and for the list,
+  // but it must not claim to cover a film the picker would then skip.
+  const [row] = importablePosts([apiRow({ title: 'lol this one broke me', video_description: '' })]);
+  assert.equal(row.movie, '');
+  assert.equal(row.format, null);
+  const rec = importedProject(row, { id: 'p3' });
+  assert.equal(rec.movie, null);
+  assert.equal(rec.name, 'lol this one broke me');
+  assert.equal(rec.status, 'posted');
+});
+
+test('importablePosts keeps one row per post, newest first', () => {
+  const rows = importablePosts([
+    apiRow({ id: 'a', create_time: 100 }),
+    apiRow({ id: 'b', create_time: 300 }),
+    apiRow({ id: 'c', create_time: 200 }),
+  ]);
+  assert.deepEqual(rows.map((r) => r.id), ['b', 'c', 'a']);
+});
+
+test('a post with no id is not importable', () => {
+  assert.deepEqual(importablePosts([{ title: 'x' }]), []);
+  assert.deepEqual(importablePosts(null), []);
+});
+
+// ---- Importing twice must not double the library ----
+
+test('the same post is never imported twice', () => {
+  const rows = importablePosts([apiRow()]);
+  const already = [importedProject(rows[0], { id: 'p1' })];
+  assert.deepEqual(newImports(rows, already), []);
+});
+
+test('a film already made here is not imported over the top of itself', () => {
+  // It was built in the studio and posted; the history row is the same post.
+  const rows = importablePosts([apiRow()]);
+  const mine = { ...makeProject({ id: 'local', format: 'trivia', now: 1 }), movie: { title: 'The Thing' }, status: 'posted' };
+  assert.deepEqual(newImports(rows, [mine]), []);
+});
+
+test('the same film in the OTHER format is a different post', () => {
+  const rows = importablePosts([apiRow({ title: 'The Thing — movie quotes', video_description: '' })]);
+  const mine = { ...makeProject({ id: 'local', format: 'trivia', now: 1 }), movie: { title: 'The Thing' } };
+  assert.equal(newImports(rows, [mine]).length, 1);
+});
+
+test('two posts about the same film only import once', () => {
+  const rows = importablePosts([apiRow({ id: 'a' }), apiRow({ id: 'b' })]);
+  assert.equal(rows.length, 2);
+  assert.equal(newImports(rows, []).length, 1, 'the second is the same coverage');
+});
+
+test('unnamed posts never collapse into each other', () => {
+  // They share no film, so they are simply two posts.
+  const rows = importablePosts([
+    apiRow({ id: 'a', title: 'one', video_description: '' }),
+    apiRow({ id: 'b', title: 'two', video_description: '' }),
+  ]);
+  assert.equal(newImports(rows, []).length, 2);
+});
+
+test('newImports survives junk', () => {
+  assert.deepEqual(newImports(null, null), []);
+  assert.deepEqual(newImports([{}], []), []);
 });

@@ -1,0 +1,381 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  sceneWindow, planClip, pickClipMime, extensionForMime, describePlan, silenceReason, NO_FILM_AUDIO_NOTE,
+  titleWindow, trimOf, nudgeTrim, describeTrim, isTrimmed, TRIM_STEP, TRIM_LIMIT,
+  PAD_BEFORE, PAD_AFTER, MIN_SCENE, MAX_SCENE, GUESS_SCENE, STILL_SECONDS, TITLE_SCENE_SECONDS,
+  CLIP_MIME_CANDIDATES,
+} from '../../public/scripts/tik/clip.js';
+import { CHANNEL_CHANGE_SECONDS } from '../../public/scripts/tik/tv-static.js';
+
+const quote = (id, cue, timecode) => ({ id, kind: null, cue, timecode });
+const isTitle = (s) => s.kind === 'title';
+const isOutro = (s) => s.kind === 'outro';
+
+test('a matched cue becomes its own span plus padding either side', () => {
+  const w = sceneWindow(quote('1', { start: 600, end: 604 }), { duration: 7000 });
+  assert.equal(w.start, 600 - PAD_BEFORE);
+  assert.equal(w.end, 604 + PAD_AFTER);
+});
+
+test('an unmatched line holds a window from the guessed time', () => {
+  // There is no end to use, so inventing one is worse than holding a window.
+  const w = sceneWindow(quote('1', null, 600), { duration: 7000 });
+  assert.equal(w.start, 600 - PAD_BEFORE);
+  assert.equal(w.end, 600 + GUESS_SCENE);
+});
+
+test('a slide with no time at all is not a scene', () => {
+  assert.equal(sceneWindow(quote('1', null, null), { duration: 7000 }), null);
+  assert.equal(sceneWindow(null, { duration: 7000 }), null);
+  assert.equal(sceneWindow({ id: '1', timecode: 'nonsense' }, { duration: 7000 }), null);
+});
+
+test('a one-word cue is stretched to something watchable', () => {
+  const w = sceneWindow(quote('1', { start: 100, end: 100.4 }), { duration: 7000 });
+  assert.ok(w.end - w.start >= MIN_SCENE, `${w.end - w.start}s is too short to read`);
+});
+
+test('a runaway cue span is capped rather than trusted', () => {
+  // A 90-second "cue" is a bad match, not a long line.
+  const w = sceneWindow(quote('1', { start: 100, end: 190 }), { duration: 7000 });
+  assert.equal(w.end - w.start, MAX_SCENE);
+});
+
+test('a scene never runs past the end of the film or before its start', () => {
+  const last = sceneWindow(quote('1', { start: 6998, end: 6999.5 }), { duration: 7000 });
+  assert.ok(last.end <= 7000, `ends at ${last.end}, past the film`);
+  assert.ok(last.end - last.start >= MIN_SCENE, 'takes the length off the front instead');
+  const first = sceneWindow(quote('1', { start: 0.2, end: 1.1 }), { duration: 7000 });
+  assert.ok(first.start >= 0, `starts at ${first.start}`);
+});
+
+test('an unknown duration does not clamp anything away', () => {
+  const w = sceneWindow(quote('1', { start: 600, end: 604 }), { duration: 0 });
+  assert.equal(w.end, 604 + PAD_AFTER);
+});
+
+test('the plan is the set: title scene, a scene per quote, sign-off still', () => {
+  const slides = [
+    { id: 't', kind: 'title', timecode: 90 },
+    quote('a', { start: 600, end: 603 }),
+    quote('b', { start: 1200, end: 1204 }),
+    { id: 'o', kind: 'outro' },
+  ];
+  const plan = planClip(slides, { duration: 7000, isTitle, isOutro });
+  assert.deepEqual(plan.parts.map((p) => p.kind), ['scene', 'static', 'scene', 'static', 'scene', 'static', 'still']);
+  assert.deepEqual(plan.parts.filter((p) => p.kind !== 'static').map((p) => p.slideId), ['t', 'a', 'b', 'o']);
+  assert.equal(plan.scenes, 3);
+  const expected = TITLE_SCENE_SECONDS + STILL_SECONDS
+    + (3 + PAD_BEFORE + PAD_AFTER) + (4 + PAD_BEFORE + PAD_AFTER) + 3 * CHANNEL_CHANGE_SECONDS;
+  assert.ok(Math.abs(plan.seconds - expected) < 1e-9, `${plan.seconds} vs ${expected}`);
+});
+
+// ---- The opening plays ----
+
+test('the title card rolls four seconds from exactly the frame that was picked', () => {
+  // A frozen frame under a wordmark is a poster, not an opening.
+  const plan = planClip([{ id: 't', kind: 'title', timecode: 90 }], { duration: 7000, isTitle, isOutro });
+  assert.equal(plan.parts[0].kind, 'scene');
+  assert.equal(plan.parts[0].title, true);
+  assert.equal(plan.parts[0].start, 90, 'starts ON the still, with no run-up');
+  assert.equal(plan.parts[0].end, 90 + TITLE_SCENE_SECONDS);
+});
+
+test('the title ignores a cue and uses its own frame', () => {
+  // Its timecode points at the main-title shot; a cue on it would be a quote's.
+  const plan = planClip([{ id: 't', kind: 'title', timecode: 90, cue: { start: 600, end: 604 } }],
+    { duration: 7000, isTitle, isOutro });
+  assert.equal(plan.parts[0].start, 90);
+});
+
+test('a title frame near the end still gets its full four seconds', () => {
+  const w = titleWindow({ timecode: 6998 }, { duration: 7000 });
+  assert.equal(w.end, 7000);
+  assert.equal(w.end - w.start, TITLE_SCENE_SECONDS, 'backed up rather than cut short');
+});
+
+test('a title slide with no timecode stays a still', () => {
+  // Pasting an image clears the timecode, and there is no footage to roll.
+  const plan = planClip([{ id: 't', kind: 'title', caption: 'The Princess Bride' }],
+    { duration: 7000, isTitle, isOutro });
+  assert.equal(plan.parts[0].kind, 'still');
+  assert.equal(plan.parts[0].seconds, STILL_SECONDS);
+  assert.equal(titleWindow({ timecode: null }, { duration: 7000 }), null);
+  assert.equal(titleWindow(null, {}), null);
+});
+
+test('the sign-off is still a still', () => {
+  // It is the logo, not a frame of the film: there is nothing to roll.
+  const plan = planClip([{ id: 'o', kind: 'outro', timecode: 500 }], { duration: 7000, isTitle, isOutro });
+  assert.equal(plan.parts[0].kind, 'still');
+});
+
+test('an unknown film length does not stop the opening', () => {
+  const w = titleWindow({ timecode: 90 }, { duration: 0 });
+  assert.deepEqual(w, { start: 90, end: 90 + TITLE_SCENE_SECONDS });
+});
+
+test('a quote with no timecode is reported, not silently dropped', () => {
+  const plan = planClip([quote('a', { start: 600, end: 603 }), quote('b', null, null)],
+    { duration: 7000, isTitle, isOutro });
+  assert.equal(plan.scenes, 1);
+  assert.deepEqual(plan.skipped, [{ slideId: 'b', reason: 'no timecode' }]);
+  assert.match(describePlan(plan), /1 skipped/);
+});
+
+test('the set order is the clip order, even out of film order', () => {
+  // Slides are reorderable; the post's order is the one the user chose.
+  const plan = planClip([quote('late', { start: 4000, end: 4003 }), quote('early', { start: 100, end: 103 })],
+    { duration: 7000, isTitle, isOutro });
+  assert.deepEqual(plan.parts.filter((p) => p.kind !== 'static').map((p) => p.slideId), ['late', 'early']);
+});
+
+test('channel changes sit only between rendered parts and preserve the scene windows', () => {
+  const first = quote('a', { start: 600, end: 603 });
+  const last = quote('c', { start: 1200, end: 1204 });
+  const plan = planClip([quote('skip-first'), first, quote('skip-middle'), last, quote('skip-last')]);
+  assert.deepEqual(plan.parts, [
+    { kind: 'scene', slideId: 'a', ...sceneWindow(first) },
+    { kind: 'static', seconds: 0.25 },
+    { kind: 'scene', slideId: 'c', ...sceneWindow(last) },
+  ]);
+  assert.equal(plan.skipped.length, 3);
+  assert.equal(planClip([first]).parts.length, 1, 'one scene has no leading or trailing static');
+  assert.equal(planClip([quote('skip')]).parts.length, 0, 'skipped quotes cannot leave static behind');
+});
+
+test('two quotes from the same exchange are reported as an overlap', () => {
+  const plan = planClip([quote('a', { start: 600, end: 603 }), quote('b', { start: 604, end: 607 })],
+    { duration: 7000, isTitle, isOutro });
+  assert.equal(plan.overlaps, 1, 'b starts inside a’s padded tail');
+  assert.equal(plan.scenes, 2, 'and both are still cut');
+});
+
+test('an empty set plans nothing rather than throwing', () => {
+  const plan = planClip([], { duration: 7000, isTitle, isOutro });
+  assert.deepEqual(plan.parts, []);
+  assert.equal(plan.seconds, 0);
+  assert.equal(describePlan(plan), '');
+  assert.deepEqual(planClip(null, {}).parts, []);
+});
+
+test('a long set is flagged', () => {
+  const many = Array.from({ length: 40 }, (_, i) => quote(String(i), { start: 100 + i * 20, end: 110 + i * 20 }));
+  assert.equal(planClip(many, { duration: 7000, isTitle, isOutro }).long, true);
+  assert.equal(planClip(many.slice(0, 3), { duration: 7000, isTitle, isOutro }).long, false);
+});
+
+test('describePlan says what the render is about to cost', () => {
+  const plan = planClip([quote('a', { start: 600, end: 603 })], { duration: 7000, isTitle, isOutro });
+  assert.match(describePlan(plan), /^1 scene · 0:06$/); // 3s of line + 2.8s of padding
+});
+
+test('a null timecode is not the top of the film', () => {
+  // Number(null) is 0, and taking that at face value cut from 0:00.
+  assert.equal(sceneWindow({ id: 'x', cue: null, timecode: null }, { duration: 7000 }), null);
+  assert.equal(sceneWindow({ id: 'x', cue: { start: null, end: null }, timecode: null }, { duration: 7000 }), null);
+  assert.equal(sceneWindow({ id: 'x', timecode: '' }, { duration: 7000 }), null);
+  // But a real zero is a real time.
+  assert.deepEqual(sceneWindow({ id: 'x', timecode: 0 }, { duration: 7000 }), { start: 0, end: GUESS_SCENE });
+});
+
+// ---- Encoding ----
+
+test('MP4 wins when the browser can record it', () => {
+  const mime = pickClipMime((t) => t.includes('mp4'));
+  assert.match(mime, /mp4/);
+  assert.equal(extensionForMime(mime), 'mp4');
+});
+
+test('WebM is a fallback, not a failure', () => {
+  const mime = pickClipMime((t) => t.startsWith('video/webm'));
+  assert.match(mime, /webm/);
+  assert.equal(extensionForMime(mime), 'webm');
+});
+
+test('a browser that records nothing says so instead of guessing', () => {
+  assert.equal(pickClipMime(() => false), null);
+  assert.equal(pickClipMime(null), null);
+  assert.equal(pickClipMime(() => { throw new Error('bad type'); }), null);
+});
+
+test('every candidate is a type the recorder could be asked for', () => {
+  for (const t of CLIP_MIME_CANDIDATES) assert.match(t, /^video\/(mp4|webm)/);
+  assert.equal(extensionForMime(undefined), 'webm', 'defaults to the safe container');
+});
+
+
+// ---- Telling a silent clip apart from a silent film ----
+
+test('a clip with sound says nothing', () => {
+  assert.equal(silenceReason({ sound: 'recorded', filmDecodedAudio: true }), '');
+});
+
+test('a film whose audio the browser cannot decode is named as the cause', () => {
+  // The common one by far: rips carry AC-3 or DTS, Chrome decodes neither, and
+  // the film plays silently in the editor too.
+  const msg = silenceReason({ sound: 'silent', filmDecodedAudio: false });
+  assert.match(msg, /AC-3|DTS/);
+  assert.match(msg, /AAC/, 'and says what fixes it');
+});
+
+test('a decoding film that still records silent is called a bug', () => {
+  // The two cases must not wear the same message: this one is ours.
+  const msg = silenceReason({ sound: 'silent', filmDecodedAudio: true });
+  assert.match(msg, /bug/);
+  assert.doesNotMatch(msg, /AC-3/);
+});
+
+test('an untapped film is its own answer', () => {
+  assert.match(silenceReason({ sound: 'untapped' }), /couldn’t be tapped/);
+});
+
+test('an unknown decoder state still says something useful', () => {
+  const msg = silenceReason({ sound: 'silent', filmDecodedAudio: null });
+  assert.ok(msg.length > 0);
+  assert.match(msg, /silent/);
+  assert.equal(silenceReason({}), silenceReason({ sound: 'silent', filmDecodedAudio: null }));
+  assert.ok(silenceReason().length > 0, 'and never throws on nothing');
+});
+
+
+test('the pre-flight warning names the codecs and the way out', () => {
+  // Shown the moment a film loads, before anyone spends a render on it.
+  assert.match(NO_FILM_AUDIO_NOTE, /AC-3/);
+  assert.match(NO_FILM_AUDIO_NOTE, /DTS/);
+  assert.match(NO_FILM_AUDIO_NOTE, /AAC/);
+  // And it must not imply the film itself is broken — it plays fine elsewhere.
+  assert.match(NO_FILM_AUDIO_NOTE, /this browser|Chrome/);
+});
+
+
+// ---- Trimming one scene by hand ----
+
+test('a nudge gives the scene more film at that end', () => {
+  const cue = { start: 600, end: 604 };
+  const plain = sceneWindow(quote('a', cue), { duration: 7000 });
+  const later = sceneWindow({ ...quote('a', cue), trim: { before: 0, after: 3 } }, { duration: 7000 });
+  assert.equal(later.start, plain.start, 'the front is untouched');
+  assert.equal(later.end, plain.end + 3);
+  const earlier = sceneWindow({ ...quote('a', cue), trim: { before: 2, after: 0 } }, { duration: 7000 });
+  assert.equal(earlier.start, plain.start - 2);
+  assert.equal(earlier.end, plain.end, 'and the back is untouched');
+});
+
+test('a negative nudge takes film back', () => {
+  const cue = { start: 600, end: 604 }; // short enough that nothing is capped
+  const plain = sceneWindow(quote('a', cue), { duration: 7000 });
+  const tighter = sceneWindow({ ...quote('a', cue), trim: { before: -1, after: -2 } }, { duration: 7000 });
+  assert.equal(tighter.start, plain.start + 1);
+  assert.equal(tighter.end, plain.end - 2);
+});
+
+test('a hand trim can push a scene past the automatic ceiling', () => {
+  // MAX_SCENE is there to catch a bad cue match, not to overrule someone who
+  // has just watched the scene and wants five more seconds of it.
+  const long = sceneWindow({ ...quote('a', { start: 600, end: 610 }), trim: { before: 0, after: 8 } },
+    { duration: 7000 });
+  assert.ok(long.end - long.start > MAX_SCENE, `${long.end - long.start}s should beat the ${MAX_SCENE}s ceiling`);
+});
+
+test('a trimmed scene still cannot run off either end of the film', () => {
+  const early = sceneWindow({ ...quote('a', { start: 1, end: 3 }), trim: { before: 30, after: 0 } },
+    { duration: 7000 });
+  assert.ok(early.start >= 0);
+  const late = sceneWindow({ ...quote('a', { start: 6990, end: 6995 }), trim: { before: 0, after: 30 } },
+    { duration: 7000 });
+  assert.ok(late.end <= 7000);
+});
+
+test('the title card can be trimmed the same way', () => {
+  const plain = titleWindow({ timecode: 90 }, { duration: 7000 });
+  const longer = titleWindow({ timecode: 90, trim: { before: 1, after: 2 } }, { duration: 7000 });
+  assert.equal(longer.start, 89, 'starts a second earlier');
+  assert.equal(longer.end - longer.start, (plain.end - plain.start) + 3);
+});
+
+test('nudging walks the trim a step at a time', () => {
+  let slide = quote('a', { start: 600, end: 604 });
+  for (let i = 0; i < 4; i++) slide = { ...slide, trim: nudgeTrim(slide, 'after', +1) };
+  assert.equal(trimOf(slide).after, 4 * TRIM_STEP);
+  slide = { ...slide, trim: nudgeTrim(slide, 'after', -1) };
+  assert.equal(trimOf(slide).after, 3 * TRIM_STEP);
+  assert.equal(trimOf(slide).before, 0, 'the other end never moves');
+});
+
+test('a trim cannot run away', () => {
+  let slide = quote('a', { start: 600, end: 604 });
+  for (let i = 0; i < 100; i++) slide = { ...slide, trim: nudgeTrim(slide, 'before', +1) };
+  assert.equal(trimOf(slide).before, TRIM_LIMIT);
+});
+
+test('an untrimmed slide reads as untrimmed, whatever junk it carries', () => {
+  assert.deepEqual(trimOf(null), { before: 0, after: 0 });
+  assert.deepEqual(trimOf({}), { before: 0, after: 0 });
+  assert.deepEqual(trimOf({ trim: { before: 'x', after: null } }), { before: 0, after: 0 });
+  assert.equal(isTrimmed({}), false);
+  assert.equal(isTrimmed({ trim: { before: 0, after: 2 } }), true);
+  assert.equal(describeTrim({}), '');
+});
+
+test('the trim reads back in plain words', () => {
+  assert.equal(describeTrim({ trim: { before: 2, after: 3 } }), '+2s in, +3s out');
+  assert.equal(describeTrim({ trim: { before: 0, after: -1 } }), '-1s out');
+});
+
+test('a plan picks up the trims', () => {
+  const slides = [
+    { id: 't', kind: 'title', timecode: 90 },
+    { ...quote('a', { start: 600, end: 603 }), trim: { before: 0, after: 5 } },
+  ];
+  const plan = planClip(slides, { duration: 7000, isTitle, isOutro });
+  const untrimmed = planClip([slides[0], quote('a', { start: 600, end: 603 })],
+    { duration: 7000, isTitle, isOutro });
+  assert.ok(Math.abs(plan.seconds - untrimmed.seconds - 5) < 1e-9, 'the clip is five seconds longer');
+});
+
+test('half-second nudges move only the requested edge by exactly half a second', () => {
+  for (const cue of [{ start: 100, end: 104 }, { start: 100, end: 190 }]) {
+    const slide = quote('a', cue);
+    const plain = sceneWindow(slide);
+    for (const edge of ['before', 'after']) {
+      for (const dir of [-1, 1]) {
+        const changed = sceneWindow({ ...slide, trim: nudgeTrim(slide, edge, dir, 0.5) });
+        assert.equal(changed[edge === 'before' ? 'end' : 'start'], plain[edge === 'before' ? 'end' : 'start']);
+        assert.ok(Math.abs((edge === 'before' ? plain.start - changed.start : changed.end - plain.end) - dir * 0.5) < 1e-9);
+      }
+    }
+  }
+});
+
+test('complete dialogue beyond twelve seconds is preserved', () => {
+  const cut = sceneWindow(quote('a', { start: 100, end: 118 }));
+  assert.equal(cut.end, 118 + PAD_AFTER);
+});
+
+test('automatic padding stops before neighboring dialogue, even for short cues', () => {
+  const slide = quote('a', { start: 100, end: 100.5, previousEnd: 99.8, nextStart: 100.7 });
+  const cut = sceneWindow(slide);
+  assert.ok(cut.start >= 99.8 && cut.start <= 100);
+  assert.ok(cut.end >= 100.5 && cut.end < 100.7);
+  assert.ok(sceneWindow({ ...slide, trim: { after: 1 } }).end > 100.7, 'manual trims can include the next line');
+});
+
+test('manual cuts can be shorter than the automatic reading minimum', () => {
+  const cut = sceneWindow({ ...quote('a', { start: 100, end: 103 }), trim: { before: -2, after: -2 } });
+  assert.ok(cut.end - cut.start < MIN_SCENE);
+  assert.ok(cut.end - cut.start >= 0.5);
+});
+
+test('invalid spans never cut unrelated footage at the end of the film', () => {
+  assert.equal(sceneWindow(quote('a', { start: 100, end: 104 }), { duration: 50 }), null);
+  assert.equal(titleWindow({ timecode: 100 }, { duration: 50 }), null);
+});
+
+test('the title end trim still works when picked near the end of the film', () => {
+  const plain = titleWindow({ timecode: 98 }, { duration: 100 });
+  const cut = titleWindow({ timecode: 98, trim: { after: -0.5 } }, { duration: 100 });
+  assert.equal(cut.start, plain.start);
+  assert.equal(cut.end, plain.end - 0.5);
+});

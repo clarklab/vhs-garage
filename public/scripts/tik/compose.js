@@ -4,7 +4,8 @@
 // rounded "pills", one pill per wrapped line. composeToCanvas() draws onto a
 // canvas you own (live preview thumbs); composeSlide() renders → JPEG Blob.
 import { computeSlideLayout, containFrame } from './layout.js';
-import { wrapLines, fitFontSize } from './caption.js';
+import { wrapLines, fitFontSize, wordProgress, spokenIndex, karaokeTokens } from './caption.js';
+import { filterString, zoomSourceRect } from './adjust.js';
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
@@ -53,6 +54,28 @@ const PILL_PAD_X = 26;             // pill padding around each line
 const PILL_PAD_Y = 12;
 const PILL_RADIUS = 18;
 const PILL_GAP = 8;                // vertical gap between line pills
+
+// Caption looks. `pills` is the slideshow's white lozenges — the house style,
+// and still the default everywhere. The other two are for the video format,
+// where a still's design does not automatically hold up over moving film:
+//
+//   cc       what a subtitle looks like: white on a dark box, under the picture.
+//   karaoke  the same box, with approximate words highlighted within each
+//            subtitle cue. Gaps between cues preserve pauses.
+export const CAPTION_STYLES = ['pills', 'cc', 'karaoke'];
+export function captionStyleOf(v) {
+  return CAPTION_STYLES.includes(v) ? v : 'pills';
+}
+const CC_BG = 'rgba(0, 0, 0, 0.78)';
+const CC_PAD_X = 22;
+const CC_RADIUS = 8;
+const CC_SAID = '#ffffff';
+const CC_TO_COME = 'rgba(255, 255, 255, 0.5)';
+const CC_NOW = '#fde047';          // the word being said, in VHS-yellow
+const CC_NOW_GLOW = 'rgba(253, 224, 71, 0.55)';
+// A speaker label is not spoken, so it never lights and never dims: it is a
+// label, on the whole time.
+const CC_SPEAKER = 'rgba(255, 255, 255, 0.85)';
 const FIT_VPAD = 40;               // margin above/below the group in ratio mode
 
 // Rounded-rect path (fallback-safe: not all canvas impls have ctx.roundRect).
@@ -77,7 +100,184 @@ function pillPath(ctx, x, y, w, h, r) {
 // square or widescreen image goes full width; a tall one is held back so it
 // can't push the caption down the slide. The whole image is always visible —
 // this is a contain fit, never a crop.
-export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null } = {}) {
+// An ImageBitmap reports its size on width/height; a <video> reports the real
+// thing on videoWidth/videoHeight and leaves width/height as the (usually
+// absent) HTML attributes. Both are valid frame sources — the clip renderer
+// draws the playing video straight into the same composition as the slides.
+export function frameWidth(src) {
+  return Number(src?.videoWidth) || Number(src?.width) || 0;
+}
+export function frameHeight(src) {
+  return Number(src?.videoHeight) || Number(src?.height) || 0;
+}
+
+export function wantsQuoteStamp({ format, kind } = {}) {
+  return format === 'quotes' && kind === 'title';
+}
+
+// The Quote-a-long wordmark, laid over the title card.
+//
+// Placement and tilt are the ones the drawn-text version used, because those
+// were right: a little past centre, high on the frame, kicked up 12 degrees so
+// it reads as something stuck on rather than something rendered.
+const STAMP_URL = '/tik/quote.png';
+const STAMP_WIDTH_RATIO = 0.88;   // of the frame's width
+const STAMP_TILT_DEG = -7;
+// Dead centre. It sat at 0.52 back when the badge was small and being a little
+// off-axis read as casual. At 88% of the frame it does not: the art itself is
+// centred to within half a percent, so a 2% offset simply makes the left margin
+// twice the right one, which reads as a mistake rather than as a flourish.
+const STAMP_CX_RATIO = 0.5;
+const STAMP_CY_RATIO = 0.38;
+const STAMP_MAX_FRAME_HEIGHT = 0.92;   // of the room it has above and below, so it never touches an edge
+const STAMP_MAX_FRAME_WIDTH = 0.96;    // and the same either side
+
+// High on the frame is right for most posters, but a poster's own title sits
+// wherever its designer put it, and on some of them the badge lands straight on
+// top of the lettering. So the height is nudgeable per slide.
+//
+// A step is a share of the SLIDE, not of the frame: 3% of a scope film's frame
+// is thirteen pixels, so a step measured off the frame moved almost nothing on
+// exactly the slides that most need the badge moved.
+//
+// Nothing about the frame limits the travel. The badge is welcome to hang over
+// the bottom of the picture and onto the black — a badge is a sticker, and half
+// off the edge is a real placement. The only stop is the slide itself, because
+// past that edge there is nothing to look at.
+export const STAMP_NUDGE_STEP = 0.025;   // of the slide's height
+export const STAMP_NUDGE_MIN = -24;
+export const STAMP_NUDGE_MAX = 24;
+
+export function clampStampNudge(n) {
+  const v = Math.round(Number(n) || 0);
+  if (!Number.isFinite(v)) return 0;
+  return Math.min(STAMP_NUDGE_MAX, Math.max(STAMP_NUDGE_MIN, v));
+}
+
+// Where the badge ends up, in slide pixels, and whether it is against an edge
+// OF THE SLIDE.
+//
+// Moving the badge must not RESIZE it — sizing off the nudged position shrank
+// it by 40% when it was pushed up a 16:9 frame — so the size is settled first
+// and passed in here as `half`, half the badge's tilted height.
+//
+// atTop / atBottom are what the arrows go by: an arrow is dead when the badge
+// has reached the edge of the slide, and never a click earlier.
+export function stampTravel(nudge = 0, { frameY = 0, frameH = 0, canvasH = 0, half = 0 } = {}) {
+  const raw = frameY + frameH * STAMP_CY_RATIO + clampStampNudge(nudge) * STAMP_NUDGE_STEP * canvasH;
+  const lo = Math.max(0, Number(half) || 0);
+  const hi = canvasH - lo;
+  if (!(canvasH > 0) || lo > hi) return { y: raw, atTop: false, atBottom: false };
+  const E = 1e-9;
+  return {
+    y: Math.min(hi, Math.max(lo, raw)),
+    atTop: raw <= lo + E,
+    atBottom: raw >= hi - E,
+  };
+}
+
+// Would another step in this direction do anything?
+//
+// `placement` is the stampTravel result from the last draw, when there is one:
+// how far the badge can go depends on the slide it was drawn on, and an arrow
+// that keeps clicking without moving anything reads as broken. Without it this
+// falls back to the step range, which is the safe direction — enabled.
+export function canNudgeStamp(nudge, delta, placement = null) {
+  if (placement && delta < 0 && placement.atTop) return false;
+  if (placement && delta > 0 && placement.atBottom) return false;
+  return clampStampNudge(nudge) !== clampStampNudge(clampStampNudge(nudge) + delta);
+}
+
+let stampPromise = null;
+let stamp = null;
+
+// Preloaded, because composeToCanvas is synchronous and an <img> that has not
+// decoded yet draws nothing. Same shape as captionFontReady: resolve once, and
+// whoever needs a correct frame awaits it first.
+export function quoteStampReady() {
+  if (stampPromise) return stampPromise;
+  stampPromise = (async () => {
+    try {
+      const res = await fetch(STAMP_URL);
+      if (!res.ok) throw new Error(`stamp ${res.status}`);
+      stamp = await createImageBitmap(await res.blob());
+      return true;
+    } catch (e) {
+      // A missing stamp costs the title slide its badge, never the slide.
+      console.error('[tik] Quote-a-long stamp failed to load:', e);
+      return false;
+    }
+  })();
+  return stampPromise;
+}
+
+function drawQuoteStamp(ctx, frameX, frameY, frameW, frameH, nudge = 0, canvasH = 0) {
+  if (!stamp) return;   // not decoded yet; the caller redraws when it is
+  const aspect = stamp.height / stamp.width;
+  const tilt = STAMP_TILT_DEG * Math.PI / 180;
+  const sin = Math.abs(Math.sin(tilt));
+  const cos = Math.abs(Math.cos(tilt));
+
+  // Width first, then hold it inside the picture.
+  //
+  // A tilted rectangle is taller than the art is, and a scope film's frame is
+  // short: contain-fitting 2.39:1 across the canvas leaves a band about 40% as
+  // tall as it is wide. At this size the badge would hang off the top of it
+  // onto the black, reading as floating rather than stuck on. So the width
+  // ratio is the intent and this is the ceiling, which only binds on the wide
+  // aspect ratios where it has to.
+  // The badge is off-centre both ways, so the room it has on each axis is twice
+  // the SHORTER of the two gaps around it, not the whole frame. Measuring
+  // against the full height is what let it hang off the top of a scope frame;
+  // now it is near enough the full width for the same trap to exist sideways.
+  const cx = frameW * STAMP_CX_RATIO;
+  // Size is measured from the DEFAULT height, so a nudge moves the badge and
+  // nothing else. (Sizing off the nudged height shrank it on short frames.)
+  const cy0 = frameH * STAMP_CY_RATIO;
+  const roomX = 2 * Math.min(cx, frameW - cx) * STAMP_MAX_FRAME_WIDTH;
+  const roomY = 2 * Math.min(cy0, frameH - cy0) * STAMP_MAX_FRAME_HEIGHT;
+  // Width and height of the TILTED box, per unit of art width.
+  const boxW = cos + aspect * sin;
+  const boxH = sin + aspect * cos;
+  const w = Math.min(frameW * STAMP_WIDTH_RATIO, roomX / boxW, roomY / boxH);
+  const h = w * aspect;
+  // Now place it. The badge may end up over the black below the picture; that
+  // is a placement, not an accident, so only the slide's own edge stops it.
+  const placement = stampTravel(nudge, { frameY, frameH, canvasH, half: (w * boxH) / 2 });
+  ctx.save();
+  ctx.translate(frameX + cx, placement.y);
+  ctx.rotate(STAMP_TILT_DEG * Math.PI / 180);
+  ctx.drawImage(stamp, -w / 2, -h / 2, w, h);
+  ctx.restore();
+  return placement;
+}
+
+// Left-align the caption pills instead of centring them.
+//
+// A Quote-a-long exchange is one line per character, and centred pills turn a
+// back-and-forth into a ragged diamond where the eye cannot find where each
+// speaker starts. Flush left, the names stack and it reads as dialogue.
+//
+// Only for that case: a one-line quote, the title slide and the sign-off are
+// all single thoughts and look better centred, the way every other format is.
+export function wantsLeftAlign({ format, kind, lines } = {}) {
+  if (format !== 'quotes') return false;
+  if (kind === 'title' || kind === 'outro') return false;
+  return (Array.isArray(lines) ? lines : []).filter((l) => String(l || '').trim()).length > 1;
+}
+
+// A designed end card is already the whole slide — picture, words and all — so
+// it is drawn edge to edge with no caption on top. Recognised by being an
+// outro at the canvas's own 9:16, which the square logo card never is; that
+// keeps every caller (previews, export, publish, the clip) right without each
+// of them having to pass a flag.
+export function isFullCard({ kind, width, height } = {}) {
+  if (kind !== 'outro' || !(width > 0) || !(height > 0)) return false;
+  return Math.abs(width / height - CANVAS_W / CANVAS_H) < 0.01;
+}
+
+export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 1, fontScale = 1, maxFrameHeightRatio = null, format, kind, adjust = null, stampNudge = 0,
+  captionStyle = 'pills', karaokeProgress = null, karaokeState = null } = {}) {
   const fs = Math.min(Math.max(Number(fontScale) || 1, 0.5), 1.6);
   const heightRatio = Number.isFinite(maxFrameHeightRatio)
     ? Math.min(Math.max(maxFrameHeightRatio, 0.05), 1)
@@ -89,8 +289,20 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   const ctx = cvs.getContext('2d');
   ctx.scale(scale, scale);
 
+  // The frame source is an ImageBitmap for a slide and the <video> element
+  // itself for the clip renderer, and a video keeps its real size on different
+  // properties (`width` is the HTML attribute, usually 0). Everything below
+  // works off these two numbers.
+  const srcW = frameWidth(bitmap);
+  const srcH = frameHeight(bitmap);
+
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  if (isFullCard({ kind, width: srcW, height: srcH })) {
+    ctx.drawImage(bitmap, 0, 0, CANVAS_W, CANVAS_H);
+    return;
+  }
 
   const fullText = `${titleLine ? `${titleLine}\n` : ''}${caption}`.trim();
 
@@ -129,10 +341,10 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
         CANVAS_H - FIT_VPAD * 2 - (capH ? GAP + capH : 0),
       ),
     );
-    F = containFrame(bitmap.width, bitmap.height, CANVAS_W, availH);
+    F = containFrame(srcW, srcH, CANVAS_W, availH);
   } else {
     // Frame size: full width, aspect preserved, capped so text always has room.
-    F = computeSlideLayout(bitmap.width, bitmap.height).frame; // w/h only; we position ourselves
+    F = computeSlideLayout(srcW, srcH).frame; // w/h only; we position ourselves
     if (fullText) {
       const maxTextH = maxGroupH - F.h - GAP;
       fontSize = fitFontSize(wrapAt(fontSize).length, Math.max(maxTextH, lineBoxH(minFont)), {
@@ -153,29 +365,122 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
   const groupH = F.h + (textH ? GAP + textH : 0);
   const frameX = Math.round((CANVAS_W - F.w) / 2);
   const frameY = Math.max(0, Math.round((CANVAS_H - groupH) / 2));
-  ctx.drawImage(bitmap, frameX, frameY, F.w, F.h);
-
-  // Caption pills: white rounded pill per line, bold black centered text.
-  // Blank lines (blank paragraph in the textarea) get no pill — just space.
+  // Correction rides on the frame only. Filtering the whole context would drag
+  // the caption pills and the stamp along with it, and a brightened white pill
+  // is just a blown-out white pill.
+  //
+  // Zoom is the SOURCE rectangle, never the destination: the middle of the
+  // frame is read and drawn into the same F.w by F.h box it always occupied, so
+  // the slide keeps its size and shape and only the framing moves. Scaling the
+  // destination instead would resize the picture and shove the caption down.
+  const correction = filterString(adjust);
+  const { sx, sy, sw, sh } = zoomSourceRect(adjust, srcW, srcH);
+  const drawFrame = () => ctx.drawImage(bitmap, sx, sy, sw, sh, frameX, frameY, F.w, F.h);
+  if (correction) {
+    ctx.save();
+    ctx.filter = correction;
+    drawFrame();
+    ctx.restore();
+  } else {
+    drawFrame();
+  }
+  // The caption, in whichever of the three looks was asked for. All of them
+  // stack under the picture, never over it.
   if (lines.length) {
     ctx.font = FONT(fontSize);
-    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    const left = wantsLeftAlign({ format, kind, lines });
+    ctx.textAlign = left ? 'left' : 'center';
     const cx = CANVAS_W / 2;
+    const style = captionStyleOf(captionStyle);
+    const padX = style === 'pills' ? PILL_PAD_X : CC_PAD_X;
+    const boxW = (line) => Math.min(ctx.measureText(line).width + padX * 2, CANVAS_W - 40);
+    // Flush to the frame's own left edge so the block reads as one column with
+    // the image, and never so far right that the widest box runs off-canvas.
+    const widest = left ? Math.max(...lines.filter(Boolean).map(boxW)) : 0;
+    const leftX = Math.max(20, Math.min(frameX, CANVAS_W - 20 - widest));
+    const boxH = lineBoxH(fontSize);
+
+    // Karaoke lights one word at a time, and the words run across the WHOLE
+    // caption rather than restarting per line — the line breaks are a wrapping
+    // accident, the delivery is not.
+    const tokens = style === 'karaoke' ? [
+      ...String(titleLine || '').split(/\s+/).filter(Boolean).map((text) => ({ text, spoken: false })),
+      ...karaokeTokens(caption),
+    ] : [];
+    const flat = tokens.filter((t) => t.spoken).map((t) => t.text);
+    const spans = flat.length ? wordProgress(flat) : [];
+    const now = karaokeState?.active ?? (spans.length ? spokenIndex(spans, karaokeProgress) : -1);
+    const completed = karaokeState?.completed ?? Math.max(0, now);
+    let wordAt = 0;
+    let tokenAt = 0;
+
     let y = frameY + F.h + GAP;
     for (const line of lines) {
-      const pillH = lineBoxH(fontSize);
-      if (!line) { y += pillH + PILL_GAP; continue; } // no empty white blob
-      const textW = ctx.measureText(line).width;
-      const pillW = Math.min(textW + PILL_PAD_X * 2, CANVAS_W - 40);
-      ctx.fillStyle = '#ffffff';
-      pillPath(ctx, cx - pillW / 2, y, pillW, pillH, PILL_RADIUS);
+      if (!line) { y += boxH + PILL_GAP; continue; } // blank line: just space
+      const w = boxW(line);
+      const x = left ? leftX : cx - w / 2;
+      const textY = y + boxH / 2 + 1;
+
+      if (style === 'pills') {
+        ctx.fillStyle = '#ffffff';
+        pillPath(ctx, x, y, w, boxH, PILL_RADIUS);
+        ctx.fill();
+        ctx.fillStyle = '#000000';
+        ctx.fillText(line, left ? x + PILL_PAD_X : cx, textY);
+        y += boxH + PILL_GAP;
+        continue;
+      }
+
+      // Closed-caption box: white on near-black, the way a subtitle looks.
+      ctx.fillStyle = CC_BG;
+      pillPath(ctx, x, y, w, boxH, CC_RADIUS);
       ctx.fill();
-      ctx.fillStyle = '#000000';
-      ctx.fillText(line, cx, y + pillH / 2 + 1);
-      y += pillH + PILL_GAP;
+
+      if (style !== 'karaoke') {
+        ctx.fillStyle = CC_SAID;
+        ctx.fillText(line, left ? x + CC_PAD_X : cx, textY);
+        y += boxH + PILL_GAP;
+        continue;
+      }
+
+      // Word by word, so each can carry its own colour. Drawn from the line's
+      // own left edge with textAlign left, because centring per word would
+      // space them evenly instead of naturally.
+      const words = line.split(/\s+/).filter(Boolean);
+      const spaceW = ctx.measureText(' ').width;
+      const lineW = words.reduce((t, word, i) => t + ctx.measureText(word).width + (i ? spaceW : 0), 0);
+      const prevAlign = ctx.textAlign;
+      ctx.textAlign = 'left';
+      let wx = left ? x + CC_PAD_X : cx - lineW / 2;
+      for (const word of words) {
+        const spoken = tokens[tokenAt++]?.spoken;
+        const i = spoken ? wordAt++ : -1;
+        const isNow = spoken && i === now;
+        if (isNow) {
+          ctx.save();
+          ctx.shadowColor = CC_NOW_GLOW;
+          ctx.shadowBlur = 18;
+        }
+        ctx.fillStyle = !spoken ? CC_SPEAKER : isNow ? CC_NOW : (i < completed ? CC_SAID : CC_TO_COME);
+        ctx.fillText(word, wx, textY);
+        if (isNow) ctx.restore();
+        wx += ctx.measureText(word).width + spaceW;
+      }
+      ctx.textAlign = prevAlign;
+      y += boxH + PILL_GAP;
     }
   }
+  // The badge goes on LAST, over the pills. It can be nudged down past the
+  // picture, and a sticker that slides behind the caption is a sticker that
+  // looks broken. Its placement goes back to the caller because the nudge
+  // arrows die at the edge of the slide, and only the draw knows where the
+  // badge ended up.
+  const stampPlacement = wantsQuoteStamp({ format, kind })
+    ? drawQuoteStamp(ctx, frameX, frameY, F.w, F.h, stampNudge, CANVAS_H)
+    : null;
+
+  return { stamp: stampPlacement };
 }
 
 // Render to an offscreen canvas and return a JPEG Blob for upload.
@@ -184,7 +489,7 @@ export function composeToCanvas(cvs, bitmap, caption, { titleLine = '', scale = 
 // against Inter. Previews that were drawn before it arrived get redrawn by the
 // caller; this end is the authoritative one and must never be the odd one out.
 export async function composeSlide(bitmap, caption, opts = {}) {
-  await captionFontReady();
+  await Promise.all([captionFontReady(), quoteStampReady()]);
   const cvs = document.createElement('canvas');
   composeToCanvas(cvs, bitmap, caption, opts);
   return await new Promise((resolve) => cvs.toBlob(resolve, 'image/jpeg', 0.9));
