@@ -217,10 +217,13 @@ async function grabAt(timecode) {
 // Branded outro slide: the VHS Garage logo as the "frame" + a follow CTA,
 // flowing through the normal slide pipeline (editable, reorderable).
 const OUTRO_LOGO_URL = '/images/vhs-garage-logo-square.png'; // yellow lockup (V mark), black field
-async function makeOutroSlide() {
+async function fetchOutroLogo() {
   const res = await fetch(OUTRO_LOGO_URL);
   if (!res.ok) throw new Error(`Couldn't load the outro logo (${res.status})`);
-  const blob = await res.blob();
+  return await res.blob();
+}
+async function makeOutroSlide() {
+  const blob = await fetchOutroLogo();
   const bitmap = await createImageBitmap(blob);
   return {
     id: String(nextId++), bitmap, blob,
@@ -530,14 +533,19 @@ async function openProject(id) {
   const loaded = [];
   for (const s of rec.slides || []) {
     try {
-      const bitmap = await createImageBitmap(s.frame);
+      // Drafts saved during the short-lived designed end cards (Oct 2026) end
+      // on a full 9:16 card that the slide pipeline no longer draws edge to
+      // edge; put the logo back so they look like every other set.
+      const legacyCard = s.kind === 'outro' && s.outroStyle && s.outroStyle !== 'logo';
+      const frame = legacyCard ? await fetchOutroLogo().catch(() => s.frame) : s.frame;
+      const bitmap = await createImageBitmap(frame);
       if (seq !== openSeq) { // another project opened while decoding — abort
         bitmap.close?.();
         loaded.forEach((l) => l.bitmap?.close?.());
         return;
       }
       loaded.push({
-        id: String(nextId++), bitmap, blob: s.frame,
+        id: String(nextId++), bitmap, blob: frame,
         caption: s.caption || '', timecode: s.timecode, grabHint: s.grabHint || '',
         fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
         entry: s.entry || null, section: s.section || null, cue: s.cue || null,
