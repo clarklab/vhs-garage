@@ -24,7 +24,6 @@ import { initShoot, refreshShoot, isShooting } from './shoot.js';
 import { fetchTriviaPost, fetchQuotesPost, fetchSubtitles } from './autopilot.js';
 import { fontScaleForQuote } from './caption.js';
 import { makeProject, defaultPostFields, pickOutro } from './project.js';
-import { outroDesign, rememberedOutro } from './outros.js';
 import { parseTitleList, pickBestMatch, queueAdmission } from './movielist.js';
 import { houseSetAt } from './hashtags.js';
 import { putProject, listProjects } from './store.js';
@@ -1181,9 +1180,8 @@ async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
         timecode: null,
         grabHint: '',
         fontScale: 1, role: null, kind: 'outro', entry: null, section: null,
-        outroStyle: outro.style,
-        frame: outro.blob,
-        batchShot: 'skip', // the end card IS the frame; never grab over it
+        frame: outro,
+        batchShot: 'skip', // the logo IS the frame; never grab over it
       }] : []),
     ],
     thumb,
@@ -1192,19 +1190,19 @@ async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
   return id;
 }
 
-// The branded sign-off: the same end card the editor last picked (the logo
-// unless one of the designed cards was chosen), and the same rotating wording
-// from project.js's shared pool.
-//
-// Never fatal: a missing card costs the outro slide, not the whole draft.
+// The branded sign-off, same logo and wording the hand-driven flow appends.
+// The caption now comes from project.js's shared pool rather than a copy kept
+// in step by hand, so batch drafts get the same rotating sign-off.
+const OUTRO_LOGO_URL = '/images/vhs-garage-logo-square.png';
+
+// Never fatal: a missing logo costs the outro slide, not the whole draft.
 async function fetchOutroFrame() {
-  const design = outroDesign(rememberedOutro());
   try {
-    const res = await fetch(design.still);
-    if (!res.ok) throw new Error(`${design.label} end card ${res.status}`);
-    return { blob: await res.blob(), style: design.key };
+    const res = await fetch(OUTRO_LOGO_URL);
+    if (!res.ok) throw new Error(`logo ${res.status}`);
+    return await res.blob();
   } catch (e) {
-    console.error('[tik-batch] end card failed; draft written without it', { message: e.message });
+    console.error('[tik-batch] outro logo failed; draft written without it', { message: e.message });
     return null;
   }
 }
