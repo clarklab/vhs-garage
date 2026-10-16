@@ -184,12 +184,6 @@ export function resolveRecovery(id, state, fields = {}) {
   pushHistory(target);
 }
 
-// Part files for a recording still awaiting a join — the library's orphan
-// scan skips these so they don't get imported as separate clips.
-export function isPendingPartFile(name) {
-  return pendingRecoveries().some(j => (j.parts || []).some(p => p && p.name === name));
-}
-
 export function diagnosticsText() {
   return JSON.stringify({ current: readJournal(), pending: readPending(), history: readHistory() }, null, 2);
 }

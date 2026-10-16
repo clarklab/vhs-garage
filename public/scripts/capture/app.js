@@ -7,7 +7,7 @@ import {
   joinParts, removeParts
 } from './recorder.js';
 import {
-  pendingRecoveries, resolveRecovery, isPendingPartFile, diagnosticsText
+  pendingRecoveries, resolveRecovery, diagnosticsText
 } from './rec-journal.js';
 import {
   getClips, addClip, updateClip, deleteClip, createClipEntry, captureThumbnail, exportCatalog, renderLibrary, shrinkDataUrlForCatalog
@@ -3417,10 +3417,9 @@ async function findOrphansOnDisk() {
   for (const { name, handle } of videoFiles) {
     const basename = name.replace(/\.(webm|mp4)$/, '');
     if (SLEEVE_SUFFIX_RE.test(basename)) continue;
-    // Part files of an interrupted recording — the recovery prompt joins
-    // them; importing each as its own clip would be wrong.
-    if (isPendingPartFile(name)) continue;
-    if ((isRecording() || isFinalizing()) && /\.part\d{3}\.(mp4|webm)$/.test(name)) continue;
+    // 10-minute part files of a recording (live, or interrupted and waiting
+    // for the recovery prompt's join) are never clips of their own.
+    if (/\.part\d{3}\.(mp4|webm)$/.test(name)) continue;
     if (knownBasenames.has(basename)) continue;
     if (sidecarBasenames.has(basename)) continue;
     try {
@@ -6668,7 +6667,7 @@ function showRecoveryToast(j) {
     <div class="toast-title-row">
       <span class="toast-title" title="${escapeHtml(headline)}">${escapeHtml(headline)}</span>
       <span class="toast-state-label">Recovery</span>
-      <button class="toast-close-btn" data-action="close" title="Decide later">×</button>
+      <button class="toast-close-btn" data-action="close" title="Decide later — this comes back on the next page load">×</button>
     </div>
     <p class="toast-error-msg">${escapeHtml(detail)}</p>
     <p class="toast-error-msg" style="opacity:0.6;font-size:10px;">${escapeHtml(diag)}</p>
@@ -6676,7 +6675,7 @@ function showRecoveryToast(j) {
     <div class="toast-meta-row" style="gap:6px;">
       ${saved.length ? `<button data-action="join" style="${btnStyle}border-color:rgba(74,222,128,0.6);color:rgba(134,239,172,0.95);">Join &amp; add to library</button>` : ''}
       <button data-action="copy" style="${btnStyle}" title="Copy the recording log, to send along with a bug report">Copy log</button>
-      <button data-action="dismiss" style="${btnStyle}" title="${saved.length ? 'Leave the part files in the folder as they are' : 'Forget about it'}">${saved.length ? 'Leave parts' : 'Dismiss'}</button>
+      ${saved.length ? '' : `<button data-action="dismiss" style="${btnStyle}">Dismiss</button>`}
     </div>
   `;
   stack.appendChild(card);
@@ -6706,8 +6705,6 @@ function showRecoveryToast(j) {
     if (action === 'dismiss') {
       resolveRecovery(j.id, 'dismissed');
       close();
-      // Unhide the parts from the library's orphan scan.
-      checkLibraryResyncBanner().catch(() => {});
       return;
     }
     if (action === 'join') {
