@@ -10,7 +10,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",
-    "test": "node --test 'test/tik/**/*.test.mjs'"
+    "test": "node --test 'test/tik/**/*.test.mjs' 'test/capture/**/*.test.mjs'"
   },
   "dependencies": {
     "@astrojs/mdx": "^5.0.4",

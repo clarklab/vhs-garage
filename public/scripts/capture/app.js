@@ -3,8 +3,12 @@ import {
   requestPermissions, enumerateDevices, matchDevice, onDeviceChange, openStream
 } from './devices.js';
 import {
-  startRecording, stopRecording, isRecording, formatTime, formatSize, generateFilename, getLastFileHandle
+  startRecording, stopRecording, isRecording, isFinalizing, formatTime, formatSize, generateFilename, getLastFileHandle,
+  joinParts, removeParts
 } from './recorder.js';
+import {
+  pendingRecoveries, resolveRecovery, isPendingPartFile, diagnosticsText
+} from './rec-journal.js';
 import {
   getClips, addClip, updateClip, deleteClip, createClipEntry, captureThumbnail, exportCatalog, renderLibrary, shrinkDataUrlForCatalog
 } from './library.js';
@@ -171,7 +175,7 @@ async function startApp() {
 
     if (!videoDevice && isRecording()) {
       stopRecording();
-      alert('Capture card disconnected. Recording saved.');
+      showErrorToast('Capture card disconnected', 'Recording stopped. Everything captured so far is being saved.');
     }
 
     // If the Stream Info popup is open, refresh it so the new
@@ -220,6 +224,7 @@ async function startApp() {
   wireCustomScrollbars();
   wireKeyboardShortcuts();
   wireBeforeUnload();
+  checkInterruptedRecording().catch((e) => console.error('[capture] recovery check failed:', e));
   // No clip loaded at first paint — keep the clip-dependent fieldsets hidden.
   updateClipDependentPanels();
 
@@ -918,14 +923,29 @@ function wireRecordButton() {
   const timerEl = document.getElementById('rec-timer');
   const sizeEl = document.getElementById('rec-size');
 
+  // Back to the idle REC look. Called from every way a recording can end
+  // (button, capture card unplugged, recorder error) once saving is done.
+  const resetRecordUI = () => {
+    btn.classList.remove('recording');
+    btn.disabled = false;
+    btn.querySelector('.rec-label').textContent = 'REC';
+    document.getElementById('preview-container').classList.remove('recording-active');
+    document.getElementById('rec-overlay-timer').classList.add('hidden');
+    const liveTab = document.getElementById('tab-live');
+    if (liveTab) liveTab.textContent = '░ Live Feed ░';
+  };
+
   btn.addEventListener('click', async () => {
+    if (isFinalizing()) {
+      showInfoToast('Still saving', 'The last recording is still being written to disk. REC will be available when it finishes.');
+      return;
+    }
     if (isRecording()) {
-      btn.classList.remove('recording');
-      btn.querySelector('.rec-label').textContent = 'REC';
-      document.getElementById('preview-container').classList.remove('recording-active');
-      document.getElementById('rec-overlay-timer').classList.add('hidden');
-      const liveTab = document.getElementById('tab-live');
-      if (liveTab) liveTab.textContent = '░ Live Feed ░';
+      resetRecordUI();
+      // Joining the part files can take a minute on a long take; keep the
+      // button out of play until onStop / onError puts it back.
+      btn.disabled = true;
+      btn.querySelector('.rec-label').textContent = 'SAVING';
       stopRecording();
       return;
     }
@@ -1030,16 +1050,41 @@ function wireRecordButton() {
 
     try {
       await startRecording(recordStream, directoryHandle, currentFilename, bitrate, videoFormat, {
-      onTick: ({ elapsed, bytes }) => {
+      onTick: ({ elapsed, bytes, part, backlog, errors }) => {
         const timeStr = formatTime(elapsed);
         timerEl.textContent = timeStr;
-        sizeEl.textContent = formatSize(bytes);
+        // Part count shows the crash-safety net working: every finished
+        // part is already committed to disk.
+        sizeEl.textContent = part > 1 ? `${formatSize(bytes)} · part ${part}` : formatSize(bytes);
+        sizeEl.title = `Written: ${formatSize(bytes)}\nPart file: ${part} (a new one every 10 min — finished parts survive a crash)\nWaiting to write: ${formatSize(backlog)}\nErrors: ${errors}`;
+        sizeEl.classList.toggle('text-amber-400', errors > 0 || backlog > 32 * 1024 * 1024);
         document.getElementById('rec-overlay-timer').textContent = timeStr;
       },
-      onStop: async ({ duration, fileSize }) => {
+      onWarning: (message) => {
+        showErrorToast('Recording warning', message);
+      },
+      onFinalizeProgress: (fraction) => {
+        sizeEl.textContent = `Saving ${Math.floor(fraction * 100)}%`;
+      },
+      onStop: async (result) => {
+        const { duration, fileSize } = result;
         try {
+        resetRecordUI();
+        sizeEl.classList.remove('text-amber-400');
         timerEl.textContent = formatTime(duration);
         sizeEl.textContent = formatSize(fileSize);
+        currentFilename = result.filename;
+        if (result.stopError) {
+          showErrorToast('Recording stopped early', `${result.stopError.message || result.stopError}. Everything captured up to that point was saved.`);
+        }
+        if (!result.merged) {
+          showErrorToast(
+            `Recording saved in ${result.parts} parts`,
+            `Couldn't join the part files into one video: ${result.error?.message || 'unknown error'} Nothing is lost — the parts are in your save folder. Reload the page to retry the join.`
+          );
+        } else if (result.partsLost) {
+          showErrorToast('Part of the recording was lost', `${result.partsLost} ten-minute part(s) failed to save to disk, so the video has a gap. Check free space on the save drive.`);
+        }
 
         const thumbnail = captureThumbnail(document.getElementById('preview'));
 
@@ -1067,7 +1112,9 @@ function wireRecordButton() {
           currentTitle,
           settingsNow.nameFormat || 'title'
         );
-        if (desiredFilename && desiredFilename !== currentFilename) {
+        // Unjoined parts: leave the name alone so the recovery join still
+        // writes to the filename the catalog entry points at.
+        if (result.merged && desiredFilename && desiredFilename !== currentFilename) {
           // Suffix if the desired name collides with another clip's file.
           // allowSelf passes our current name so we don't suffix against
           // ourselves on the round-trip.
@@ -1217,10 +1264,10 @@ function wireRecordButton() {
       },
       onError: (err) => {
         finalizeProcessedAudio();
-        btn.classList.remove('recording');
-        document.getElementById('preview-container').classList.remove('recording-active');
-        document.getElementById('rec-overlay-timer').classList.add('hidden');
-        alert('Recording error: ' + err.message);
+        resetRecordUI();
+        sizeEl.classList.remove('text-amber-400');
+        console.error('[capture] recording failed:', err);
+        showErrorToast('Recording failed', err?.message || String(err));
       },
     });
     } catch (e) {
@@ -1229,10 +1276,9 @@ function wireRecordButton() {
       // audio chain so the AudioContext doesn't leak, then surface
       // the failure the same way onError does.
       finalizeProcessedAudio();
-      btn.classList.remove('recording');
-      document.getElementById('preview-container').classList.remove('recording-active');
-      document.getElementById('rec-overlay-timer').classList.add('hidden');
-      alert('Recording error: ' + (e?.message || e));
+      resetRecordUI();
+      console.error('[capture] could not start recording:', e);
+      showErrorToast('Recording failed to start', e?.message || String(e));
     }
   });
 }
@@ -3371,6 +3417,10 @@ async function findOrphansOnDisk() {
   for (const { name, handle } of videoFiles) {
     const basename = name.replace(/\.(webm|mp4)$/, '');
     if (SLEEVE_SUFFIX_RE.test(basename)) continue;
+    // Part files of an interrupted recording — the recovery prompt joins
+    // them; importing each as its own clip would be wrong.
+    if (isPendingPartFile(name)) continue;
+    if ((isRecording() || isFinalizing()) && /\.part\d{3}\.(mp4|webm)$/.test(name)) continue;
     if (knownBasenames.has(basename)) continue;
     if (sidecarBasenames.has(basename)) continue;
     try {
@@ -6528,11 +6578,160 @@ function wireYouTubePublish() {
 // UI whenever the active clip changes. Set by wireYouTubePublish.
 let publishStateForClip_external = null;
 
+// --- Interrupted recording recovery ---
+//
+// The recorder writes long takes as 10-minute part files and journals its
+// progress (rec-journal.js). A journal that never reached 'done' means the
+// tab crashed / was closed mid-take, or the join on stop failed. Offer to
+// join whatever parts made it to disk.
+
+async function ensureDirectoryForRecovery() {
+  if (directoryHandle) return directoryHandle;
+  const saved = await loadDirectoryHandle();
+  if (!saved) return null;
+  const perm = await saved.requestPermission({ mode: 'readwrite' });
+  if (perm !== 'granted') return null;
+  directoryHandle = saved;
+  document.getElementById('status-dir-label').textContent = saved.name;
+  return saved;
+}
+
+async function existingFile(dir, name) {
+  try { return await (await dir.getFileHandle(name)).getFile(); } catch { return null; }
+}
+
+async function recoverInterruptedRecording(j, setStatus) {
+  const dir = await ensureDirectoryForRecovery();
+  if (!dir) throw new Error('Allow access to the save folder (DIR) and try again.');
+  const allParts = (j.parts || []).filter(Boolean);
+  const saved = allParts.filter(p => p.state === 'closed');
+
+  const present = [];
+  for (const p of saved) if (await existingFile(dir, p.name)) present.push(p);
+  let file;
+  if (present.length < saved.length) {
+    // Crashed mid-cleanup: the join finished and some parts are already
+    // gone. Accept the joined file if it's there.
+    file = await existingFile(dir, j.filename);
+    if (!file || !file.size) throw new Error(`${saved.length - present.length} saved part(s) are missing from "${dir.name}".`);
+    console.warn('[capture] recovery: parts partly removed, using existing joined file', j.filename);
+  } else {
+    await joinParts(dir, present, j.filename, j.initBytes || 0, (f) => setStatus(`Joining… ${Math.floor(f * 100)}%`));
+    file = await existingFile(dir, j.filename);
+  }
+  await removeParts(dir, allParts);
+
+  // A 'needs-join' session already has its catalog entry (pointing at
+  // j.filename); an interrupted one never got that far.
+  const existing = getClips().find(c => c.filename === j.filename);
+  if (existing) {
+    updateClip(existing.id, { fileSize: file.size });
+  } else {
+    await recoverVideoOrphan(j.filename, file);
+  }
+  refreshLibrary();
+  checkLibraryResyncBanner().catch(() => {});
+  return file;
+}
+
+async function checkInterruptedRecording() {
+  for (const j of pendingRecoveries()) showRecoveryToast(j);
+}
+
+function showRecoveryToast(j) {
+  const saved = (j.parts || []).filter(p => p && p.state === 'closed');
+  const savedBytes = saved.reduce((n, p) => n + (p.bytes || 0), 0);
+  const interrupted = j.state === 'recording' || j.state === 'finalizing';
+  const lastErrors = (j.events || []).filter(e => e.level !== 'info').slice(-3).map(e => e.msg);
+  console.warn('[capture] unfinished recording session found', j);
+
+  const headline = interrupted
+    ? `Recording cut off at ${formatTime(j.elapsed || 0)}`
+    : `Recording left in ${saved.length} parts`;
+  let detail;
+  if (!saved.length) {
+    detail = 'No 10-minute part finished saving before it stopped, so there is nothing to recover.';
+  } else if (interrupted) {
+    detail = `${saved.length} part(s), ${formatSize(savedBytes)}, were saved to disk. The part being written when it stopped (up to the last 10 min) is lost.`;
+  } else {
+    detail = `${formatSize(savedBytes)} is safe on disk. Joining failed last time: ${j.joinError || 'unknown error'}`;
+  }
+  const heap = j.heapPeakMB ? ` · JS heap ${j.heapStartMB}→${j.heapPeakMB} MB` : '';
+  const diag = `${j.filename} · ${formatSize(j.bytes || 0)} written${heap}${lastErrors.length ? ' · last issue: ' + lastErrors[lastErrors.length - 1] : ''}`;
+
+  const stack = document.getElementById('toast-stack');
+  if (!stack) return;
+  const btnStyle = "flex:1;padding:6px 10px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.85);font-size:10px;text-transform:uppercase;letter-spacing:0.05em;cursor:pointer;font-family:'VCR',monospace;";
+  const card = document.createElement('div');
+  card.className = 'toast-card is-error';
+  card.innerHTML = `
+    <div class="toast-title-row">
+      <span class="toast-title" title="${escapeHtml(headline)}">${escapeHtml(headline)}</span>
+      <span class="toast-state-label">Recovery</span>
+      <button class="toast-close-btn" data-action="close" title="Decide later">×</button>
+    </div>
+    <p class="toast-error-msg">${escapeHtml(detail)}</p>
+    <p class="toast-error-msg" style="opacity:0.6;font-size:10px;">${escapeHtml(diag)}</p>
+    <p class="toast-error-msg" data-role="status" style="color:#fbbf24;"></p>
+    <div class="toast-meta-row" style="gap:6px;">
+      ${saved.length ? `<button data-action="join" style="${btnStyle}border-color:rgba(74,222,128,0.6);color:rgba(134,239,172,0.95);">Join &amp; add to library</button>` : ''}
+      <button data-action="copy" style="${btnStyle}" title="Copy the recording log, to send along with a bug report">Copy log</button>
+      <button data-action="dismiss" style="${btnStyle}" title="${saved.length ? 'Leave the part files in the folder as they are' : 'Forget about it'}">${saved.length ? 'Leave parts' : 'Dismiss'}</button>
+    </div>
+  `;
+  stack.appendChild(card);
+  requestAnimationFrame(() => card.classList.add('is-visible'));
+  const statusEl = card.querySelector('[data-role="status"]');
+  const setStatus = (t) => { statusEl.textContent = t; };
+  const close = () => {
+    card.classList.remove('is-visible');
+    setTimeout(() => card.remove(), 200);
+  };
+
+  card.addEventListener('click', async (e) => {
+    const action = e.target.closest('[data-action]')?.dataset.action;
+    if (!action) return;
+    if (action === 'close') return close();
+    if (action === 'copy') {
+      try {
+        await navigator.clipboard.writeText(diagnosticsText());
+        setStatus('Recording log copied to clipboard.');
+      } catch (err) {
+        console.error('[capture] could not copy recording log:', err);
+        setStatus('Could not copy — the log is also in the console.');
+        console.info(diagnosticsText());
+      }
+      return;
+    }
+    if (action === 'dismiss') {
+      resolveRecovery(j.id, 'dismissed');
+      close();
+      // Unhide the parts from the library's orphan scan.
+      checkLibraryResyncBanner().catch(() => {});
+      return;
+    }
+    if (action === 'join') {
+      card.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      setStatus('Joining…');
+      try {
+        const file = await recoverInterruptedRecording(j, setStatus);
+        resolveRecovery(j.id, 'done', { recoveredBytes: file.size });
+        close();
+        showSimpleToast('Recording recovered', `${j.filename} (${formatSize(file.size)}) is in your library.`, { kind: 'success' });
+      } catch (err) {
+        console.error('[capture] recovery join failed:', err);
+        setStatus(`Join failed: ${err.message || err}`);
+        card.querySelectorAll('button').forEach(b => { b.disabled = false; });
+      }
+    }
+  });
+}
+
 // --- Before unload ---
 
 function wireBeforeUnload() {
   window.addEventListener('beforeunload', (e) => {
-    if (isRecording()) {
+    if (isRecording() || isFinalizing()) {
       e.preventDefault();
       e.returnValue = 'Recording in progress. Are you sure you want to leave?';
     }
