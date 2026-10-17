@@ -29,6 +29,7 @@ import { houseSetAt } from './hashtags.js';
 import { putProject, listProjects } from './store.js';
 import { makeCardBitmap } from './placeholder.js';
 import { getRefreshToken } from './auth.js';
+import { writeSteps, runFraction, clockLabel, runSummary } from './writerun.js';
 
 const $ = (id) => document.getElementById(id);
 const ACCENT = '#10b981';
@@ -93,7 +94,22 @@ export function initBatch({ onExit = () => {} } = {}) {
     curateNote: $('batch-curate-note'),
     replaceAll: $('batch-replace-all'), reset: $('batch-reset'),
     trivia: $('batch-trivia'), triviaEmpty: $('batch-trivia-empty'),
+    writingNow: $('batch-writing-now'),
+    run: $('batch-write-run'), runIcon: $('bw-icon'), runTitle: $('bw-title'), runCount: $('bw-count'),
+    runClock: $('bw-clock'), runStop: $('bw-stop'), runNext: $('bw-next'), runClose: $('bw-close'),
+    runBar: $('bw-bar'), runFilms: $('bw-films'), runCurrent: $('bw-current'), runFilm: $('bw-film'),
+    runSteps: $('bw-steps'), runDetail: $('bw-detail'),
   };
+  els.runStop.addEventListener('click', () => {
+    if (!run || run.done) return;
+    run.stopRequested = true;
+    renderRun();
+  });
+  els.runNext.addEventListener('click', () => {
+    showTab('shoot', { animate: true });
+    refreshShoot();
+  });
+  els.runClose.addEventListener('click', () => { run = null; renderRun(); });
 
   els.back.addEventListener('click', () => exitTo());
   els.tabWrite.addEventListener('click', () => showTab('write'));
@@ -191,7 +207,7 @@ function setBusy(on) {
   if (els.format) {
     for (const btn of els.format.querySelectorAll('[data-batch-format]')) btn.disabled = on;
   }
-  if (!on) refreshBuildButton();
+  refreshBuildButton();
 }
 
 function onFormatClick(e) {
@@ -788,8 +804,10 @@ function renderQueue() {
   for (const it of queue) {
     const li = document.createElement('li');
     const active = it.key === selectedKey;
+    const writing = run && !run.done && run.films[run.index]?.key === it.key;
     li.className = `group flex items-start gap-2 rounded-lg border px-2.5 py-2 text-left ${
-      active ? 'border-emerald-400/60 bg-emerald-400/10' : 'border-neutral-800 bg-neutral-950 hover:border-neutral-700'}`;
+      writing ? 'border-emerald-400 bg-emerald-400/15 ring-2 ring-emerald-400/30'
+        : active ? 'border-emerald-400/60 bg-emerald-400/10' : 'border-neutral-800 bg-neutral-950 hover:border-neutral-700'}`;
 
     const pick = document.createElement('button');
     pick.type = 'button';
@@ -798,8 +816,9 @@ function renderQueue() {
     name.className = 'truncate text-sm font-semibold';
     name.textContent = it.year ? `${it.title} (${it.year})` : it.title;
     const sub = document.createElement('p');
-    sub.className = 'mt-0.5 truncate text-[11px] text-neutral-500';
-    sub.textContent = statusLine(it);
+    const runLine = runLineFor(it);
+    sub.className = `mt-0.5 truncate text-[11px] ${writing ? 'text-emerald-200' : 'text-neutral-500'}`;
+    sub.textContent = runLine ?? statusLine(it);
     sub.title = it.error || it.why || '';
     pick.append(name, sub);
     pick.addEventListener('click', () => selectMovie(it.key));
@@ -858,6 +877,14 @@ function statusLine(it) {
 function renderPicker() {
   const it = find(selectedKey);
   els.trivia.innerHTML = '';
+  const writingThis = !!(it && run && !run.done && run.films[run.index]?.key === it.key);
+  els.writingNow.classList.toggle('hidden', !writingThis);
+  els.writingNow.classList.toggle('flex', writingThis);
+  if (writingThis) {
+    els.writingNow.lastElementChild.textContent = batchFormat === 'quotes'
+      ? 'Writing this one now — these are the quotes going in.'
+      : 'Writing this one now — these are the facts going in.';
+  }
 
   if (!it) {
     els.pickerTitle.textContent = batchFormat === 'quotes' ? 'Quotes' : 'Trivia';
@@ -992,7 +1019,7 @@ function pendingMovies() {
 }
 
 function refreshBuildButton() {
-  const held = queue.filter((it) => it.held).length;
+  const held = busy ? 0 : queue.filter((it) => it.held).length;
   els.load.classList.toggle('hidden', !held);
   els.load.classList.toggle('flex', !!held);
   els.load.disabled = busy;
@@ -1004,40 +1031,221 @@ function refreshBuildButton() {
 
 // ================= step 1: writing the drafts =================
 
+// ---- the "Write every draft" run, on screen ----
+//
+// One run at a time. `films` mirrors the queue rows being written, each with
+// its own state; `step` is where the current one has got to. The panel, the
+// queue rows and the trivia column all read from here, so the whole screen
+// says the same thing about what is happening.
+let run = null;
+
+function runStart(items) {
+  clearInterval(run?.timer);
+  run = {
+    films: items.map((it) => ({ key: it.key, title: it.title, state: 'waiting', reason: '' })),
+    steps: writeSteps(batchFormat),
+    index: -1, stepIndex: 0, detail: '',
+    started: Date.now(), ended: 0,
+    stopRequested: false, done: false, made: 0, failed: [], stopped: 0,
+  };
+  run.timer = setInterval(() => { els.runClock.textContent = clockLabel(Date.now() - run.started); }, 1000);
+  renderRun();
+}
+
+function runFilm(i) {
+  run.index = i;
+  run.films[i].state = 'active';
+  run.stepIndex = 0;
+  run.detail = '';
+  // The trivia column follows the film being written, so the screen shows the
+  // facts going in rather than whatever was last clicked.
+  selectedKey = run.films[i].key;
+  render();
+  renderRun();
+}
+
+function runStep(key, detail = '') {
+  const idx = run.steps.findIndex((s) => s.key === key);
+  if (idx >= 0) run.stepIndex = idx;
+  run.detail = detail;
+  renderRun();
+  renderQueue();
+}
+
+function runDetail(detail) {
+  if (!run) return;
+  run.detail = detail;
+  els.runDetail.textContent = detail;
+  renderQueue();
+}
+
+function runFilmEnd(ok, reason = '') {
+  const f = run.films[run.index];
+  f.state = ok ? 'done' : 'failed';
+  f.reason = reason;
+  if (ok) run.made++;
+  else run.failed.push(reason ? `${f.title} (${reason})` : f.title);
+  run.stepIndex = 0;
+  renderRun();
+  renderQueue();
+}
+
+function runFinish() {
+  run.done = true;
+  run.ended = Date.now();
+  for (const f of run.films) {
+    if (f.state === 'waiting') { f.state = 'skipped'; run.stopped++; }
+  }
+  clearInterval(run.timer);
+  render();
+  renderRun();
+}
+
+const FILM_CHIP = {
+  waiting: { icon: 'radio_button_unchecked', cls: 'border-neutral-800 bg-neutral-950 text-neutral-500' },
+  active: { icon: 'progress_activity', cls: 'border-emerald-400/70 bg-emerald-500/15 text-emerald-100', spin: true },
+  done: { icon: 'check_circle', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' },
+  failed: { icon: 'error', cls: 'border-red-500/40 bg-red-500/10 text-red-300' },
+  skipped: { icon: 'block', cls: 'border-neutral-800 bg-neutral-950 text-neutral-600' },
+};
+
+function renderRun() {
+  els.run.classList.toggle('hidden', !run);
+  if (!run) return;
+  const total = run.films.length;
+  const finished = run.films.filter((f) => f.state === 'done' || f.state === 'failed').length;
+  const bad = run.failed.length > 0;
+
+  if (run.done) {
+    els.runIcon.textContent = bad ? 'warning' : run.stopped ? 'pause_circle' : 'task_alt';
+    els.runIcon.className = `material-symbols-outlined text-[22px] leading-none ${bad ? 'text-amber-300' : 'text-emerald-300'}`;
+    els.runTitle.textContent = runSummary({ made: run.made, failed: run.failed, stopped: run.stopped });
+    els.runCount.textContent = '';
+    els.runClock.textContent = clockLabel(run.ended - run.started);
+  } else {
+    els.runIcon.textContent = 'edit_note';
+    els.runIcon.className = 'material-symbols-outlined animate-pulse text-[22px] leading-none text-emerald-300';
+    els.runTitle.textContent = run.stopRequested ? 'Finishing this film, then stopping' : 'Writing drafts';
+    els.runCount.textContent = run.index >= 0 ? `${Math.min(run.index + 1, total)} of ${total}` : `${total} films`;
+    els.runClock.textContent = clockLabel(Date.now() - run.started);
+  }
+  els.runStop.classList.toggle('hidden', run.done);
+  els.runStop.disabled = run.stopRequested;
+  els.runStop.textContent = run.stopRequested ? 'Stopping after this film…' : 'Stop after this film';
+  els.runNext.classList.toggle('hidden', !(run.done && run.made));
+  els.runNext.classList.toggle('flex', !!(run.done && run.made));
+  els.runClose.classList.toggle('hidden', !run.done);
+
+  const frac = run.done ? 1 : runFraction({ total, finished, stepIndex: run.stepIndex, stepCount: run.steps.length });
+  els.runBar.style.width = `${Math.round(frac * 100)}%`;
+  els.runBar.className = `h-full rounded-full transition-[width] duration-500 ${run.done && bad ? 'bg-amber-400' : 'bg-emerald-500'}`;
+
+  els.runFilms.innerHTML = '';
+  for (const f of run.films) {
+    const ui = FILM_CHIP[f.state] || FILM_CHIP.waiting;
+    const li = document.createElement('li');
+    li.className = `flex max-w-[15rem] items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${ui.cls}`;
+    li.title = f.reason ? `${f.title} — ${f.reason}` : f.title;
+    const icon = document.createElement('span');
+    icon.className = `material-symbols-outlined text-[15px] leading-none ${ui.spin ? 'animate-spin' : ''}`;
+    icon.textContent = ui.icon;
+    const name = document.createElement('span');
+    name.className = 'truncate';
+    name.textContent = f.title;
+    li.append(icon, name);
+    els.runFilms.appendChild(li);
+  }
+
+  // The film in hand and its steps. Hidden once the run is over: the chips
+  // above already say how every film ended, failures with their reasons.
+  const cur = !run.done && run.index >= 0 ? run.films[run.index] : null;
+  els.runCurrent.classList.toggle('hidden', !cur);
+  els.runDetail.classList.toggle('hidden', !cur && !run.done);
+  if (cur) {
+    els.runFilm.textContent = cur.title;
+    els.runSteps.innerHTML = '';
+    run.steps.forEach((st, i) => {
+      const li = document.createElement('li');
+      const state = i < run.stepIndex ? 'past' : i === run.stepIndex ? 'now' : 'next';
+      li.className = `flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold ${
+        state === 'now' ? 'bg-emerald-500 text-neutral-950'
+          : state === 'past' ? 'text-emerald-300' : 'text-neutral-600'}`;
+      const icon = document.createElement('span');
+      icon.className = `material-symbols-outlined text-[15px] leading-none ${state === 'now' ? 'animate-spin' : ''}`;
+      icon.textContent = state === 'past' ? 'check' : state === 'now' ? 'progress_activity' : 'circle';
+      li.append(icon, document.createTextNode(st.label));
+      els.runSteps.appendChild(li);
+      if (i < run.steps.length - 1) {
+        const sep = document.createElement('li');
+        sep.className = 'material-symbols-outlined text-[14px] leading-none text-neutral-700';
+        sep.textContent = 'chevron_right';
+        els.runSteps.appendChild(sep);
+      }
+    });
+    els.runDetail.textContent = run.detail;
+  } else if (run.done) {
+    els.runDetail.textContent = run.failed.length ? `Failed: ${run.failed.join(' · ')}` : '';
+    els.runDetail.className = `mt-1.5 min-h-4 text-xs ${run.failed.length ? 'text-red-300' : 'text-neutral-400'}`;
+  }
+  if (!run.done) els.runDetail.className = 'mt-1.5 min-h-4 text-xs text-neutral-400';
+}
+
+// The run's word on one queue row, while it is in the run.
+function runLineFor(it) {
+  if (!run) return null;
+  const f = run.films.find((x) => x.key === it.key);
+  if (!f) return null;
+  if (f.state === 'active') {
+    const step = run.steps[run.stepIndex]?.label || 'Working';
+    return run.detail ? `${step} — ${run.detail}` : `${step}…`;
+  }
+  if (f.state === 'waiting') return 'Up next';
+  if (f.state === 'skipped') return 'Not started — the run was stopped';
+  if (f.state === 'failed') return `Failed${f.reason ? `: ${f.reason}` : ''}`;
+  return null; // done: the usual "Draft written"
+}
+
 async function buildAll() {
   const ready = pendingMovies();
   if (!ready.length) return;
   setBusy(true);
+  // Writing a film loads it, so nothing in the run is waiting for approval
+  // any more — and the line above the panel would only be last step's news.
+  for (const it of ready) it.held = false;
+  say('');
+  runStart(ready);
 
   let made = 0;
   const failed = [];
   for (const [i, it] of ready.entries()) {
+    if (run.stopRequested) break;
+    runFilm(i);
     // A movie the user never opened has no pool yet. Load it now rather than
     // skipping it: "write every draft" has to mean every one in the queue.
-    if (!it.pool) {
-      say(`Loading ${batchFormat === 'quotes' ? 'quotes' : 'trivia'} for ${it.title} (${i + 1} of ${ready.length})…`);
-      await ensurePool(it);
-    }
+    runStep('pool', it.pool ? '' : `Pulling everything IMDb has for ${it.title}`);
+    if (!it.pool) await ensurePool(it);
     // Curate before writing so an unopened movie still gets the agent's ten
     // rather than the raw vote order. Quotes skip this: the ranked IMDb list
     // is the source, and Autopilot boils the picked lines itself.
-    if (batchFormat !== 'quotes' && it.pool && !it.curated) {
-      say(`Choosing the best trivia for ${it.title} (${i + 1} of ${ready.length})…`);
-      await curateItem(it);
+    if (batchFormat !== 'quotes') {
+      runStep('rank', it.curated ? '' : 'Choosing the best 10 of the top 25');
+      if (it.pool && !it.curated) await curateItem(it);
     }
     const picked = it.pool?.visible() || [];
     if (!picked.length) {
       const miss = batchFormat === 'quotes' ? 'no quotes found' : 'no trivia found';
       console.warn('[tik-batch] nothing to write', { movie: it.title, format: batchFormat, error: it.error });
       failed.push(`${it.title} (${it.error || miss})`);
+      runFilmEnd(false, it.error || miss);
       continue;
     }
-    say(`Writing ${it.title} (${i + 1} of ${ready.length}) — ${picked.length} ${batchFormat === 'quotes' ? 'quotes' : 'facts'}…`);
     try {
       let suggestions;
       let meta;
       if (batchFormat === 'quotes') {
+        runStep('subs', 'Matching the lines to the film’s subtitles');
         const packSubs = await fetchSubtitles({ imdbId: it.imdbId, query: it.title, year: it.year });
+        runStep('write', `${picked.length} quotes going in`);
         // Carried onto the draft so the editor can explain the guessed times
         // later, when whoever opens it has no idea this call ever happened.
         it.subsError = packSubs.missing ? (packSubs.error || 'Subtitle lookup failed') : null;
@@ -1052,13 +1260,14 @@ async function buildAll() {
           includeTitleSlide: true,
           includeMeta: true,
           guidance: '',
-          onProgress: (m) => say(`${it.title} — ${m}`),
+          onProgress: runDetail,
         });
         suggestions = result.suggestions;
         meta = result.meta;
       } else {
         // A blank-line separated list is what the server reads as USER-CHOSEN
         // FACTS: it rewrites each one, in order, and adds nothing of its own.
+        runStep('write', `${picked.length} facts going in`);
         const result = await fetchTriviaPost({
           title: it.title,
           year: it.year,
@@ -1074,44 +1283,40 @@ async function buildAll() {
           // hook from spoiling a fact, since the model has the captions in hand.
           includeMeta: true,
           guidance: picked.map((p) => p.text).join('\n\n'),
-          onProgress: (m) => say(`${it.title} (${i + 1} of ${ready.length}) — ${m}`),
+          onProgress: runDetail,
         });
         suggestions = result.suggestions;
         meta = result.meta;
       }
       if (!suggestions?.length) {
-        failed.push(`${it.title} (${batchFormat === 'quotes' ? 'no quotes returned' : 'no trivia returned'})`);
+        const miss = batchFormat === 'quotes' ? 'no quotes returned' : 'no trivia returned';
+        failed.push(`${it.title} (${miss})`);
+        runFilmEnd(false, miss);
         continue;
       }
+      runStep('save', 'Saving the draft');
       it.draftId = await saveDraft(it, suggestions, meta, made);
       it.state = 'written';
       made++;
+      runFilmEnd(true);
     } catch (e) {
       console.error(`[tik-batch] draft failed: ${it.title} — ${e.message}`, e);
       it.state = 'error';
       it.error = e.message;
       failed.push(it.title);
+      runFilmEnd(false, e.message);
     }
-    renderQueue();
   }
 
   setBusy(false);
-  render();
-  await refreshShoot();
   // Say what did NOT work as plainly as what did — a silent partial run is
-  // how you end up publishing eight drafts and wondering where two went.
-  say(
-    failed.length
-      ? `Wrote ${made} draft${made === 1 ? '' : 's'}. Failed: ${failed.join(', ')}.`
-      : `Wrote ${made} draft${made === 1 ? '' : 's'} — now find their frames.`,
-    failed.length ? 'bad' : 'good',
-  );
-  // Step 1 done, so move to step 2 instead of leaving the user to find the
-  // tab. Only on a clean run: with failures the queue still needs attention.
-  if (made && !failed.length) {
-    showTab('shoot', { animate: true });
-    refreshShoot();                 // and the new drafts appear already matched
-  }
+  // how you end up publishing eight drafts and wondering where two went. The
+  // panel stays up as the summary, failures named with their reasons, with
+  // the way on to Shoot; it does not jump tabs on its own any more, because
+  // the summary is the thing worth reading.
+  runFinish();
+  await refreshShoot();
+  if (failed.length) console.warn('[tik-batch] run finished with failures', { made, failed });
 }
 
 async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
