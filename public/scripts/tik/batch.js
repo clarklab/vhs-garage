@@ -659,12 +659,25 @@ async function curatePool(item, { announce = () => {} } = {}) {
 
   announce('Agent is picking the best of the top 25…');
   try {
-    const res = await runCurateJob({
+    const params = {
       title: item.title,
       year: item.year,
       count: size,
       candidates: all.map((c) => ({ id: c.id, text: c.text })),
-    });
+    };
+    let res;
+    try {
+      res = await runCurateJob(params);
+    } catch (first) {
+      // One more go before settling for vote order: a fresh call usually lands
+      // on a different function instance, and a bad instance is the common way
+      // this fails ("Anthropic not configured" on one, fine on the next).
+      console.warn(`[tik-batch] curation failed for ${item.title}, retrying once: ${first.message}`);
+      announce('Agent ranking hiccuped — trying once more…');
+      await sleep(3000);
+      if (item.pool !== pool) return false;
+      res = await runCurateJob(params);
+    }
     if (!res?.order?.length) return false;
     // A spoiler or format toggle swapped the pool while the agent was busy;
     // this ranking was for the old one, and the new pool ranks itself.

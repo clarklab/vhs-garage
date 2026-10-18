@@ -2,19 +2,20 @@
 // (prompt, model, signal) and returns the raw text response; parseModelJson
 // recovers the JSON object. Used by both the sync tik-autopilot function and
 // the background tik-autopilot-job function.
+import { aiKey, aiBase } from './gateway-env.mjs';
 
-// Read on every call, never captured when the module loads. Since early
-// October 2026 Netlify's AI Gateway fills these in after a function has
-// started, so a copy taken at load time is empty and every request failed
-// with "Anthropic not configured" — while the variable sat right there.
-const GEMINI_API_KEY = () => process.env.GEMINI_API_KEY;
-const GEMINI_BASE_URL = () => process.env.GOOGLE_GEMINI_BASE_URL;
-const OPENAI_API_KEY = () => process.env.OPENAI_API_KEY;
-const OPENAI_BASE_URL = () => process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-const ANTHROPIC_API_KEY = () => process.env.ANTHROPIC_API_KEY;
+// Read on every call, never captured when the module loads: a copy taken at
+// load time was empty on instances where Netlify fills these in later. And
+// when an instance never gets the provider-named variable at all, the
+// gateway's own pair stands in (lib/gateway-env.mjs).
+const GEMINI_API_KEY = () => aiKey('GEMINI_API_KEY');
+const GEMINI_BASE_URL = () => aiBase('GOOGLE_GEMINI_BASE_URL');
+const OPENAI_API_KEY = () => aiKey('OPENAI_API_KEY');
+const OPENAI_BASE_URL = () => aiBase('OPENAI_BASE_URL', 'https://api.openai.com/v1');
+const ANTHROPIC_API_KEY = () => aiKey('ANTHROPIC_API_KEY');
 // Root URL (no /v1) — Netlify's AI Gateway injects it this way, matching the
 // Anthropic SDK convention where /v1/messages is appended.
-const ANTHROPIC_BASE_URL = () => process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
+const ANTHROPIC_BASE_URL = () => aiBase('ANTHROPIC_BASE_URL', 'https://api.anthropic.com');
 
 export function providerFor(model) {
   if (model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3')) return 'openai';

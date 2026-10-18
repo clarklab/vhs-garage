@@ -9,9 +9,10 @@
 // the model from env (SLEEVE_AI_MODEL) and defaults to
 // gemini-2.5-flash, which is fully vision-capable, in the Gateway's
 // allowed list, and much faster than 2.5-pro for the sleeve-OCR task.
+import { aiKey, aiBase } from './lib/gateway-env.mjs';
 
-const GEMINI_API_KEY = () => process.env.GEMINI_API_KEY;
-const GEMINI_BASE_URL = () => process.env.GOOGLE_GEMINI_BASE_URL;
+const GEMINI_API_KEY = () => aiKey('GEMINI_API_KEY');
+const GEMINI_BASE_URL = () => aiBase('GOOGLE_GEMINI_BASE_URL');
 // Vision-capable, fast, in the Gateway. Override via env if you need
 // 2.5-pro quality for some reason.
 const MODEL = process.env.SLEEVE_AI_MODEL || 'gemini-2.5-flash';

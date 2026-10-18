@@ -1,6 +1,7 @@
 // YouTube publish helper: exchanges the caller's refresh token for an access
 // token and (on `prepare`) AI-rewrites metadata for SEO. The caller supplies
 // the refresh token — each signed-in user uploads to their own channel.
+import { aiKey, aiBase } from './lib/gateway-env.mjs';
 
 const YOUTUBE_CLIENT_ID = process.env.YOUTUBE_OAUTH_CLIENT_ID;
 const YOUTUBE_CLIENT_SECRET = process.env.YOUTUBE_OAUTH_CLIENT_SECRET;
@@ -9,12 +10,12 @@ const YOUTUBE_CLIENT_SECRET = process.env.YOUTUBE_OAUTH_CLIENT_SECRET;
 // base URL + API key in the gateway. Defaults work out of the box if the
 // gateway env vars are configured; missing keys cause that provider's
 // path to fall back to the template description.
-const GEMINI_API_KEY = () => process.env.GEMINI_API_KEY;
-const GEMINI_BASE_URL = () => process.env.GOOGLE_GEMINI_BASE_URL;
-const OPENAI_API_KEY = () => process.env.OPENAI_API_KEY;
-const OPENAI_BASE_URL = () => process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-const ANTHROPIC_API_KEY = () => process.env.ANTHROPIC_API_KEY;
-const ANTHROPIC_BASE_URL = () => process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
+const GEMINI_API_KEY = () => aiKey('GEMINI_API_KEY');
+const GEMINI_BASE_URL = () => aiBase('GOOGLE_GEMINI_BASE_URL');
+const OPENAI_API_KEY = () => aiKey('OPENAI_API_KEY');
+const OPENAI_BASE_URL = () => aiBase('OPENAI_BASE_URL', 'https://api.openai.com/v1');
+const ANTHROPIC_API_KEY = () => aiKey('ANTHROPIC_API_KEY');
+const ANTHROPIC_BASE_URL = () => aiBase('ANTHROPIC_BASE_URL', 'https://api.anthropic.com/v1');
 
 // Default model. Overridable per-request via body.model. Allowlisted in
 // pickModel() — anything else falls back to the default so a typo can't
