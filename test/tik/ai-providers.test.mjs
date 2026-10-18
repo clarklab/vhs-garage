@@ -278,3 +278,27 @@ test('a key that arrives after the module loads is still used', async () => {
     process.env = env;
   }
 });
+
+test('an instance missing ANTHROPIC_* calls through the gateway pair instead', async () => {
+  // 18 Oct 2026: one warm instance never got ANTHROPIC_API_KEY and failed
+  // three AI rankings in a row with "Anthropic not configured".
+  const realFetch = globalThis.fetch;
+  const env = { ...process.env };
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_BASE_URL;
+  process.env.NETLIFY_AI_GATEWAY_KEY = 'gw-key';
+  process.env.NETLIFY_AI_GATEWAY_URL = 'https://site.test/.netlify/ai';
+  let sent = null;
+  globalThis.fetch = async (url, opts) => {
+    sent = { url: String(url), key: opts.headers['x-api-key'] };
+    return { ok: true, json: async () => ({ content: [{ type: 'text', text: '{}' }] }) };
+  };
+  try {
+    const mod = await import(`../../netlify/functions/lib/ai-providers.mjs?gw=${Math.random()}`);
+    await mod.callModel('hi', 'claude-haiku-4-5');
+    assert.deepEqual(sent, { url: 'https://site.test/.netlify/ai/v1/messages', key: 'gw-key' });
+  } finally {
+    globalThis.fetch = realFetch;
+    process.env = env;
+  }
+});
