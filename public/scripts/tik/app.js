@@ -4,7 +4,6 @@
 // itself can't persist (browser limitation), but every slide's frame does.
 import { loadVideoFile, grabFrame, awaitSeekSettled, seekAndSettle } from './capture.js';
 import { initScrubber } from './scrubber.js';
-import { OUTRO_DESIGNS, outroDesign, outroKeyOf, outroHoldSeconds, rememberedOutro, OUTRO_STORAGE_KEY } from './outros.js';
 import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame, confirmFrame, flaggedCount } from './slides.js';
 // getRefreshToken is back for one caller: importing the posts that predate the
 // library reads them straight from TikTok. Everything else (the hashtag panel)
@@ -215,35 +214,22 @@ async function grabAt(timecode) {
   return grabFrame(els.video);
 }
 
-// Branded outro slide: the end card as the "frame" + a follow CTA, flowing
-// through the normal slide pipeline (editable, reorderable). The card is the
-// plain logo or one of the designed follow cards (outros.js); whichever was
-// picked last is what new sets end on.
-async function loadOutroStill(key) {
-  const design = outroDesign(key);
-  const res = await fetch(design.still);
-  if (!res.ok) throw new Error(`Couldn't load the ${design.label} end card (${res.status})`);
-  const blob = await res.blob();
-  return { blob, bitmap: await createImageBitmap(blob), key: design.key };
+// Branded outro slide: the VHS Garage logo as the "frame" + a follow CTA,
+// flowing through the normal slide pipeline (editable, reorderable).
+const OUTRO_LOGO_URL = '/images/vhs-garage-logo-square.png'; // yellow lockup (V mark), black field
+async function fetchOutroLogo() {
+  const res = await fetch(OUTRO_LOGO_URL);
+  if (!res.ok) throw new Error(`Couldn't load the outro logo (${res.status})`);
+  return await res.blob();
 }
-async function makeOutroSlide(key = rememberedOutro()) {
-  const { blob, bitmap, key: style } = await loadOutroStill(key);
+async function makeOutroSlide() {
+  const blob = await fetchOutroLogo();
+  const bitmap = await createImageBitmap(blob);
   return {
     id: String(nextId++), bitmap, blob,
     caption: pickOutro(project?.format),
-    grabHint: '', fontScale: 1, role: null, kind: 'outro', outroStyle: style,
+    grabHint: '', fontScale: 1, role: null, kind: 'outro',
   };
-}
-
-// Swap the end card on an existing outro slide. The caption is kept: a
-// designed card doesn't draw it, but going back to the logo should bring it back.
-async function setOutroStyle(slideId, key) {
-  const { blob, bitmap, key: style } = await loadOutroStill(key);
-  slides = slides.map((x) => (x.id === slideId ? { ...x, bitmap, blob, outroStyle: style } : x));
-  try { localStorage.setItem(OUTRO_STORAGE_KEY, style); } catch { /* per-device nicety only */ }
-  markDirty();
-  render();
-  els.status.textContent = `End card: ${outroDesign(style).label}.`;
 }
 
 // ================= Persistence =================
@@ -299,8 +285,6 @@ async function serializeProject() {
       trim: s.trim?.before || s.trim?.after ? { before: s.trim.before || 0, after: s.trim.after || 0 } : null,
       // How batch Shoot chose this frame, and whether it asked for a look.
       frameScan: s.frameScan || null,
-      // Which end card an outro slide shows; absent means the plain logo.
-      outroStyle: s.kind === 'outro' ? outroKeyOf(s) : null,
       frame: await frameBlobFor(s),
     });
   }
@@ -549,14 +533,19 @@ async function openProject(id) {
   const loaded = [];
   for (const s of rec.slides || []) {
     try {
-      const bitmap = await createImageBitmap(s.frame);
+      // Drafts saved during the short-lived designed end cards (Oct 2026) end
+      // on a full 9:16 card that the slide pipeline no longer draws edge to
+      // edge; put the logo back so they look like every other set.
+      const legacyCard = s.kind === 'outro' && s.outroStyle && s.outroStyle !== 'logo';
+      const frame = legacyCard ? await fetchOutroLogo().catch(() => s.frame) : s.frame;
+      const bitmap = await createImageBitmap(frame);
       if (seq !== openSeq) { // another project opened while decoding — abort
         bitmap.close?.();
         loaded.forEach((l) => l.bitmap?.close?.());
         return;
       }
       loaded.push({
-        id: String(nextId++), bitmap, blob: s.frame,
+        id: String(nextId++), bitmap, blob: frame,
         caption: s.caption || '', timecode: s.timecode, grabHint: s.grabHint || '',
         fontScale: s.fontScale || 1, role: s.role || null, kind: s.kind || null,
         entry: s.entry || null, section: s.section || null, cue: s.cue || null,
@@ -564,7 +553,6 @@ async function openProject(id) {
         stampNudge: clampStampNudge(s.stampNudge),
         trim: s.trim?.before || s.trim?.after ? { before: s.trim.before || 0, after: s.trim.after || 0 } : null,
         frameScan: s.frameScan || null,
-        outroStyle: s.kind === 'outro' ? outroKeyOf(s) : null,
         pairFrames: s.pairFrames?.length === 2 ? s.pairFrames : null,
         pairLayout: s.pairFrames?.length === 2 ? pairLayoutOf(s.pairLayout) : null,
       });
@@ -3108,14 +3096,6 @@ function renderSlide(slide, index) {
       : 'Blurb for this guy…';
   ta.value = slide.caption;
   suspendDragWhileEditing(ta);
-  // A designed end card carries its own words, so the sign-off line is kept
-  // but not drawn; editing text nobody will see would be a trap.
-  const endDesigned = isOutroSlide(slide) && !!outroDesign(slide.outroStyle).video;
-  if (endDesigned) {
-    ta.disabled = true;
-    ta.classList.add('opacity-50');
-    ta.title = 'This end card has its own words. Switch it to Logo to use a sign-off line.';
-  }
 
   // Redraw this slide's preview from the live caption + its per-slide font scale.
   const redrawThumb = () => composeToCanvas(thumb, slide.bitmap, ta.value, {
@@ -3351,7 +3331,7 @@ function renderSlide(slide, index) {
   // The sign-off is house copy and format-agnostic (nextOutro knows what
   // "more" means per format), so Quote-a-long gets the swap too even though it
   // has no per-slide AI actions of its own.
-  if (isMovieFileFormat() && isOutroSlide(slide) && !endDesigned) {
+  if (isMovieFileFormat() && isOutroSlide(slide)) {
     // The sign-off is house copy from a fixed pool, so "another one" is a pool
     // pick, not a model call: there is nothing here for an LLM to know, and
     // paying Opus to re-say "follow VHS Garage" would be silly.
@@ -3485,42 +3465,6 @@ function renderSlide(slide, index) {
   }
   mid.append(toolbar);
 
-  // Which end card closes the set. The plain logo takes the sign-off line; the
-  // three designed cards are finished pictures (and, in a video, animations).
-  if (isOutroSlide(slide)) {
-    const current = outroKeyOf(slide);
-    const row = document.createElement('div');
-    row.className = 'flex flex-wrap items-center gap-1';
-    const lab = document.createElement('span');
-    lab.className = 'mr-1 text-[11px] uppercase tracking-wide text-neutral-500';
-    lab.textContent = 'End card';
-    row.append(lab);
-    for (const d of OUTRO_DESIGNS) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.dataset.outro = d.key;
-      const on = d.key === current;
-      b.className = `rounded-md px-2 py-1 text-xs font-semibold ${on
-        ? 'bg-yellow-400 text-neutral-950' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}`;
-      b.textContent = d.label;
-      b.title = d.video
-        ? `${d.label}: a full designed card (it animates in the video version). Becomes the default for new sets.`
-        : 'The logo with the sign-off line under it. Becomes the default for new sets.';
-      if (!on) {
-        b.addEventListener('click', () => {
-          setOutroStyle(slide.id, d.key)
-            .then(() => noteOutroReviewed(slide))
-            .catch((e) => {
-              console.error('[tik] end card swap failed:', e);
-              els.status.textContent = e.message;
-            });
-        });
-      }
-      row.append(b);
-    }
-    mid.append(row);
-  }
-
   // Delete, then preview, stacked at the top-right.
   const side = document.createElement('div');
   side.className = 'flex flex-none flex-col gap-1';
@@ -3643,7 +3587,6 @@ function currentClipPlan() {
     duration: videoReady ? els.video.duration : 0,
     isTitle: (s, i) => isIntroSlide(s, slides.indexOf(s), project?.format),
     isOutro: isOutroSlide,
-    holdSeconds: (s) => (isOutroSlide(s) ? outroHoldSeconds(s) : null),
   });
 }
 
@@ -3769,27 +3712,6 @@ els.capKaraoke.addEventListener('click', () => setCaptionStyle('karaoke'));
 els.outSlides.addEventListener('click', () => setOutput('slides'));
 els.outVideo.addEventListener('click', () => setOutput('video'));
 
-// The end card's animation as a muted <video>, ready to draw from. Never fatal.
-async function loadEndCardVideo(src) {
-  if (!src) return null;
-  const v = document.createElement('video');
-  v.muted = true;
-  v.playsInline = true;
-  v.preload = 'auto';
-  v.src = src;
-  try {
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('timed out')), 15000);
-      v.addEventListener('canplaythrough', () => { clearTimeout(timer); resolve(); }, { once: true });
-      v.addEventListener('error', () => { clearTimeout(timer); reject(new Error(v.error?.message || 'load failed')); }, { once: true });
-    });
-    return v;
-  } catch (e) {
-    console.warn('[tik] end card video unavailable; the clip will hold its still', { src, message: e.message });
-    return null;
-  }
-}
-
 els.clipRender.addEventListener('click', async () => {
   if (clipAbort || !project) return;
   const plan = currentClipPlan();
@@ -3804,23 +3726,9 @@ els.clipRender.addEventListener('click', async () => {
   // every frame, live video and all.
   const canvas = document.createElement('canvas');
   const byId = new Map(slides.map((sl) => [sl.id, sl]));
-  // A designed end card plays its own animation where the logo would hold.
-  // Loaded up front; if it can't be, the card's still holds instead.
-  const endSlide = slides.find(isOutroSlide);
-  const endCard = endSlide ? await loadEndCardVideo(outroDesign(endSlide.outroStyle).video) : null;
-  let endCardStarted = false;
   const paint = (part) => {
     const slide = byId.get(part.slideId);
     if (!slide) return;
-    if (endCard && slide === endSlide && part.kind === 'still') {
-      if (!endCardStarted) {
-        endCardStarted = true;
-        endCard.currentTime = 0;
-        endCard.play().catch((e) => console.warn('[tik] end card would not play; holding its still', e));
-      }
-      composeToCanvas(canvas, endCard.readyState >= 2 ? endCard : slide.bitmap, '', { kind: 'outro' });
-      return;
-    }
     // Karaoke follows the line's own subtitle cue: where the playhead sits
     // inside each cue estimates the word; gaps preserve pauses. A line the matcher
     // never placed has no honest timing, so it just sits there, lit or not.
