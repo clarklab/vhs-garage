@@ -1077,6 +1077,21 @@ function wireRecordButton() {
         if (result.stopError) {
           showErrorToast('Recording stopped early', `${result.stopError.message || result.stopError}. Everything captured up to that point was saved.`);
         }
+        // The capture card's format changed mid-take: the rest of the take
+        // was saved as its own file. Add it to the library alongside.
+        for (const extra of result.extraFiles || []) {
+          if (!extra.merged) continue;
+          try {
+            const extraFile = await (await directoryHandle.getFileHandle(extra.filename)).getFile();
+            await recoverVideoOrphan(extra.filename, extraFile);
+          } catch (e) {
+            console.error('[capture] could not add continuation clip to the library:', extra.filename, e);
+          }
+        }
+        if (result.extraFiles?.length) {
+          refreshLibrary();
+          showInfoToast('Recording saved as two clips', `The video format changed partway through, so the rest of the take is in its own clip (${result.extraFiles.map(x => x.filename).join(', ')}).`);
+        }
         if (!result.merged) {
           showErrorToast(
             `Recording saved in ${result.parts} parts`,
@@ -2193,10 +2208,7 @@ function resetForDemo() {
   });
   syncTapeDetails();
 
-  // 6. Thumbnail panel: collapse to first-paint placeholder grid. The demo
-  // seeks the playback element itself, so disarm Grab Thumb too — otherwise
-  // it's armed and waiting the moment the demo hands control back.
-  grabThumbArmed = false;
+  // 6. Thumbnail panel: collapse to first-paint placeholder grid.
   syncGrabThumbBtn();
   document.getElementById('cap-thumb-fieldset')?.classList.add('hidden');
   document.getElementById('player-thumb-empty')?.classList.remove('hidden');
@@ -4131,26 +4143,22 @@ function wireThumbnailPicker() {
   refreshBtn.addEventListener('click', generate);
 }
 
-// --- Grab Thumb (scrub → thumbnail) ---
+// --- Grab Thumb (current frame → thumbnail) ---
 //
 // Six random frames are a decent starting point, but the frame you actually
-// want is usually one you found by hand. Scrubbing the playback arms a small
-// "Grab Thumb" button in the player's bottom-right; clicking it makes the
-// frame currently on screen the picked thumbnail, at full video resolution.
-// It routes through the picker's selectThumbnail, so the pick persists to
-// the catalog + disk, shows up highlighted as the first cell in column 2,
-// and is what the upload sends to YouTube.
+// want is usually one you found by hand. Hovering the player in Last
+// Recording shows a "Grab Thumb" button in its bottom-right; clicking it
+// makes the frame currently on screen the picked thumbnail, at full video
+// resolution. It routes through the picker's selectThumbnail, so the pick
+// persists to the catalog + disk, shows up highlighted as the first cell in
+// column 2, and is what the upload sends to YouTube.
 //
-// The arming rules exist because 'seeked' fires for plenty of things the
-// user didn't do:
-//   · seeks within SEEK_GRACE_MS of a load event don't count (opening a
-//     clip and the blob re-bind after a title rename both seek on load)
-//   · Trim and Shorts mode suppress it — the Shorts "Full frame" toggle
-//     lives in that same corner, and both modes strip native controls
-//   · the demo suppresses it (the demo seeks the playback itself to build
-//     its fake thumbnail strip)
+// It used to wait for a scrub before appearing, which hid it from anyone
+// who just pressed play and watched (Matt). Now any decoded frame is fair
+// game. Trim and Shorts mode still suppress it (the Shorts "Full frame"
+// toggle lives in that same corner, and both modes strip native controls),
+// and so does the demo.
 let adoptGrabbedThumbnail = null;
-let grabThumbArmed = false;
 let syncGrabThumbBtn = () => {};
 
 function wireGrabThumb() {
@@ -4160,14 +4168,13 @@ function wireGrabThumb() {
   const container = document.getElementById('preview-container');
   if (!btn || !playback || !container) return;
 
-  const SEEK_GRACE_MS = 600;
-  let lastLoadAt = 0;
   let hovering = false;
   let flashTimer = null;
 
   function canShow() {
-    if (!grabThumbArmed || !hovering) return false;
+    if (!hovering) return false;
     if (previewMode !== 'playback' || !lastClipId) return false;
+    if (playback.readyState < 2) return false;
     if (demoActive) return false;
     const trimOpen = document.getElementById('trim-panel')
       && !document.getElementById('trim-panel').classList.contains('hidden');
@@ -4176,8 +4183,11 @@ function wireGrabThumb() {
     return !trimOpen && !shortsOpen;
   }
 
+  let shown = false;
   function sync() {
     const show = canShow();
+    if (show === shown) return;
+    shown = show;
     if (show) {
       btn.classList.remove('hidden');
       btn.classList.add('flex');
@@ -4193,24 +4203,8 @@ function wireGrabThumb() {
   }
   syncGrabThumbBtn = sync;
 
-  // A fresh source means a fresh clip — make the user scrub again before
-  // the button comes back, so it never carries over from the last clip.
-  ['loadstart', 'emptied'].forEach((ev) => {
-    playback.addEventListener(ev, () => {
-      lastLoadAt = performance.now();
-      grabThumbArmed = false;
-      sync();
-    });
-  });
-  ['loadedmetadata', 'loadeddata'].forEach((ev) => {
-    playback.addEventListener(ev, () => { lastLoadAt = performance.now(); });
-  });
-
-  playback.addEventListener('seeked', () => {
-    if (performance.now() - lastLoadAt < SEEK_GRACE_MS) return;
-    grabThumbArmed = true;
-    sync();
-  });
+  // A new source hides it until its first frame decodes.
+  ['loadstart', 'emptied', 'loadeddata'].forEach((ev) => playback.addEventListener(ev, sync));
 
   container.addEventListener('mouseenter', () => { hovering = true; sync(); });
   container.addEventListener('mouseleave', () => { hovering = false; sync(); });
@@ -6603,34 +6597,47 @@ async function recoverInterruptedRecording(j, setStatus) {
   const dir = await ensureDirectoryForRecovery();
   if (!dir) throw new Error('Allow access to the save folder (DIR) and try again.');
   const allParts = (j.parts || []).filter(Boolean);
-  const saved = allParts.filter(p => p.state === 'closed');
+  // A take normally has one output file; a second one only exists when the
+  // codec setup changed mid-recording (recorder.js, `_cont2`).
+  const outputs = j.outputs?.length ? j.outputs : [{ filename: j.filename }];
 
-  const present = [];
-  for (const p of saved) if (await existingFile(dir, p.name)) present.push(p);
-  let file;
-  if (present.length < saved.length) {
-    // Crashed mid-cleanup: the join finished and some parts are already
-    // gone. Accept the joined file if it's there.
-    file = await existingFile(dir, j.filename);
-    if (!file || !file.size) throw new Error(`${saved.length - present.length} saved part(s) are missing from "${dir.name}".`);
-    console.warn('[capture] recovery: parts partly removed, using existing joined file', j.filename);
-  } else {
-    await joinParts(dir, present, j.filename, j.initBytes || 0, (f) => setStatus(`Joining… ${Math.floor(f * 100)}%`));
-    file = await existingFile(dir, j.filename);
-  }
-  await removeParts(dir, allParts);
+  let primary = null;
+  for (let i = 0; i < outputs.length; i++) {
+    const filename = outputs[i].filename;
+    const parts = allParts.filter(p => (p.output ?? 0) === i);
+    const saved = parts.filter(p => p.state === 'closed');
+    if (!saved.length) continue;
 
-  // A 'needs-join' session already has its catalog entry (pointing at
-  // j.filename); an interrupted one never got that far.
-  const existing = getClips().find(c => c.filename === j.filename);
-  if (existing) {
-    updateClip(existing.id, { fileSize: file.size });
-  } else {
-    await recoverVideoOrphan(j.filename, file);
+    const present = [];
+    for (const p of saved) if (await existingFile(dir, p.name)) present.push(p);
+    let file;
+    if (present.length < saved.length) {
+      // Crashed mid-cleanup: the join finished and some parts are already
+      // gone. Accept the joined file if it's there.
+      file = await existingFile(dir, filename);
+      if (!file || !file.size) throw new Error(`${saved.length - present.length} saved part(s) are missing from "${dir.name}".`);
+      console.warn('[capture] recovery: parts partly removed, using existing joined file', filename);
+    } else {
+      const label = outputs.length > 1 ? ` file ${i + 1} of ${outputs.length}` : '';
+      await joinParts(dir, present, filename, j.initBytes || 0, (f) => setStatus(`Joining${label}… ${Math.floor(f * 100)}%`));
+      file = await existingFile(dir, filename);
+    }
+    await removeParts(dir, parts);
+
+    // A 'needs-join' session already has its catalog entry (pointing at
+    // the filename); an interrupted one never got that far.
+    const existing = getClips().find(c => c.filename === filename);
+    if (existing) {
+      updateClip(existing.id, { fileSize: file.size });
+    } else {
+      await recoverVideoOrphan(filename, file);
+    }
+    if (!primary) primary = file;
   }
+  if (!primary) throw new Error('No saved parts to join.');
   refreshLibrary();
   checkLibraryResyncBanner().catch(() => {});
-  return file;
+  return primary;
 }
 
 async function checkInterruptedRecording() {
@@ -8922,9 +8929,7 @@ function showLiveTab() {
   deleteBtn.classList.add('hidden');
   trimBtn?.classList.add('hidden');
   shortsBtn?.classList.add('hidden');
-  // Grab Thumb belongs to the playback view only — disarm it so switching
-  // back to Last Recording requires a fresh scrub.
-  grabThumbArmed = false;
+  // Grab Thumb belongs to the playback view only.
   syncGrabThumbBtn();
   document.getElementById('save-data-btn')?.classList.add('hidden');
   document.getElementById('publish-yt-btn')?.classList.add('hidden');

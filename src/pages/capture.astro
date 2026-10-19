@@ -695,11 +695,9 @@ import { BUILD_ID } from '../utils/build-id.js';
                 <span class="text-white text-[10px] uppercase tracking-widest">Full frame</span>
               </label>
             </div>
-            <!-- Grab Thumb — the "I scrubbed to the exact frame I want"
-                 shortcut. Stays out of the way until the user actually
-                 scrubs the playback (wireGrabThumb in app.js arms it on
-                 a user seek), then fades in whenever the pointer is over
-                 the player. Clicking it grabs the CURRENT frame at full
+            <!-- Grab Thumb — the "this is the frame I want" shortcut.
+                 Fades in whenever the pointer is over a loaded clip in
+                 Last Recording (wireGrabThumb in app.js). Clicking it grabs the CURRENT frame at full
                  video resolution and makes it the picked thumbnail, so
                  the picker in column 2 highlights it immediately.
                  bottom-[76px] clears the native controls bar with room to

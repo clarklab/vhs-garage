@@ -1,20 +1,30 @@
 // Crash-safe recording pipeline.
 //
-// One MediaRecorder runs for the whole take, but its output is written as a
-// series of part files (`name.part001.mp4`, `name.part002.mp4`, …), each
-// closed — and therefore committed to disk — every PART_SECONDS. Chrome's
-// FileSystemWritableFileStream keeps everything in a hidden .crswap file
-// until close(), so the old single-writable approach lost the WHOLE take
-// when the tab crashed 1.5 hours in. Now a crash costs at most the part in
-// progress, and the journal (rec-journal.js) tells the next page load which
-// parts to join.
+// Two failure modes shaped this file:
 //
-// On a clean stop the parts are joined back into `name.mp4` (byte-identical
-// to a single continuous file — see segmenter.js for why that holds) and the
-// part files are removed. If the join fails (disk full, 4 GB limit on a
-// FAT32 drive…) the parts stay put and the session is left as 'needs-join'.
+// 1. Chrome's FileSystemWritableFileStream keeps everything in a hidden
+//    .crswap file until close(), so one long writable lost the WHOLE take
+//    when the tab crashed. The output is therefore written as part files
+//    (`name.part001.mp4`, …), each closed — committed to disk — every
+//    partSeconds. A crash costs at most the part in progress, and the
+//    journal (rec-journal.js) tells the next page load which parts to join.
+//
+// 2. A single MediaRecorder crashes the tab ("Aw, Snap! Error code: 5")
+//    after emitting ~4 GB — Matt hit it at exactly 4.00 GB, 1:51 into a
+//    take. So the recorder hands off to a fresh MediaRecorder on the same
+//    stream every recorderMaxBytes. The new recorder's header is dropped
+//    and its timestamps shifted to continue the timeline (retime.js), so
+//    the take stays ONE continuous file. If the new recorder's codec setup
+//    ever differs (capture card switched resolution…), it starts a second
+//    output file instead of corrupting the first.
+//
+// On a clean stop each output's parts are joined back into one file (plain
+// byte concatenation — see segmenter.js) and the part files are removed.
+// If the join fails (disk full, 4 GB limit on a FAT32 drive…) the parts
+// stay put and the session is left as 'needs-join'.
 
 import { createSplitter } from './segmenter.js';
+import { createRetimer, parseInit } from './retime.js';
 import {
   beginJournal, updateJournal, heartbeat, logEvent, setPart, endJournal,
 } from './rec-journal.js';
@@ -22,6 +32,8 @@ import {
 const config = {
   partSeconds: 10 * 60,
   partMaxBytes: 1024 * 1024 * 1024,
+  // Hand off to a new MediaRecorder well before Chrome's ~4 GB crash.
+  recorderMaxBytes: 3 * 1024 * 1024 * 1024,
   // Regular keyframes keep Chrome's MP4 muxer emitting a fragment every
   // couple of seconds instead of holding video in memory between sparse
   // keyframes — and give the splitter frequent places to cut.
@@ -31,7 +43,8 @@ const config = {
   heartbeatMs: 5000,
 };
 
-// Tests and the console can shorten parts to exercise rotation quickly.
+// Tests and the console can shrink parts / recorder spans to exercise
+// rotation quickly.
 export function configureRecorder(overrides) {
   Object.assign(config, overrides);
   return { ...config };
@@ -46,7 +59,7 @@ export function getLastFileHandle() {
 }
 
 export function isRecording() {
-  return !!session && session.recorder.state === 'recording';
+  return !!session && !session.stopping && session.seg.rec.state === 'recording';
 }
 
 // True from Stop until the parts are joined and onStop has fired. A new
@@ -64,18 +77,6 @@ export function getTotalBytes() {
   return session ? session.writtenBytes : 0;
 }
 
-export function getRecordingStatus() {
-  if (!session) return null;
-  return {
-    part: session.partIndex + 1,
-    parts: session.parts.length,
-    writtenBytes: session.writtenBytes,
-    backlogBytes: session.receivedBytes - session.processedBytes,
-    errors: session.errorCount,
-    splitting: !session.splitter.failed,
-  };
-}
-
 function selectMimeType(format) {
   if (format !== 'webm') {
     if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1')) return 'video/mp4;codecs=avc1';
@@ -90,27 +91,36 @@ export function partFilename(filename, index) {
   return `${m[1]}.part${String(index + 1).padStart(3, '0')}${m[2] || ''}`;
 }
 
+// Second, third… output of one take (only when the codec setup changed
+// mid-recording): `name_cont2.mp4`.
+function continuationFilename(filename, n) {
+  const m = filename.match(/^(.*?)(\.[^.]+)?$/);
+  return `${m[1]}_cont${n}${m[2] || ''}`;
+}
+
 function describeError(err) {
   return `${err?.name || 'Error'}: ${err?.message || err}`;
 }
 
+const currentOutput = (s) => s.outputs[s.outputs.length - 1];
+
 // --- Part management ---
 
 async function openPart(s) {
+  const out = currentOutput(s);
   const index = s.parts.length;
-  const name = partFilename(s.filename, index);
+  const name = partFilename(out.filename, out.partCount++);
   const handle = await s.dir.getFileHandle(name, { create: true });
   const writable = await handle.createWritable();
-  s.parts.push({ name, handle, bytes: 0, state: 'open' });
+  const outputIndex = s.outputs.length - 1;
+  s.parts.push({ name, handle, bytes: 0, state: 'open', output: outputIndex, initBytes: out.initBytes });
   s.partIndex = index;
   s.writable = writable;
   s.partStartedAt = Date.now();
-  setPart(index, { name, bytes: 0, state: 'open' });
-  if (s.initChunks.length) {
-    for (const chunk of s.initChunks) {
-      await writable.write(chunk);
-      s.parts[index].bytes += chunk.length;
-    }
+  setPart(index, { name, bytes: 0, state: 'open', output: outputIndex, initBytes: out.initBytes });
+  for (const chunk of out.initChunks) {
+    await writable.write(chunk);
+    s.parts[index].bytes += chunk.length;
   }
   if (index > 0) logEvent('info', `opened part ${index + 1}`, { name });
 }
@@ -136,7 +146,7 @@ async function closePart(s) {
 
 function shouldRotate(s) {
   const part = s.parts[s.partIndex];
-  if (!part || part.bytes <= s.initBytes) return false;
+  if (!part || part.bytes <= part.initBytes) return false;
   return Date.now() - s.partStartedAt >= config.partSeconds * 1000 || part.bytes >= config.partMaxBytes;
 }
 
@@ -154,7 +164,7 @@ async function recoverFromWriteError(s, err) {
   s.writable = null;
   logEvent('error', `write failed in part ${s.partIndex + 1}`, { error: describeError(err), totalMB: Math.round(s.writtenBytes / 1048576) });
   s.writeFailures++;
-  if (s.splitter.failed || s.writeFailures > 3) {
+  if (s.seg.splitter.failed || s.writeFailures > 3) {
     throw err;
   }
   s.onWarning?.(`Disk write failed (${describeError(err)}). Starting a new part file and continuing.`);
@@ -163,11 +173,6 @@ async function recoverFromWriteError(s, err) {
 }
 
 async function writeUnit(s, unit) {
-  if (unit.init) {
-    s.initChunks.push(unit.bytes);
-    s.initBytes += unit.bytes.length;
-    updateJournal({ initBytes: s.initBytes });
-  }
   if (s.skipUntilCut) {
     if (!unit.cut) { s.droppedBytes += unit.bytes.length; return; }
     s.skipUntilCut = false;
@@ -185,36 +190,168 @@ async function writeUnit(s, unit) {
   }
 }
 
-async function processChunk(s, blob) {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  const wasSplitting = !s.splitter.failed;
-  const units = s.splitter.push(bytes);
-  if (wasSplitting && s.splitter.failed) {
-    logEvent('warn', 'stream splitter gave up; continuing in a single part', { reason: s.splitter.failReason });
+// --- Recorder segments (one MediaRecorder each) ---
+
+// A segment's header has fully arrived (its first media unit is next).
+// Decide whether it continues the current output or starts a new one.
+async function resolveSegment(s, seg) {
+  const initBytes = seg.initChunks.reduce((n, c) => n + c.length, 0);
+  const init = new Uint8Array(initBytes);
+  let o = 0;
+  for (const c of seg.initChunks) { init.set(c, o); o += c.length; }
+  let info = null;
+  try {
+    info = parseInit(s.container, init);
+  } catch (err) {
+    logEvent('warn', 'could not parse recorder header; timeline stitching disabled', { error: describeError(err) });
   }
-  for (const unit of units) await writeUnit(s, unit);
+
+  const out = currentOutput(s);
+  if (seg.index === 0) {
+    Object.assign(out, { initChunks: seg.initChunks, initBytes, info });
+    // Part 1 was opened before any data arrived; give it the header now.
+    for (const chunk of seg.initChunks) await writeUnit(s, { bytes: chunk, init: true, cut: false });
+    s.parts[s.partIndex].initBytes = initBytes;
+    setPart(s.partIndex, { initBytes });
+    updateJournal({ initBytes });
+  } else if (info && out.info && info.signature === out.info.signature) {
+    seg.offsetSec = s.timelineEnd;
+    logEvent('info', `recorder ${seg.index + 1} continues the same file`, { atSeconds: Math.round(seg.offsetSec * 100) / 100 });
+  } else {
+    // Codec setup changed — this recorder's media can't share the file.
+    await closePart(s);
+    const filename = continuationFilename(s.outputs[0].filename, s.outputs.length + 1);
+    s.outputs.push({ filename, initChunks: seg.initChunks, initBytes, info, partCount: 0 });
+    updateJournal({ outputs: s.outputs.map(x => ({ filename: x.filename })) });
+    seg.offsetSec = 0;
+    s.sequence = 0;
+    logEvent('warn', `recorder ${seg.index + 1} has a different codec setup — continuing in a new file`, { filename });
+    s.onWarning?.(`The video format changed mid-recording, so the rest of this take is being saved as a second clip (${filename}).`);
+    await openPart(s);
+  }
+  const outInfo = currentOutput(s).info;
+  seg.retimer = outInfo ? createRetimer(s.container, outInfo, seg.offsetSec, s.sequence) : null;
+  seg.resolved = true;
+}
+
+async function processSegmentChunk(s, seg, blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const wasSplitting = !seg.splitter.failed;
+  const units = seg.splitter.push(bytes);
+  if (wasSplitting && seg.splitter.failed) {
+    logEvent('warn', 'stream splitter gave up; continuing in a single part', { reason: seg.splitter.failReason });
+  }
+  for (let unit of units) {
+    if (unit.init && !seg.resolved) {
+      seg.initChunks.push(unit.bytes);
+      continue;
+    }
+    if (!seg.resolved) await resolveSegment(s, seg);
+    if (seg.retimer) {
+      try {
+        unit = seg.retimer.process(unit);
+      } catch (err) {
+        logEvent('error', 'could not retime a fragment; writing it unchanged', { error: describeError(err) });
+        seg.retimer = null;
+      }
+    }
+    await writeUnit(s, unit);
+  }
   s.processedBytes += blob.size;
+}
+
+async function flushSegment(s, seg) {
+  if (!seg.resolved && seg.initChunks.length) await resolveSegment(s, seg);
+  for (const unit of seg.splitter.flush()) await writeUnit(s, unit);
+  if (seg.retimer) {
+    s.timelineEnd = seg.retimer.endSec();
+    s.sequence = seg.retimer.sequence();
+  }
+}
+
+// Frame size the video track is delivering right now (0×0 if unknown).
+function videoSize(stream) {
+  const st = stream.getVideoTracks()[0]?.getSettings?.() || {};
+  return `${st.width || 0}x${st.height || 0}`;
+}
+
+function startSegment(s, prevDone) {
+  const index = s.segments.length;
+  s.segSize = videoSize(s.stream);
+  const rec = new MediaRecorder(s.stream, {
+    mimeType: s.mimeType,
+    videoBitsPerSecond: s.bitrate,
+    videoKeyFrameIntervalDuration: config.keyframeIntervalMs,
+  });
+  const seg = {
+    index, rec,
+    splitter: createSplitter(s.container),
+    initChunks: [],
+    resolved: false,
+    retimer: null,
+    offsetSec: 0,
+    bytes: 0,
+    final: false,
+    // Each segment's chunks are processed strictly after the previous
+    // segment has been fully written and flushed.
+    queue: prevDone,
+  };
+  let resolveDone;
+  seg.done = new Promise((r) => { resolveDone = r; });
+  s.segments.push(seg);
+
+  rec.ondataavailable = (event) => {
+    if (!event.data.size) return;
+    s.lastDataAt = Date.now();
+    s.receivedBytes += event.data.size;
+    seg.bytes += event.data.size;
+    const blob = event.data;
+    seg.queue = seg.queue.then(() => (s.fatal ? null : processSegmentChunk(s, seg, blob))).catch(s.fail);
+  };
+  rec.onerror = (event) => {
+    const err = event.error || new Error('MediaRecorder error');
+    s.errorCount++;
+    logEvent('error', `MediaRecorder error (recorder ${index + 1})`, { error: describeError(err) });
+    s.fail(err);
+  };
+  rec.onstop = () => {
+    seg.queue = seg.queue.then(() => (s.fatal ? null : flushSegment(s, seg))).catch(s.fail);
+    seg.queue.catch(() => {}).then(resolveDone);
+    if (seg.final) s.onFinalSegmentStopped(seg);
+  };
+  rec.start(1000);
+  return seg;
+}
+
+function rotateRecorder(s) {
+  const old = s.seg;
+  logEvent('info', `handing off to recorder ${old.index + 2}`, { recorderMB: Math.round(old.bytes / 1048576) });
+  // Start the new recorder before stopping the old one so no frame falls
+  // between them; both calls run in the same task.
+  s.seg = startSegment(s, old.done);
+  old.rec.stop();
+  updateJournal({ recorders: s.segments.length });
 }
 
 // --- Joining ---
 
 const JOIN_SLICE_BYTES = 64 * 1024 * 1024;
 
-// Join part files into one. `parts` is [{ name }] in order; every part
-// begins with `initBytes` of header, which is written once. Exported for
-// the recovery flow in app.js. Leaves the parts on disk — the caller
-// removes them once it's happy.
+// Join part files into one. `parts` is [{ name, initBytes? }] in order;
+// every part begins with its header (`initBytes`, falling back to the
+// argument), which is written once. Exported for the recovery flow in
+// app.js. Leaves the parts on disk — the caller removes them once it's happy.
 export async function joinParts(dir, parts, finalName, initBytes, onProgress) {
   const files = [];
   for (const p of parts) {
     const handle = await dir.getFileHandle(p.name);
-    files.push(await handle.getFile());
+    files.push({ file: await handle.getFile(), init: p.initBytes ?? initBytes ?? 0 });
   }
   // Only the parts that carry media past the header are worth joining.
-  const usable = files.filter(f => f.size > initBytes);
+  const usable = files.filter(f => f.file.size > f.init);
   if (!usable.length) throw new Error('no saved parts contain video');
 
-  const slices = usable.map((f, i) => (i === 0 || !initBytes ? f : f.slice(initBytes)));
+  const slices = usable.map((f, i) => (i === 0 || !f.init ? f.file : f.file.slice(f.init)));
   const total = slices.reduce((n, b) => n + b.size, 0);
 
   const finalHandle = await dir.getFileHandle(finalName, { create: true });
@@ -252,64 +389,65 @@ async function finalize(s) {
   finalizing = true;
   clearInterval(s.timer);
   const duration = getElapsed();
-  try {
-    for (const unit of s.splitter.flush()) await writeUnit(s, unit);
-  } catch (err) {
-    logEvent('error', 'final flush failed', { error: describeError(err) });
-  }
   await closePart(s);
   updateJournal({ state: 'finalizing', elapsed: duration, bytes: s.writtenBytes });
 
-  const saved = s.parts.filter(p => p.state === 'closed');
   const lost = s.parts.filter(p => p.state === 'failed');
   if (lost.length) {
     logEvent('warn', `${lost.length} part(s) were lost`, { parts: lost.map(p => p.name) });
   }
 
+  const results = [];
+  for (let i = 0; i < s.outputs.length; i++) {
+    const saved = s.parts.filter(p => p.output === i && p.state === 'closed');
+    if (saved.length) results.push(await finalizeOutput(s, s.outputs[i].filename, saved, i));
+  }
+
   let result;
-  if (!saved.length) {
+  if (!results.length) {
     endJournal('failed', { elapsed: duration });
     result = { error: new Error('No part of the recording could be saved to disk. Check the save folder and free space.') };
-  } else if (saved.length === 1 && s.parts.length === 1) {
-    // Short take: a single part — just rename it.
-    try {
-      await saved[0].handle.move(s.filename);
-      lastFileHandle = saved[0].handle;
-      endJournal('done', { elapsed: duration });
-      result = { filename: s.filename, fileSize: saved[0].bytes, merged: true };
-    } catch (err) {
-      result = await joinOrKeep(s, saved, duration, err);
-    }
   } else {
-    result = await joinOrKeep(s, saved, duration);
+    const failed = results.find(r => !r.merged);
+    endJournal(failed ? 'needs-join' : 'done', { elapsed: duration, joinError: failed?.error ? describeError(failed.error) : undefined });
+    result = { ...results[0], extraFiles: results.slice(1), merged: !failed, error: failed?.error };
+    if (results.length > 1) result.parts = results.reduce((n, r) => n + (r.parts || 1), 0);
   }
   result.duration = duration;
   result.partsLost = lost.length;
   return result;
 }
 
-async function joinOrKeep(s, saved, duration, priorErr) {
-  if (priorErr) logEvent('warn', 'rename of single part failed, joining instead', { error: describeError(priorErr) });
+async function finalizeOutput(s, filename, saved, outputIndex) {
+  const all = s.parts.filter(p => p.output === outputIndex && p.state !== 'open');
+  if (saved.length === 1 && all.length === 1) {
+    // Short take: a single part — just rename it.
+    try {
+      await saved[0].handle.move(filename);
+      if (outputIndex === 0) lastFileHandle = saved[0].handle;
+      return { filename, fileSize: saved[0].bytes, merged: true, parts: 1 };
+    } catch (err) {
+      logEvent('warn', 'rename of single part failed, joining instead', { error: describeError(err) });
+    }
+  }
   const total = saved.reduce((n, p) => n + p.bytes, 0);
-  logEvent('info', `joining ${saved.length} parts`, { mb: Math.round(total / 1048576) });
+  logEvent('info', `joining ${saved.length} parts`, { filename, mb: Math.round(total / 1048576) });
   const t0 = Date.now();
   try {
-    const { handle, bytes } = await joinParts(s.dir, saved, s.filename, s.initBytes, s.onFinalizeProgress);
-    lastFileHandle = handle;
-    await removeParts(s.dir, s.parts.filter(p => p.state !== 'open'));
-    logEvent('info', 'join complete', { mb: Math.round(bytes / 1048576), seconds: Math.round((Date.now() - t0) / 1000) });
-    endJournal('done', { elapsed: duration });
-    return { filename: s.filename, fileSize: bytes, merged: true, parts: saved.length };
+    const { handle, bytes } = await joinParts(s.dir, saved, filename, 0, s.onFinalizeProgress);
+    if (outputIndex === 0) lastFileHandle = handle;
+    await removeParts(s.dir, all);
+    logEvent('info', 'join complete', { filename, mb: Math.round(bytes / 1048576), seconds: Math.round((Date.now() - t0) / 1000) });
+    return { filename, fileSize: bytes, merged: true, parts: saved.length };
   } catch (err) {
     const over4GB = total >= 4 * 1024 ** 3;
-    logEvent('error', 'join failed — parts kept on disk', { error: describeError(err), mb: Math.round(total / 1048576) });
-    endJournal('needs-join', { elapsed: duration, joinError: describeError(err) });
-    lastFileHandle = saved[0].handle;
+    logEvent('error', 'join failed — parts kept on disk', { filename, error: describeError(err), mb: Math.round(total / 1048576) });
+    if (outputIndex === 0) lastFileHandle = saved[0].handle;
     const hint = over4GB
       ? ' The joined file would be over 4 GB — if the save drive is formatted FAT32 it cannot hold files that large (reformat as exFAT or APFS).'
       : '';
     return {
-      filename: s.filename,
+      filename,
       fileSize: total,
       merged: false,
       parts: saved.length,
@@ -330,15 +468,16 @@ export async function startRecording(stream, directoryHandle, filename, bitrate,
   const container = mimeType.includes('mp4') ? 'mp4' : 'webm';
   const s = {
     dir: directoryHandle,
-    filename,
-    container,
-    splitter: createSplitter(container),
+    stream, mimeType, bitrate, container,
+    outputs: [{ filename, initChunks: [], initBytes: 0, info: null, partCount: 0 }],
+    segments: [],
+    seg: null,
+    timelineEnd: 0,
+    sequence: 0,
     parts: [],
     partIndex: 0,
     writable: null,
     partStartedAt: 0,
-    initChunks: [],
-    initBytes: 0,
     receivedBytes: 0,
     processedBytes: 0,
     writtenBytes: 0,
@@ -346,15 +485,14 @@ export async function startRecording(stream, directoryHandle, filename, bitrate,
     errorCount: 0,
     writeFailures: 0,
     skipUntilCut: false,
-    queue: Promise.resolve(),
     startTime: 0,
     lastDataAt: 0,
     stallWarned: false,
     backlogWarned: false,
+    stopping: false,
     fatal: null,
     onWarning,
     onFinalizeProgress,
-    recorder: null,
     timer: null,
   };
 
@@ -362,6 +500,7 @@ export async function startRecording(stream, directoryHandle, filename, bitrate,
     filename, container, mimeType, bitrate,
     dirName: directoryHandle.name,
     partSeconds: config.partSeconds,
+    outputs: [{ filename }],
   });
 
   try {
@@ -371,36 +510,14 @@ export async function startRecording(stream, directoryHandle, filename, bitrate,
     throw err;
   }
 
-  const recorder = new MediaRecorder(stream, {
-    mimeType,
-    videoBitsPerSecond: bitrate,
-    videoKeyFrameIntervalDuration: config.keyframeIntervalMs,
-  });
-  s.recorder = recorder;
   session = s;
   lastFileHandle = null;
 
-  const fail = (err) => {
+  s.fail = (err) => {
     if (s.fatal) return;
     s.fatal = err;
     logEvent('error', 'recording stopped by an unrecoverable error', { error: describeError(err) });
-    if (recorder.state !== 'inactive') recorder.stop();
-  };
-
-  recorder.ondataavailable = (event) => {
-    if (!event.data.size) return;
-    s.lastDataAt = Date.now();
-    s.receivedBytes += event.data.size;
-    const blob = event.data;
-    // Serialize: each chunk's arrayBuffer() + writes finish before the next.
-    s.queue = s.queue.then(() => (s.fatal ? null : processChunk(s, blob))).catch(fail);
-  };
-
-  recorder.onerror = (event) => {
-    const err = event.error || new Error('MediaRecorder error');
-    s.errorCount++;
-    logEvent('error', 'MediaRecorder error', { error: describeError(err) });
-    fail(err);
+    stopCurrent(s);
   };
 
   for (const track of stream.getTracks()) {
@@ -412,9 +529,14 @@ export async function startRecording(stream, directoryHandle, filename, bitrate,
   const onVisibility = () => logEvent('info', `tab ${document.visibilityState}`);
   document.addEventListener('visibilitychange', onVisibility);
 
-  recorder.onstop = () => {
+  // Can be reached twice when a recorder errors (its state flips to
+  // inactive before its stop event fires) — finalize exactly once.
+  let finalizeStarted = false;
+  s.onFinalSegmentStopped = (seg) => {
+    if (finalizeStarted) return;
+    finalizeStarted = true;
     document.removeEventListener('visibilitychange', onVisibility);
-    s.queue.catch(() => {}).then(() => finalize(s)).then((result) => {
+    seg.done.then(() => finalize(s)).then((result) => {
       session = null;
       finalizing = false;
       // Something was saved: hand it to onStop so the clip (and the
@@ -436,14 +558,30 @@ export async function startRecording(stream, directoryHandle, filename, bitrate,
 
   s.startTime = Date.now();
   s.lastDataAt = Date.now();
-  recorder.start(1000);
-  logEvent('info', 'recording started', { filename, mimeType: recorder.mimeType, bitrate, partSeconds: config.partSeconds });
+  s.seg = startSegment(s, Promise.resolve());
+  logEvent('info', 'recording started', {
+    filename, mimeType: s.seg.rec.mimeType, bitrate,
+    partSeconds: config.partSeconds, recorderMaxMB: Math.round(config.recorderMaxBytes / 1048576),
+  });
 
   let lastBeat = 0;
   s.timer = setInterval(() => {
     const elapsed = getElapsed();
     const backlog = s.receivedBytes - s.processedBytes;
     onTick?.({ elapsed, bytes: s.writtenBytes, part: s.partIndex + 1, backlog, errors: s.errorCount });
+
+    if (!s.stopping && !s.fatal && s.seg.rec.state === 'recording') {
+      // A recorder keeps tagging frames with the size it started at, so a
+      // mid-take format change (capture card renegotiating) gets a fresh
+      // recorder right away — it lands in its own file via resolveSegment.
+      const size = videoSize(s.stream);
+      if (size !== s.segSize && s.seg.bytes > 0) {
+        logEvent('warn', 'video frame size changed', { from: s.segSize, to: size });
+        rotateRecorder(s);
+      } else if (s.seg.bytes >= config.recorderMaxBytes) {
+        rotateRecorder(s);
+      }
+    }
 
     const silentFor = Date.now() - s.lastDataAt;
     if (silentFor > config.stallWarnMs && !s.stallWarned) {
@@ -469,11 +607,19 @@ export async function startRecording(stream, directoryHandle, filename, bitrate,
   }, 500);
 }
 
+function stopCurrent(s) {
+  if (s.stopping) return;
+  s.stopping = true;
+  finalizing = true;
+  s.seg.final = true;
+  if (s.seg.rec.state !== 'inactive') s.seg.rec.stop();
+  else s.onFinalSegmentStopped(s.seg);
+}
+
 export function stopRecording() {
-  if (session && session.recorder.state !== 'inactive') {
+  if (session && !session.stopping) {
     logEvent('info', 'stop requested', { elapsed: getElapsed() });
-    finalizing = true;
-    session.recorder.stop();
+    stopCurrent(session);
   }
 }
 
