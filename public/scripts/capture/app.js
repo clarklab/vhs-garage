@@ -217,6 +217,7 @@ async function startApp() {
   wireGrabThumb();
   wireLibraryDrag();
   wireLibraryBatchUpload();
+  wireLibraryStitch();
   wireLibraryFilter();
   wireLibraryResync();
   wireCatalogSaveFailureToast();
@@ -2937,7 +2938,13 @@ function refreshLibrary() {
     }
 
     refreshLibrary();
-  }, onOpen, onUpload, onMarkUnuploaded, onDuplicate, {
+  }, onOpen, onUpload, onMarkUnuploaded, onDuplicate, stitchSelection.mode ? {
+    mode: true,
+    selectedIds: new Set(stitchSelection.order),
+    order: stitchSelection.order,
+    allowUploaded: true,
+    onToggleSelect: toggleStitchSelection,
+  } : {
     mode: batchSelection.mode,
     selectedIds: batchSelection.ids,
     onToggleSelect: toggleBatchSelection,
@@ -2960,6 +2967,7 @@ const batchSelection = {
 };
 
 function setBatchMode(on) {
+  if (on && stitchSelection.mode) setStitchMode(false);
   batchSelection.mode = on;
   if (!on) batchSelection.ids.clear();
   updateBatchCounterButton();
@@ -3044,6 +3052,201 @@ function wireLibraryBatchUpload() {
     if (e.key !== 'Escape') return;
     const isOpen = !document.getElementById('batch-review-modal')?.classList.contains('hidden');
     if (isOpen) closeBatchReviewModal();
+  });
+}
+
+// --- Library stitch (join clips into one video) ---
+//
+// Matt wanted to string clips together in a chosen order — e.g. all the
+// Twin Peaks season 1 commercials as one video. Stitch mode numbers tiles
+// in click order; the bar at the bottom of the library reorders them,
+// picks a transition (cut / crossfade / static) and a title, and renders
+// with stitch.js (WebCodecs via Mediabunny — much faster than real time,
+// unlike Trim). The result is a new clip in the library; the sources are
+// untouched. Splitting stays Trim's job.
+
+const stitchSelection = {
+  mode: false,
+  order: [],
+  transition: 'cut',
+  running: null, // AbortController while rendering
+};
+
+function setStitchMode(on) {
+  if (stitchSelection.running) return;
+  if (on && batchSelection.mode) setBatchMode(false);
+  stitchSelection.mode = on;
+  if (!on) stitchSelection.order = [];
+  document.getElementById('library-stitch-btn')?.classList.toggle('is-active', on);
+  document.getElementById('library-stitch-bar')?.classList.toggle('hidden', !on);
+  renderStitchBar();
+  refreshLibrary();
+}
+
+function toggleStitchSelection(clipId) {
+  if (stitchSelection.running) return;
+  const i = stitchSelection.order.indexOf(clipId);
+  if (i >= 0) stitchSelection.order.splice(i, 1);
+  else stitchSelection.order.push(clipId);
+  renderStitchBar();
+  refreshLibrary();
+}
+
+function moveStitchClip(clipId, delta) {
+  const order = stitchSelection.order;
+  const i = order.indexOf(clipId);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  renderStitchBar();
+  refreshLibrary();
+}
+
+function renderStitchBar() {
+  const chips = document.getElementById('library-stitch-chips');
+  const summary = document.getElementById('library-stitch-summary');
+  const go = document.getElementById('library-stitch-go');
+  if (!chips) return;
+  const clips = getClips();
+  const picked = stitchSelection.order.map(id => clips.find(c => c.id === id)).filter(Boolean);
+  // Drop ids whose clips were deleted meanwhile.
+  stitchSelection.order = picked.map(c => c.id);
+  const total = picked.reduce((n, c) => n + (c.duration || 0), 0);
+  summary.textContent = picked.length
+    ? `${picked.length} clip${picked.length === 1 ? '' : 's'} · about ${formatTime(Math.round(total))}`
+    : 'Click clips in the order you want them.';
+  const btn = 'w-4 h-4 flex items-center justify-center text-white/50 hover:text-white disabled:opacity-20';
+  chips.innerHTML = picked.map((c, i) => `
+    <span class="flex items-center gap-1 shrink-0 max-w-[180px] pl-1.5 pr-1 h-6 bg-black border border-white/25 text-[10px] text-white/85">
+      <span class="text-red-500">${i + 1}</span>
+      <span class="truncate" title="${escapeHtml(c.title || 'Untitled')}">${escapeHtml(c.title || 'Untitled')}</span>
+      <button type="button" data-stitch-move="-1" data-id="${c.id}" class="${btn}" title="Move earlier" ${i === 0 ? 'disabled' : ''}>‹</button>
+      <button type="button" data-stitch-move="1" data-id="${c.id}" class="${btn}" title="Move later" ${i === picked.length - 1 ? 'disabled' : ''}>›</button>
+      <button type="button" data-stitch-remove data-id="${c.id}" class="${btn}" title="Remove">×</button>
+    </span>`).join('');
+  document.querySelectorAll('.stitch-transition').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.transition === stitchSelection.transition);
+    b.setAttribute('aria-checked', String(b.dataset.transition === stitchSelection.transition));
+  });
+  if (go) {
+    go.disabled = picked.length < 2 || !directoryHandle;
+    go.textContent = picked.length >= 2 ? `Stitch ${picked.length}` : 'Stitch';
+    go.title = picked.length < 2 ? 'Pick at least two clips' : '';
+  }
+}
+
+async function readClipFile(clip) {
+  try {
+    return await (await directoryHandle.getFileHandle(clip.filename)).getFile();
+  } catch (e) {
+    // Same alt-extension fallback loadClipIntoEditor uses.
+    const alt = clip.filename.endsWith('.mp4') ? clip.filename.replace(/\.mp4$/i, '.webm') : clip.filename.replace(/\.webm$/i, '.mp4');
+    try { return await (await directoryHandle.getFileHandle(alt)).getFile(); }
+    catch { throw new Error(`"${clip.title || clip.filename}" isn't in the save folder (${clip.filename}).`); }
+  }
+}
+
+function setStitchProgress(fraction, label) {
+  const bar = document.getElementById('library-stitch-progress-bar');
+  const text = document.getElementById('library-stitch-progress-label');
+  if (bar) bar.style.width = `${Math.round(fraction * 100)}%`;
+  if (text) text.textContent = label ?? `${Math.floor(fraction * 100)}%`;
+}
+
+async function runStitch() {
+  if (stitchSelection.running || !directoryHandle) return;
+  const clips = getClips();
+  const picked = stitchSelection.order.map(id => clips.find(c => c.id === id)).filter(Boolean);
+  if (picked.length < 2) return;
+
+  const titleInput = document.getElementById('library-stitch-title');
+  const title = titleInput.value.trim() || `${picked[0].title || 'Untitled'} + ${picked.length - 1} more`;
+  const settings = loadSettings();
+  const filename = await pickUniqueFilename(generateFilename(title, settings.nameFormat || 'title', 'mp4'));
+  const controls = document.getElementById('library-stitch-controls');
+  const progress = document.getElementById('library-stitch-progress');
+  const abort = new AbortController();
+  stitchSelection.running = abort;
+  controls.classList.add('hidden');
+  progress.classList.remove('hidden');
+  setStitchProgress(0, 'Loading…');
+  const t0 = performance.now();
+  console.info('[stitch] starting', { filename, transition: stitchSelection.transition, clips: picked.map(c => c.filename) });
+
+  let fileHandle = null;
+  try {
+    const files = [];
+    for (const c of picked) files.push(await readClipFile(c));
+    const { stitchClips } = await import('./stitch.js');
+    fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    const info = await stitchClips({
+      files,
+      transition: stitchSelection.transition,
+      writable,
+      bitrate: settings.bitrate || 5_000_000,
+      signal: abort.signal,
+      onProgress: (f) => setStitchProgress(f),
+    });
+    const file = await fileHandle.getFile();
+    console.info('[stitch] done', { filename, seconds: Math.round((performance.now() - t0) / 1000), mb: Math.round(file.size / 1048576), ...info });
+
+    const entry = createClipEntry(title, filename, Math.round(info.duration), file.size, settings.bitrate || 0);
+    // Borrow the first clip's tape details and thumbnail as a starting
+    // point; the editor's thumbnail picker can replace it.
+    for (const k of ['year', 'tape', 'distributor', 'tags', 'thumbnail']) {
+      if (picked[0][k] != null) entry[k] = picked[0][k];
+    }
+    entry.cassetteNotes = `Stitched (${stitchSelection.transition}) from: ${picked.map(c => c.title || c.filename).join(' · ')}`;
+    addClip(entry);
+    const basename = filename.replace(/\.(webm|mp4)$/, '');
+    await saveSidecarFiles(directoryHandle, basename, entry).catch((e) => console.warn('[stitch] sidecar write failed:', e));
+    stitchSelection.running = null;
+    setStitchMode(false);
+    titleInput.value = '';
+    showSimpleToast('Stitched', `"${title}" (${formatTime(Math.round(info.duration))}) is in your library.`, { kind: 'success' });
+    await loadClipIntoEditor(entry.id);
+  } catch (err) {
+    const cancelled = err?.name === 'AbortError';
+    if (cancelled) console.info('[stitch] cancelled');
+    else console.error('[stitch] failed:', err);
+    // Never leave a half-written video behind.
+    if (fileHandle) await directoryHandle.removeEntry(filename).catch(() => {});
+    if (!cancelled) showErrorToast('Stitch failed', err?.message || String(err));
+  } finally {
+    stitchSelection.running = null;
+    controls.classList.remove('hidden');
+    progress.classList.add('hidden');
+    renderStitchBar();
+  }
+}
+
+function wireLibraryStitch() {
+  document.getElementById('library-stitch-btn')?.addEventListener('click', () => setStitchMode(!stitchSelection.mode));
+  document.getElementById('library-stitch-cancel')?.addEventListener('click', () => setStitchMode(false));
+  document.getElementById('library-stitch-go')?.addEventListener('click', runStitch);
+  document.getElementById('library-stitch-abort')?.addEventListener('click', () => {
+    stitchSelection.running?.abort();
+    setStitchProgress(0, 'Cancelling…');
+  });
+  document.querySelectorAll('.stitch-transition').forEach(b => b.addEventListener('click', () => {
+    stitchSelection.transition = b.dataset.transition;
+    renderStitchBar();
+  }));
+  document.getElementById('library-stitch-chips')?.addEventListener('click', (e) => {
+    const el = e.target.closest('button[data-id]');
+    if (!el) return;
+    if (el.hasAttribute('data-stitch-remove')) toggleStitchSelection(el.dataset.id);
+    else moveStitchClip(el.dataset.id, Number(el.dataset.stitchMove));
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && stitchSelection.mode && !stitchSelection.running
+        && document.activeElement?.id !== 'library-stitch-title') setStitchMode(false);
+  });
+  window.addEventListener('beforeunload', (e) => {
+    if (!stitchSelection.running) return;
+    e.preventDefault();
+    e.returnValue = 'A stitch is still rendering. Leave anyway?';
   });
 }
 

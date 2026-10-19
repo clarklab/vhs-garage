@@ -500,6 +500,22 @@ import { BUILD_ID } from '../utils/build-id.js';
     }
     /* Counter button in the library titlebar — gets red and glowy once
        at least one clip is selected. */
+    /* Stitch mode numbers the tiles in pick order instead of ticking them. */
+    .library-checkbox.is-order {
+      width: auto;
+      min-width: 16px;
+      padding: 0 3px;
+      font-size: 10px;
+      font-family: 'VCR', monospace;
+    }
+    #library-stitch-btn.is-active,
+    .stitch-transition.is-active {
+      background: #dc2626;
+      border-color: #dc2626;
+      color: #fff;
+    }
+    .stitch-transition { color: rgba(255, 255, 255, 0.7); }
+    .stitch-transition:hover:not(.is-active) { color: #fff; background: rgba(255, 255, 255, 0.08); }
     #library-upload-many-btn.is-active {
       background: #dc2626;
       border-color: #dc2626;
@@ -1782,6 +1798,13 @@ import { BUILD_ID } from '../utils/build-id.js';
                 title="Select multiple clips to upload">
           Upload Many
         </button>
+        <!-- Stitch — select clips in order and join them into one video
+             (stitch.js). Opens #library-stitch-bar at the bottom. -->
+        <button id="library-stitch-btn" type="button"
+                class="px-2 h-5 flex items-center justify-center text-white/80 hover:text-white border border-white/25 hover:border-white/50 text-[10px] tracking-wider uppercase transition-colors"
+                title="Join several clips into one video, in the order you pick them">
+          Stitch
+        </button>
         <button id="to-capture-btn" type="button" class="w-5 h-5 flex items-center justify-center bg-red-600 hover:bg-red-500 text-white text-sm leading-none transition-colors" title="Close" style="font-family: 'VCR', monospace;">×</button>
       </div>
 
@@ -1810,6 +1833,32 @@ import { BUILD_ID } from '../utils/build-id.js';
 
         <div id="library-grid" class="grid grid-cols-3 sm:grid-cols-4 gap-2 p-3"></div>
         <p id="library-empty" class="text-gray-400 text-xs text-center py-12">No clips captured yet.</p>
+      </div>
+
+      <!-- Stitch bar — visible in stitch mode. Clips are numbered in the
+           order they're clicked; the chips below reorder / remove them.
+           Swaps to a progress row while the stitch renders. -->
+      <div id="library-stitch-bar" class="hidden flex flex-col gap-2 px-3 py-2 border-t-2 border-red-600/70 bg-[#141014]" style="font-family: 'VCR', monospace;">
+        <div class="flex items-center gap-2 text-[11px]">
+          <span class="text-white/85 uppercase tracking-wider">Stitch</span>
+          <span id="library-stitch-summary" class="text-white/50 flex-1 truncate">Click clips in the order you want them.</span>
+        </div>
+        <div id="library-stitch-chips" class="flex gap-1.5 overflow-x-auto pb-1 min-h-[26px]"></div>
+        <div id="library-stitch-controls" class="flex items-center gap-2 flex-wrap">
+          <div class="flex border border-white/25" role="radiogroup" aria-label="Transition">
+            <button type="button" data-transition="cut" class="stitch-transition px-2 h-6 text-[10px] uppercase tracking-wider" title="Clips play back to back">Cut</button>
+            <button type="button" data-transition="crossfade" class="stitch-transition px-2 h-6 text-[10px] uppercase tracking-wider border-l border-white/25" title="Each clip dissolves into the next">Crossfade</button>
+            <button type="button" data-transition="static" class="stitch-transition px-2 h-6 text-[10px] uppercase tracking-wider border-l border-white/25" title="A burst of TV static between clips, like changing the channel">Static</button>
+          </div>
+          <input id="library-stitch-title" type="text" placeholder="Title for the stitched video" class="flex-1 min-w-[140px] h-6 px-2 bg-black border border-white/25 text-white text-[11px] placeholder-white/30 focus:border-white/60 outline-none" />
+          <button id="library-stitch-cancel" type="button" class="px-2 h-6 text-white/60 hover:text-white text-[10px] uppercase tracking-wider">Cancel</button>
+          <button id="library-stitch-go" type="button" class="px-3 h-6 bg-[#dc2626] hover:bg-[#ef4444] disabled:opacity-40 disabled:hover:bg-[#dc2626] text-white text-[10px] uppercase tracking-wider" disabled>Stitch</button>
+        </div>
+        <div id="library-stitch-progress" class="hidden flex items-center gap-2">
+          <div class="flex-1 h-2 bg-white/10 border border-white/20"><div id="library-stitch-progress-bar" class="h-full bg-red-600" style="width:0%"></div></div>
+          <span id="library-stitch-progress-label" class="text-white/70 text-[10px] tabular-nums w-24 text-right">0%</span>
+          <button id="library-stitch-abort" type="button" class="px-2 h-6 text-white/60 hover:text-white text-[10px] uppercase tracking-wider">Cancel</button>
+        </div>
       </div>
 
       <!-- Footer — small action strip -->

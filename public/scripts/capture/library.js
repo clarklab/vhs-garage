@@ -222,6 +222,10 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
   const selectionMode = !!(selection && selection.mode);
   const selectedIds = (selection && selection.selectedIds) || new Set();
   const onToggleSelect = (selection && selection.onToggleSelect) || null;
+  // Stitch mode: every clip is pickable (uploaded ones too), and tiles show
+  // their position in the pick order instead of a tick.
+  const order = (selection && selection.order) || null;
+  const allowUploaded = !!(selection && selection.allowUploaded);
 
   // File-icon layout: thumbnail on top, two-line title + duration beneath.
   // Whole tile is the click target. No inline delete button — destructive
@@ -258,19 +262,21 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
     // Selection-mode checkbox indicator. Only on un-uploaded tiles —
     // uploaded ones can't be re-uploaded (and the YouTube pill already
     // tells you what's up).
-    const checkboxIndicator = (selectionMode && !isUploaded)
-      ? `<span class="library-checkbox ${isSelected ? 'is-checked' : ''}">${isSelected ? '✓' : ''}</span>`
-      : '';
+    const selectable = selectionMode && (!isUploaded || allowUploaded);
+    const orderNum = order && isSelected ? order.indexOf(clip.id) + 1 : 0;
+    const checkboxIndicator = !selectable ? '' : order
+      ? `<span class="library-checkbox is-order ${isSelected ? 'is-checked' : ''}">${orderNum || ''}</span>`
+      : `<span class="library-checkbox ${isSelected ? 'is-checked' : ''}">${isSelected ? '✓' : ''}</span>`;
     const cursorClass = selectionMode
-      ? (isUploaded ? 'cursor-default' : 'cursor-pointer')
+      ? (selectable ? 'cursor-pointer' : 'cursor-default')
       : (onOpen ? 'cursor-pointer hover:border-white/40 hover:bg-white/5' : '');
     const tileExtra = [
-      selectionMode && isUploaded ? 'is-uploaded-in-selection' : '',
+      selectionMode && !selectable ? 'is-uploaded-in-selection' : '',
       isSelected ? 'is-selected' : '',
     ].filter(Boolean).join(' ');
     const tileClass = `library-card relative flex flex-col border border-white/15 ${cursorClass} ${tileExtra} transition-colors select-none`.trim();
     const titleAttr = selectionMode
-      ? (isUploaded ? 'Already uploaded — exit selection mode to open' : 'Click to toggle selection')
+      ? (!selectable ? 'Already uploaded — exit selection mode to open' : 'Click to toggle selection')
       : (onOpen ? 'Click to open · right-click for options' : 'Right-click for options');
     return `
     <div class="${tileClass}" data-id="${clip.id}" data-filename="${clip.filename || ''}" data-uploaded="${isUploaded ? '1' : '0'}" title="${titleAttr}">
@@ -296,7 +302,7 @@ export function renderLibrary(container, emptyMsg, clips, onDelete, onOpen, onUp
       if (e.target.closest('button, a')) return; // inner controls handle themselves
       if (selectionMode) {
         const isUploaded = el.dataset.uploaded === '1';
-        if (isUploaded) return; // can't select uploaded clips
+        if (isUploaded && !allowUploaded) return; // can't batch-upload uploaded clips
         if (onToggleSelect) onToggleSelect(el.dataset.id);
         return;
       }
