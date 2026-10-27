@@ -33,6 +33,14 @@
     Pragma = "no-cache"
     Expires = "0"
 
+# The Quote-a-long stamp is a fixed piece of art, and the blanket no-store
+# above would re-download half a megabyte of it on every page load. It changes
+# only when the file is deliberately replaced.
+[[headers]]
+  for = "/tik/quote.png"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
 # ffmpeg.wasm runtime files are large (~24MB wasm) and change only when
 # we deliberately bump @ffmpeg/core (an exact-pinned dep). Override the
 # global no-store so the browser can actually keep these around between
