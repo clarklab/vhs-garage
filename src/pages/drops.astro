@@ -1,0 +1,684 @@
+---
+import Base from '../layouts/Base.astro';
+import DropTape from '../components/DropTape.astro';
+import { DROP } from '../data/drop.js';
+
+const done = "▓ You're on the list. Watch your inbox on drop day.";
+const units = [['d', 'Days'], ['h', 'Hrs'], ['m', 'Min'], ['s', 'Sec']];
+const digits = [...'0123456789'];
+const ticker = ['VHS Garage Originals', 'One run only', 'No restocks', "When they're gone they're gone"];
+const usd = (n) => `$${n.toFixed(2)}`;
+---
+
+<Base
+  title="VHS Garage Originals"
+  description="VHS Garage Originals: one-time runs of tapes and shirts. No restocks. When they're gone, they're gone."
+>
+  <style>
+    /* Print grain over the poster red. */
+    .drop-grain {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      mix-blend-mode: multiply;
+      opacity: 0.22;
+    }
+    /* Odometer wheel: a 0–9 column, rolled to --d by the countdown script. */
+    .drop-odo {
+      transform: translateY(calc(var(--d, 0) * -10%));
+      transition: transform 0.6s cubic-bezier(0.3, 1.4, 0.5, 1);
+    }
+    .drop-sheet { animation: drop-sheet-up 0.28s cubic-bezier(0.2, 0.9, 0.3, 1); }
+    .drop-blink { animation: drop-blink 1s steps(1) infinite; }
+    .drop-marquee { animation: drop-marquee 24s linear infinite; }
+    @keyframes drop-sheet-up { from { transform: translateY(100%); } }
+    @keyframes drop-blink { 50% { opacity: 0; } }
+    @keyframes drop-marquee { to { transform: translateX(-50%); } }
+    @media (prefers-reduced-motion: reduce) {
+      .drop-odo { transition: none; }
+      .drop-sheet, .drop-blink, .drop-marquee { animation: none; }
+    }
+  </style>
+
+  <!--
+    One page, four phases: soon (countdown + pre-order), live (on sale),
+    soldout, thanks (back from Stripe). The script sets the phase and shows
+    only the [data-view] elements that list it. Independently, when every
+    copy is sitting in someone's checkout, [data-when-held] replaces the
+    buy buttons ([data-when-buyable]) until a hold comes back.
+  -->
+  <main data-drop class="relative isolate min-h-dvh overflow-hidden bg-[#dc2626] text-black">
+    <div aria-hidden="true" class="drop-grain pointer-events-none absolute inset-0 -z-10"></div>
+
+    <div class="mx-auto flex max-w-2xl flex-col gap-9 px-4 pt-5 pb-11 sm:px-6">
+      <div class="flex items-center justify-between text-sm uppercase tracking-widest">
+        <a href="/" class="hover:text-white">← VHS Garage Originals</a>
+        <p data-view="soon">Drop {DROP.number}</p>
+        <p data-view="live" hidden class="flex items-center gap-2"><span class="drop-blink size-2 bg-black"></span>Live now</p>
+        <p data-view="soldout" hidden>Sold out</p>
+        <p data-view="thanks" hidden class="flex items-center gap-2"><span class="size-2 bg-black"></span>Paid</p>
+      </div>
+
+      <div class="@container flex flex-col gap-5">
+        <h1 class="flex flex-col tracking-tight">
+          <span data-view="soon live soldout" class="text-[42.8cqw]/[0.78]">DROP</span>
+          <span data-view="thanks" hidden class="text-[33cqw]/[0.95]">YOURS</span>
+        </h1>
+        <div class="grid grid-cols-[44fr_13fr] gap-4">
+          <div class="relative aspect-[132/145] bg-black">
+            <div class="absolute inset-[6%]"><DropTape blocks={72} /></div>
+            <div data-view="soon" class="pointer-events-none absolute inset-0 grid place-items-center">
+              <p class="-rotate-6 bg-white px-3 py-2 text-center text-sm uppercase tracking-wide text-black shadow-[4px_4px_0_0_rgba(0,0,0,0.5)]">Blurred to protect<br />tape identity</p>
+            </div>
+            <p data-view="live" hidden class="pointer-events-none absolute -top-3 -right-3 rotate-6 bg-white px-3 py-1 text-4xl tabular-nums text-black shadow-[4px_4px_0_0_rgba(0,0,0,0.5)]">${DROP.price}</p>
+            <div data-view="soldout" hidden class="pointer-events-none absolute inset-0 grid place-items-center">
+              <p class="-rotate-[14deg] border-4 border-[#dc2626] bg-black/75 px-3 py-1 text-4xl text-[#dc2626]">SOLD OUT</p>
+            </div>
+            <p data-view="thanks" hidden class="pointer-events-none absolute -top-3 -right-3 rotate-6 bg-white px-3 py-2 text-center text-sm uppercase tracking-wide text-black shadow-[4px_4px_0_0_rgba(0,0,0,0.5)]">Be kind,<br />rewind</p>
+          </div>
+          <p aria-label={`No. ${DROP.number}`} class="flex flex-col justify-between text-right text-[33cqw]/[0.8] tabular-nums">
+            {DROP.number.split('').map((digit) => <span aria-hidden="true">{digit}</span>)}
+          </p>
+        </div>
+      </div>
+
+      <p data-view="soon live" class="text-xl text-balance">Original tapes and shirts. One run, no restocks. When they're gone, they're gone.</p>
+      <p data-view="soldout" hidden class="text-xl text-balance">That's a wrap on Drop {DROP.number}. Thanks to everyone who grabbed one.</p>
+      <p data-view="thanks" hidden class="text-xl text-balance">You got one. Your receipt is on its way<span data-order-to></span>.</p>
+
+      <!-- Soon: pre-order now, or sign up to buy later. -->
+      <div data-view="soon" data-signup class="flex flex-col gap-5 bg-black px-5 pt-5 pb-6 text-white">
+        <div class="flex flex-col gap-2">
+          <button type="button" data-buy data-when-buyable class="h-14 bg-[#dc2626] text-base uppercase tracking-wider text-white transition-colors hover:bg-[#ef4444] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Pre-order now · ${DROP.price}</button>
+          <p data-when-held hidden class="flex h-14 items-center justify-center gap-3 border-2 border-dashed border-white/35 text-base uppercase tracking-wider text-white/80"><span class="size-2 bg-[#dc2626]"></span>All copies in carts</p>
+          <p data-when-buyable class="text-center text-base text-white/70 sm:text-sm">You're guaranteed one. Ships when the drop opens. Feeling lucky?</p>
+          <p data-when-held hidden class="text-center text-base text-white/70 sm:text-sm">Every copy is in someone's checkout. If they don't pay in {DROP.holdMinutes} minutes, it comes back.</p>
+          <p data-buy-error hidden class="text-center text-base text-[#f87171] sm:text-sm"></p>
+        </div>
+
+        <div aria-hidden="true" class="flex items-center gap-3 text-xs uppercase tracking-widest text-white/50">
+          <span class="h-px grow bg-white/20"></span>or<span class="h-px grow bg-white/20"></span>
+        </div>
+
+        <div class="flex flex-col gap-3">
+          <div data-count-line hidden class="flex items-center justify-center gap-3">
+            <p data-signup-count class="text-5xl tabular-nums"></p>
+            <div class="flex flex-col gap-3">
+              <p class="text-xl">in line for the drop</p>
+              <div aria-hidden="true" class="relative h-[9px] bg-[#dc2626]"><span class="absolute inset-y-0 right-0 w-[37%] bg-white"></span></div>
+            </div>
+          </div>
+          <p class="text-center text-base text-pretty sm:text-sm">Sign up for alerts. <span class="text-white/60">We'll email you when it drops, if any are left.</span></p>
+          <form data-drop-signup data-done={done} name="garage-signup" method="POST" action="/" class="flex gap-2">
+            <input type="hidden" name="form-name" value="garage-signup" />
+            <input type="hidden" name="source" value="drops" />
+            <input type="email" name="email" required placeholder="your@email.com" autocomplete="email" inputmode="email" aria-label="Email address" class="h-12 min-w-0 flex-1 bg-white px-4 text-base text-black placeholder-black/40 focus:outline-2 focus:-outline-offset-1 focus:outline-[#dc2626]" />
+            <button type="submit" class="h-12 shrink-0 border border-white px-4 text-base uppercase tracking-wider text-white transition-colors hover:bg-white hover:text-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Submit</button>
+          </form>
+          <p data-signup-status hidden class="text-center text-lg"></p>
+        </div>
+      </div>
+
+      <div data-view="soon" class="flex flex-col gap-3">
+        <p class="text-sm uppercase tracking-widest text-white">Drops {DROP.opensLabel}</p>
+        <div role="timer" class="flex items-start justify-between border-y-2 border-black py-3">
+          {units.map(([part, unit], i) => (
+            <>
+              {i > 0 && <p aria-hidden="true" class="text-5xl">:</p>}
+              <div class="flex flex-col items-center gap-1">
+                <p aria-hidden="true" class="flex text-5xl tabular-nums">
+                  {[0, 1].map((place) => (
+                    <span class="h-[1lh] overflow-hidden">
+                      <span data-odo={part} data-place={place} class="drop-odo flex flex-col">
+                        {digits.map((d) => <span>{d}</span>)}
+                      </span>
+                    </span>
+                  ))}
+                </p>
+                <p class="text-xs uppercase tracking-widest text-white">{unit}</p>
+              </div>
+            </>
+          ))}
+        </div>
+      </div>
+
+      <!-- Live: on sale. -->
+      <div data-view="live" hidden class="flex flex-col gap-5 bg-black p-5 text-white">
+        <div class="flex items-end justify-between gap-4">
+          <p class="text-8xl tracking-tight tabular-nums">${DROP.price}</p>
+          <p class="pb-2 text-right text-sm uppercase tracking-widest text-white/65">Each<br />+ ${DROP.shipping} shipping</p>
+        </div>
+        <button type="button" data-buy data-when-buyable class="h-16 bg-[#dc2626] text-xl uppercase tracking-wider text-white transition-colors hover:bg-[#ef4444] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Buy now →</button>
+        <p data-when-held hidden class="flex h-16 items-center justify-center gap-3 border-2 border-dashed border-white/35 text-lg uppercase tracking-wider text-white/80"><span class="size-2 bg-[#dc2626]"></span>All copies in carts</p>
+        <p data-when-held hidden class="text-base text-white/75 sm:text-sm">Every copy is in someone's checkout right now. If they don't pay in {DROP.holdMinutes} minutes, it comes back. This button wakes up on its own.</p>
+        <p data-buy-error hidden class="text-center text-base text-[#f87171] sm:text-sm"></p>
+        <p data-when-buyable class="flex items-center justify-center gap-2 text-base text-white/65 sm:text-sm">
+          <svg viewBox="0 0 16 16" fill="currentColor" class="size-4 shrink-0" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2h1v7H4V7h1Zm1.5 0h3V5a1.5 1.5 0 0 0-3 0v2Z" /></svg>
+          Apple Pay, Google Pay or card
+        </p>
+      </div>
+
+      <!-- Sold out: point everyone at the next one. -->
+      <div data-view="soldout" hidden data-signup class="flex flex-col gap-5 bg-black px-5 pt-5 pb-6 text-white">
+        <div class="flex flex-col gap-2">
+          <h2 class="text-3xl tracking-tight text-balance">Don't miss the next drop.</h2>
+          <p class="text-base/7 text-pretty text-white/65 sm:text-sm/6">Get the alert before it sells out.</p>
+        </div>
+        <form data-drop-signup data-done={done} name="garage-signup" method="POST" action="/" class="flex gap-2">
+          <input type="hidden" name="form-name" value="garage-signup" />
+          <input type="hidden" name="source" value="drops" />
+          <input type="email" name="email" required placeholder="your@email.com" autocomplete="email" inputmode="email" aria-label="Email address" class="h-12 min-w-0 flex-1 bg-white px-4 text-base text-black placeholder-black/40 focus:outline-2 focus:-outline-offset-1 focus:outline-[#dc2626]" />
+          <button type="submit" class="h-12 shrink-0 bg-[#dc2626] px-4 text-base uppercase tracking-wider text-white transition-colors hover:bg-[#ef4444] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Notify me</button>
+        </form>
+        <p data-signup-status hidden class="text-lg"></p>
+      </div>
+
+      <!-- Thanks: back from Stripe. -->
+      <div data-view="thanks" hidden class="flex flex-col gap-4 bg-black p-5 text-white">
+        <dl class="flex flex-col gap-3">
+          {[['Order', 'number'], ['Item', 'item'], ['Paid', 'paid'], ['Ships to', 'ship']].map(([term, key], i) => (
+            <div class:list={['flex items-baseline justify-between gap-4', i === 0 && 'border-b border-white/20 pb-3']}>
+              <dt class="text-sm uppercase tracking-widest text-white/65">{term}</dt>
+              <dd data-order={key} class="text-right text-base">—</dd>
+            </div>
+          ))}
+        </dl>
+        <p data-order-preorder hidden class="text-base text-white/75 sm:text-sm">It's a pre-order, so it ships when the drop opens on {DROP.opensLabel}.</p>
+        <button type="button" data-share class="h-14 bg-[#dc2626] text-base uppercase tracking-wider text-white transition-colors hover:bg-[#ef4444] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Share the drop</button>
+        <a href="/" class="flex h-14 items-center justify-center border border-white/30 text-base uppercase tracking-wider text-white transition-colors hover:border-white">Back to the Garage</a>
+      </div>
+    </div>
+
+    <div class="overflow-hidden bg-black py-2 text-sm uppercase tracking-widest text-white">
+      <div aria-hidden="true" class="drop-marquee flex w-max gap-8 pl-8">
+        {[...ticker, ...ticker].map((item) => (
+          <>
+            <span>{item}</span><span class="text-[#dc2626]">•</span>
+          </>
+        ))}
+      </div>
+    </div>
+  </main>
+
+  <!-- Checkout: Stripe's fields, styled to match, in a sheet over the poster. -->
+  <div data-checkout hidden role="dialog" aria-modal="true" aria-labelledby="drop-checkout-title" class="fixed inset-0 z-50 flex flex-col">
+    <button type="button" data-checkout-close aria-label="Close checkout" class="h-16 shrink-0 bg-[#6e1313]/90"></button>
+    <div class="drop-sheet min-h-0 flex-1 overflow-y-auto border-t-[3px] border-[#dc2626] bg-[#0a0a0a] text-white">
+      <div class="mx-auto flex w-full max-w-lg flex-col gap-5 px-5 pt-4 pb-10">
+        <div class="flex items-center justify-between">
+          <h2 id="drop-checkout-title" class="text-2xl">Checkout</h2>
+          <button type="button" data-checkout-close aria-label="Close checkout" class="grid size-10 place-items-center border border-[#2a2a2a] hover:border-white">
+            <svg viewBox="0 0 14 14" class="size-3.5" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 2l10 10M12 2 2 12" /></svg>
+          </button>
+        </div>
+
+        <div data-hold class="flex items-center justify-between bg-[#dc2626] px-4 py-3">
+          <p class="text-sm uppercase tracking-wide">Your copy is held for</p>
+          <p data-hold-left class="text-2xl tabular-nums">{String(DROP.holdMinutes).padStart(2, '0')}:00</p>
+        </div>
+        <div data-hold-expired hidden class="flex flex-col gap-3 border-2 border-dashed border-white/35 p-4">
+          <p class="text-base">Your hold ran out and the copy went back on sale.</p>
+          <button type="button" data-buy class="h-12 bg-[#dc2626] text-base uppercase tracking-wider text-white hover:bg-[#ef4444]">Try again</button>
+        </div>
+
+        <div class="flex items-center gap-4 border-b border-[#2a2a2a] pb-5">
+          <div class="grid h-[72px] w-14 shrink-0 place-items-center border border-[#2a2a2a] bg-black">
+            <img src="/images/drops/tape-front.png" alt="" class="h-[54px] w-[34px] [image-rendering:pixelated]" />
+          </div>
+          <div class="flex flex-1 flex-col gap-1">
+            <p class="text-base">Drop {DROP.number}</p>
+            <p data-checkout-kind class="font-sans text-sm text-white/60">VHS Garage Original · Qty 1</p>
+          </div>
+          <p class="text-lg tabular-nums">${DROP.price}</p>
+        </div>
+
+        <div data-express hidden class="flex flex-col gap-4">
+          <div id="drop-express"></div>
+          <div aria-hidden="true" class="flex items-center gap-3 text-xs uppercase tracking-widest text-white/55">
+            <span class="h-px grow bg-[#2a2a2a]"></span>Or pay with card<span class="h-px grow bg-[#2a2a2a]"></span>
+          </div>
+        </div>
+        <div id="drop-contact"></div>
+        <div id="drop-shipping"></div>
+        <div id="drop-payment"></div>
+
+        <div class="flex flex-col gap-2.5 font-sans text-base text-white/65 sm:text-sm">
+          <div class="flex justify-between"><p>Subtotal</p><p class="tabular-nums">{usd(DROP.price)}</p></div>
+          <div class="flex justify-between"><p>Shipping</p><p class="tabular-nums">{usd(DROP.shipping)}</p></div>
+        </div>
+        <div class="flex items-baseline justify-between border-t border-[#2a2a2a] pt-3">
+          <p class="text-base uppercase tracking-widest">Total</p>
+          <p data-total class="text-3xl tabular-nums">{usd(DROP.price + DROP.shipping)}</p>
+        </div>
+        <button type="button" data-pay disabled class="h-15 bg-[#dc2626] text-lg uppercase tracking-wider text-white transition-colors enabled:hover:bg-[#ef4444] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Pay {usd(DROP.price + DROP.shipping)}</button>
+        <p data-pay-error hidden role="alert" class="text-base text-[#f87171] sm:text-sm"></p>
+        <p class="flex items-center justify-center gap-2 font-sans text-sm text-white/50">
+          <svg viewBox="0 0 16 16" fill="currentColor" class="size-3 shrink-0" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2h1v7H4V7h1Zm1.5 0h3V5a1.5 1.5 0 0 0-3 0v2Z" /></svg>
+          Payments by Stripe. We never see your card.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    import { DROP } from '../data/drop.js';
+
+    const opensAt = new Date(DROP.opensAt).getTime();
+    const frames = ['░░░', '▒░░', '▓▒░', '▓▓▒', '▓▓▓', '▓▓▒', '▓▒░', '▒░░'];
+    const pad = (n) => String(n).padStart(2, '0');
+    const $$ = (sel) => document.querySelectorAll(sel);
+
+    // Swap a button's label for the ░▒▓ loader; returns the undo.
+    function busy(btn) {
+      const label = btn.textContent;
+      let i = 0;
+      btn.disabled = true;
+      btn.textContent = frames[0];
+      const t = setInterval(() => {
+        i = (i + 1) % frames.length;
+        btn.textContent = frames[i];
+      }, 120);
+      return () => {
+        clearInterval(t);
+        btn.disabled = false;
+        btn.textContent = label;
+      };
+    }
+
+    // ---- Phase -----------------------------------------------------------
+
+    let phase = Date.now() < opensAt ? 'soon' : 'live';
+    let held = false;
+    let stockPoll;
+
+    function render() {
+      $$('[data-view]').forEach((el) => { el.hidden = !el.dataset.view.split(' ').includes(phase); });
+      $$('[data-when-held]').forEach((el) => { el.hidden = !held; });
+      $$('[data-when-buyable]').forEach((el) => { el.hidden = held; });
+    }
+
+    function applyStock(status) {
+      if (phase === 'thanks') return;
+      held = status === 'all-held';
+      phase = status === 'sold-out' ? 'soldout' : Date.now() < opensAt ? 'soon' : 'live';
+      render();
+      // While every copy is held, check back so the button wakes up on its own.
+      clearTimeout(stockPoll);
+      if (held) stockPoll = setTimeout(refreshStock, 30_000);
+    }
+
+    async function refreshStock() {
+      try {
+        const r = await fetch('/.netlify/functions/drop-stock');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        applyStock((await r.json()).status);
+      } catch (err) {
+        console.warn('[drops] stock unavailable', err);
+      }
+    }
+
+    // ---- Countdown — each odometer wheel shows one digit ------------------
+
+    function tick() {
+      const left = Math.max(0, opensAt - Date.now());
+      const parts = {
+        d: Math.floor(left / 864e5),
+        h: Math.floor(left / 36e5) % 24,
+        m: Math.floor(left / 6e4) % 60,
+        s: Math.floor(left / 1e3) % 60,
+      };
+      $$('[data-odo]').forEach((el) => {
+        el.style.setProperty('--d', pad(parts[el.dataset.odo])[el.dataset.place]);
+      });
+      if (phase === 'soon' && left === 0) {
+        phase = 'live';
+        render();
+        refreshStock();
+      }
+    }
+
+    // ---- Thanks — back from Stripe with ?session_id ----------------------
+
+    function showOrder(o) {
+      const set = (key, text) => $$(`[data-order="${key}"]`).forEach((el) => { el.textContent = text; });
+      set('number', o.orderNumber);
+      set('item', `Drop ${DROP.number}`);
+      set('paid', o.status === 'paid' ? `$${(o.total / 100).toFixed(2)}` : 'Processing');
+      set('ship', o.shipTo ?? '—');
+      $$('[data-order-to]').forEach((el) => { el.textContent = o.email ? ` to ${o.email}` : ''; });
+      $$('[data-order-preorder]').forEach((el) => { el.hidden = o.kind !== 'preorder'; });
+    }
+
+    async function loadOrder(sessionId) {
+      phase = 'thanks';
+      render();
+      try {
+        const r = await fetch(`/.netlify/functions/drop-order?session_id=${encodeURIComponent(sessionId)}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const order = await r.json();
+        if (order.status === 'released') {
+          console.warn('[drops] returned from a checkout that never paid', sessionId);
+          history.replaceState(null, '', location.pathname);
+          phase = Date.now() < opensAt ? 'soon' : 'live';
+          render();
+          refreshStock();
+          return;
+        }
+        showOrder(order);
+      } catch (err) {
+        console.error('[drops] order lookup failed', err);
+      }
+    }
+
+    $$('[data-share]').forEach((btn) => btn.addEventListener('click', async () => {
+      const url = `${location.origin}/drops`;
+      try {
+        if (navigator.share) await navigator.share({ title: 'VHS Garage Originals', url });
+        else {
+          await navigator.clipboard.writeText(url);
+          btn.textContent = 'Link copied';
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') console.warn('[drops] share failed', err);
+      }
+    }));
+
+    // ---- Checkout sheet --------------------------------------------------
+
+    const sheet = document.querySelector('[data-checkout]');
+    const payBtn = sheet.querySelector('[data-pay]');
+    const payError = sheet.querySelector('[data-pay-error]');
+    const holdLeft = sheet.querySelector('[data-hold-left]');
+
+    let stripeJs;
+    let hold = null; // { sessionId, heldUntil } while a copy is held for this visitor
+    let elements = [];
+    let actions = null;
+    let holdTimer;
+    let paying = false;
+
+    // Stripe.js must load from js.stripe.com — never bundled or self-hosted.
+    function loadStripeJs() {
+      stripeJs ??= new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://js.stripe.com/endive/stripe.js';
+        s.onload = () => resolve(window.Stripe);
+        s.onerror = () => reject(new Error('Stripe.js failed to load'));
+        document.head.append(s);
+      });
+      return stripeJs;
+    }
+
+    const appearance = {
+      theme: 'night',
+      variables: {
+        colorPrimary: '#dc2626',
+        colorBackground: '#161616',
+        colorText: '#ffffff',
+        colorTextSecondary: 'rgba(255,255,255,0.6)',
+        colorDanger: '#f87171',
+        fontFamily: 'Inter, system-ui, sans-serif',
+        fontSizeBase: '16px',
+        borderRadius: '0px',
+      },
+      rules: {
+        '.Input': { border: '1px solid #2a2a2a', boxShadow: 'none' },
+        '.Input:focus': { border: '1px solid #dc2626', boxShadow: '0 0 0 1px #dc2626' },
+        '.Label': { fontFamily: 'VCR, monospace', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'rgba(255,255,255,0.7)' },
+        '.Tab': { border: '1px solid #2a2a2a' },
+        '.Tab--selected': { borderColor: '#dc2626' },
+      },
+    };
+
+    function showPayError(message) {
+      payError.textContent = message;
+      payError.hidden = !message;
+    }
+
+    function setHoldExpired(expired) {
+      sheet.querySelector('[data-hold]').hidden = expired;
+      sheet.querySelector('[data-hold-expired]').hidden = !expired;
+      if (expired) payBtn.disabled = true;
+    }
+
+    function startHoldTimer(until) {
+      clearInterval(holdTimer);
+      const step = () => {
+        const left = Math.max(0, until - Date.now());
+        holdLeft.textContent = `${pad(Math.floor(left / 6e4))}:${pad(Math.floor(left / 1e3) % 60)}`;
+        if (left === 0) {
+          clearInterval(holdTimer);
+          setHoldExpired(true);
+          releaseHold();
+        }
+      };
+      step();
+      holdTimer = setInterval(step, 1000);
+    }
+
+    function releaseHold() {
+      if (!hold || paying) return;
+      const body = JSON.stringify({ action: 'release', sessionId: hold.sessionId });
+      hold = null;
+      fetch('/.netlify/functions/drop-checkout', { method: 'POST', body, keepalive: true })
+        .catch((err) => console.error('[drops] release failed', err));
+    }
+
+    function teardown() {
+      clearInterval(holdTimer);
+      elements.forEach((el) => {
+        try { el.destroy(); } catch (err) { console.warn('[drops] element destroy failed', err); }
+      });
+      elements = [];
+      actions = null;
+      sheet.querySelector('[data-express]').hidden = true;
+    }
+
+    function closeSheet() {
+      releaseHold();
+      teardown();
+      sheet.hidden = true;
+      document.documentElement.classList.remove('overflow-hidden');
+      refreshStock();
+    }
+
+    async function mountStripe(start) {
+      const Stripe = await loadStripeJs();
+      const checkout = Stripe(start.publishableKey).initCheckoutElementsSdk({
+        clientSecret: start.clientSecret,
+        elementsOptions: {
+          appearance,
+          fonts: [
+            { cssSrc: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap' },
+            { family: 'VCR', src: `url(${location.origin}/fonts/VCR.ttf)` },
+          ],
+        },
+      });
+
+      checkout.on('change', (session) => {
+        payBtn.disabled = !session.canConfirm || !hold;
+        const total = session.total?.total?.amount;
+        if (total) {
+          sheet.querySelector('[data-total]').textContent = total;
+          payBtn.textContent = `Pay ${total}`;
+        }
+      });
+
+      const contact = checkout.createContactDetailsElement();
+      const shipping = checkout.createShippingAddressElement();
+      const payment = checkout.createPaymentElement();
+      const express = checkout.createExpressCheckoutElement({ buttonHeight: 52, buttonTheme: { applePay: 'white' } });
+      contact.mount('#drop-contact');
+      shipping.mount('#drop-shipping');
+      payment.mount('#drop-payment');
+      express.mount('#drop-express');
+      elements = [contact, shipping, payment, express];
+
+      express.on('availablepaymentmethodschange', ({ paymentMethods }) => {
+        sheet.querySelector('[data-express]').hidden = !paymentMethods;
+      });
+
+      const loaded = await checkout.loadActions();
+      if (loaded.type !== 'success') throw loaded.error ?? new Error('Stripe checkout failed to load');
+      actions = loaded.actions;
+
+      express.on('confirm', async (event) => {
+        paying = true;
+        const result = await actions.confirm({ expressCheckoutConfirmEvent: event });
+        if (result.type === 'error') {
+          paying = false;
+          showPayError(result.error.message);
+        }
+      });
+    }
+
+    async function openCheckout(btn) {
+      const errorEl = btn.parentElement.querySelector('[data-buy-error]');
+      if (errorEl) errorEl.hidden = true;
+      const done = busy(btn);
+      try {
+        loadStripeJs().catch(() => {});
+        const r = await fetch('/.netlify/functions/drop-checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'start' }),
+        });
+        const start = await r.json();
+        if (r.status === 409) {
+          closeSheet();
+          applyStock(start.status);
+          return;
+        }
+        if (!r.ok) throw new Error(start.error ?? `HTTP ${r.status}`);
+
+        teardown();
+        hold = { sessionId: start.sessionId };
+        paying = false;
+        showPayError('');
+        setHoldExpired(false);
+        sheet.querySelector('[data-checkout-kind]').textContent =
+          start.kind === 'preorder' ? 'Pre-order · Ships when the drop opens' : 'VHS Garage Original · Qty 1';
+        sheet.hidden = false;
+        document.documentElement.classList.add('overflow-hidden');
+        startHoldTimer(new Date(start.heldUntil).getTime());
+        await mountStripe(start);
+      } catch (err) {
+        console.error('[drops] checkout failed to open', err);
+        if (!sheet.hidden) showPayError("Checkout didn't load. Close this and try again.");
+        else if (errorEl) {
+          errorEl.textContent = '░ Checkout is down for a sec. Try again.';
+          errorEl.hidden = false;
+        }
+      } finally {
+        done();
+      }
+    }
+
+    $$('[data-buy]').forEach((btn) => btn.addEventListener('click', () => openCheckout(btn)));
+    $$('[data-checkout-close]').forEach((btn) => btn.addEventListener('click', closeSheet));
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !sheet.hidden) closeSheet();
+    });
+
+    payBtn.addEventListener('click', async () => {
+      if (!actions) return;
+      showPayError('');
+      paying = true;
+      const done = busy(payBtn);
+      // On success Stripe sends the buyer to /drops?session_id=…; we only
+      // land back here on an immediate error.
+      const result = await actions.confirm();
+      done();
+      if (result.type === 'error') {
+        paying = false;
+        showPayError(result.error.message);
+      }
+    });
+
+    // Leaving mid-checkout gives the copy back right away instead of
+    // waiting out the hold — unless a payment is underway.
+    addEventListener('pagehide', () => {
+      if (!hold || paying) return;
+      navigator.sendBeacon('/.netlify/functions/drop-checkout', JSON.stringify({ action: 'release', sessionId: hold.sessionId }));
+    });
+
+    // ---- Signup count — same Netlify Blobs counter the homepage shows ----
+
+    let count = null;
+    function showCount() {
+      $$('[data-signup-count]').forEach((el) => { el.textContent = count; });
+      $$('[data-count-line]').forEach((el) => { el.hidden = false; });
+    }
+    fetch('/.netlify/functions/signup-count')
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((d) => {
+        count = d.count;
+        showCount();
+      })
+      .catch((err) => {
+        console.warn('[drops] signup count unavailable', err);
+        // `astro dev` doesn't run Netlify functions — show the last known
+        // number so the layout reads right while designing.
+        if (import.meta.env.DEV) {
+          count = 31;
+          showCount();
+        }
+      });
+
+    // ---- Email signup — the existing garage-signup form, tagged drops ----
+
+    $$('form[data-drop-signup]').forEach((form) => {
+      const status = form.closest('[data-signup]').querySelector('[data-signup-status]');
+      const btn = form.querySelector('button[type="submit"]');
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const done = busy(btn);
+        status.hidden = true;
+        try {
+          const res = await fetch('/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(new FormData(form)).toString(),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          form.hidden = true;
+          status.textContent = form.dataset.done;
+          if (count !== null) {
+            count += 1;
+            showCount();
+          }
+        } catch (err) {
+          console.error('[drops] signup failed', err);
+          status.textContent = '░ Something went wrong. Try again.';
+        } finally {
+          done();
+          status.hidden = false;
+        }
+      });
+    });
+
+    // ---- Start -----------------------------------------------------------
+
+    const params = new URLSearchParams(location.search);
+    const preview = import.meta.env.DEV ? params.get('preview') : null;
+    tick();
+    setInterval(tick, 1000);
+
+    if (preview) {
+      // Dev only: /drops?preview=soon|live|held|soldout|thanks
+      phase = preview === 'held' ? (Date.now() < opensAt ? 'soon' : 'live') : preview;
+      held = preview === 'held';
+      render();
+      if (preview === 'thanks') {
+        showOrder({ status: 'paid', orderNumber: `VG-${DROP.id}-0007`, total: (DROP.price + DROP.shipping) * 100, shipTo: 'Austin, TX', email: 'sam@example.com', kind: 'preorder' });
+      }
+    } else if (params.get('session_id')) {
+      loadOrder(params.get('session_id'));
+    } else {
+      render();
+      refreshStock();
+    }
+  </script>
+</Base>

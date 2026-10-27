@@ -20,9 +20,11 @@ const normalizeOgImage = (src) => {
   return SITE_ORIGIN + (src.startsWith('/') ? src : '/' + src);
 };
 const ogImageUrl = normalizeOgImage(ogImage);
+// Titles that already lead with the brand (e.g. "VHS Garage Originals")
+// skip the " — VHS Garage" suffix.
 const fullTitle = title === 'VHS Garage'
   ? 'VHS Garage — A Lo-Fi Love Letter to the Golden Age of Video'
-  : `${title} — VHS Garage`;
+  : title.startsWith('VHS Garage') ? title : `${title} — VHS Garage`;
 
 // Per-page manifest so PWA installs open the page the user installed from.
 // `id` is fixed so all installs resolve to the same app identity.
