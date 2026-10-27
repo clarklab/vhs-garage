@@ -82,7 +82,12 @@ export function checkoutParams({ drop, kind, orderId, origin, now }) {
     // domain, deploy previews) it's /drops/.
     return_url: `${origin}${new URL(origin).hostname.startsWith('drops.') ? '/' : '/drops/'}?session_id={CHECKOUT_SESSION_ID}`,
     metadata: { drop_id: drop.id, order_id: String(orderId), kind },
-    payment_intent_data: { metadata: { drop_id: drop.id, order_id: String(orderId), kind } },
+    payment_intent_data: {
+      metadata: { drop_id: drop.id, order_id: String(orderId), kind },
+      // The Stripe account is Superfun Games LLC; without this, buyers'
+      // statements wouldn't mention VHS Garage at all.
+      statement_descriptor_suffix: 'VHS GARAGE',
+    },
   };
 }
 
