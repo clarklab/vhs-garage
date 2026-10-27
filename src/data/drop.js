@@ -16,4 +16,6 @@ export const DROP = {
   // How long a copy is held for someone sitting in checkout.
   holdMinutes: 10,
   name: 'VHS Garage Originals — Drop 001',
+  // Where the drop lives. public/_redirects serves /drops/ at its root.
+  url: 'https://drops.vhsgarage.com',
 };

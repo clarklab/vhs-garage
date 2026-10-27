@@ -1,0 +1,7 @@
+# VHS Garage Originals drops live at drops.vhsgarage.com. Its root serves the
+# /drops/ page (assets, fonts and functions resolve as usual), and the old
+# path on the main domain points there. `!` is needed because both paths
+# are real files Netlify would otherwise serve first.
+https://drops.vhsgarage.com/  /drops/  200!
+https://vhsgarage.com/drops   https://drops.vhsgarage.com/  301!
+https://vhsgarage.com/drops/  https://drops.vhsgarage.com/  301!

@@ -50,7 +50,7 @@ const usd = (n) => `$${n.toFixed(2)}`;
 
     <div class="mx-auto flex max-w-2xl flex-col gap-9 px-4 pt-5 pb-11 sm:px-6">
       <div class="flex items-center justify-between text-sm uppercase tracking-widest">
-        <a href="/" class="hover:text-white">← VHS Garage Originals</a>
+        <a href="https://vhsgarage.com" class="hover:text-white">← VHS Garage Originals</a>
         <p data-view="soon">Drop {DROP.number}</p>
         <p data-view="live" hidden class="flex items-center gap-2"><span class="drop-blink size-2 bg-black"></span>Live now</p>
         <p data-view="soldout" hidden>Sold out</p>
@@ -107,7 +107,7 @@ const usd = (n) => `$${n.toFixed(2)}`;
             </div>
           </div>
           <p class="text-center text-base text-pretty sm:text-sm">Sign up for alerts. <span class="text-white/60">We'll email you when it drops, if any are left.</span></p>
-          <form data-drop-signup data-done={done} name="garage-signup" method="POST" action="/" class="flex gap-2">
+          <form data-drop-signup data-done={done} name="garage-signup" method="POST" action="/__forms.html" class="flex gap-2">
             <input type="hidden" name="form-name" value="garage-signup" />
             <input type="hidden" name="source" value="drops" />
             <input type="email" name="email" required placeholder="your@email.com" autocomplete="email" inputmode="email" aria-label="Email address" class="h-12 min-w-0 flex-1 bg-white px-4 text-base text-black placeholder-black/40 focus:outline-2 focus:-outline-offset-1 focus:outline-[#dc2626]" />
@@ -162,7 +162,7 @@ const usd = (n) => `$${n.toFixed(2)}`;
           <h2 class="text-3xl tracking-tight text-balance">Don't miss the next drop.</h2>
           <p class="text-base/7 text-pretty text-white/65 sm:text-sm/6">Get the alert before it sells out.</p>
         </div>
-        <form data-drop-signup data-done={done} name="garage-signup" method="POST" action="/" class="flex gap-2">
+        <form data-drop-signup data-done={done} name="garage-signup" method="POST" action="/__forms.html" class="flex gap-2">
           <input type="hidden" name="form-name" value="garage-signup" />
           <input type="hidden" name="source" value="drops" />
           <input type="email" name="email" required placeholder="your@email.com" autocomplete="email" inputmode="email" aria-label="Email address" class="h-12 min-w-0 flex-1 bg-white px-4 text-base text-black placeholder-black/40 focus:outline-2 focus:-outline-offset-1 focus:outline-[#dc2626]" />
@@ -183,7 +183,7 @@ const usd = (n) => `$${n.toFixed(2)}`;
         </dl>
         <p data-order-preorder hidden class="text-base text-white/75 sm:text-sm">It's a pre-order, so it ships when the drop opens on {DROP.opensLabel}.</p>
         <button type="button" data-share class="h-14 bg-[#dc2626] text-base uppercase tracking-wider text-white transition-colors hover:bg-[#ef4444] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Share the drop</button>
-        <a href="/" class="flex h-14 items-center justify-center border border-white/30 text-base uppercase tracking-wider text-white transition-colors hover:border-white">Back to the Garage</a>
+        <a href="https://vhsgarage.com" class="flex h-14 items-center justify-center border border-white/30 text-base uppercase tracking-wider text-white transition-colors hover:border-white">Back to the Garage</a>
       </div>
     </div>
 
@@ -369,7 +369,7 @@ const usd = (n) => `$${n.toFixed(2)}`;
     }
 
     $$('[data-share]').forEach((btn) => btn.addEventListener('click', async () => {
-      const url = `${location.origin}/drops`;
+      const url = DROP.url;
       try {
         if (navigator.share) await navigator.share({ title: 'VHS Garage Originals', url });
         else {
@@ -583,7 +583,7 @@ const usd = (n) => `$${n.toFixed(2)}`;
       showPayError('');
       paying = true;
       const done = busy(payBtn);
-      // On success Stripe sends the buyer to /drops?session_id=…; we only
+      // On success Stripe sends the buyer back here with ?session_id=…; we only
       // land back here on an immediate error.
       const result = await actions.confirm();
       done();
@@ -627,6 +627,8 @@ const usd = (n) => `$${n.toFixed(2)}`;
       });
 
     // ---- Email signup — the existing garage-signup form, tagged drops ----
+    // Posts to the static form definition rather than "/", because on
+    // drops.vhsgarage.com "/" is rewritten to this page.
 
     $$('form[data-drop-signup]').forEach((form) => {
       const status = form.closest('[data-signup]').querySelector('[data-signup-status]');
@@ -637,7 +639,7 @@ const usd = (n) => `$${n.toFixed(2)}`;
         const done = busy(btn);
         status.hidden = true;
         try {
-          const res = await fetch('/', {
+          const res = await fetch('/__forms.html', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams(new FormData(form)).toString(),

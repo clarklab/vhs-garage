@@ -71,8 +71,10 @@ test('checkoutParams builds an on-page session with the hold baked in', () => {
   assert.match(p.line_items[0].price_data.product_data.description, /ships when the drop opens/i);
   assert.equal(p.shipping_options[0].shipping_rate_data.fixed_amount.amount, 600);
   assert.deepEqual(p.shipping_address_collection.allowed_countries, ['US']);
-  assert.equal(p.return_url, 'https://vhsgarage.com/drops?session_id={CHECKOUT_SESSION_ID}');
+  assert.equal(p.return_url, 'https://vhsgarage.com/drops/?session_id={CHECKOUT_SESSION_ID}');
   assert.deepEqual(p.metadata, { drop_id: '001', order_id: '42', kind: 'preorder' });
+  const sub = checkoutParams({ drop, kind: 'sale', orderId: 1, origin: 'https://drops.vhsgarage.com', now });
+  assert.equal(sub.return_url, 'https://drops.vhsgarage.com/?session_id={CHECKOUT_SESSION_ID}');
   // Stripe won't expire a session sooner than 30 minutes out.
   assert.ok(p.expires_at >= now.getTime() / 1000 + 30 * 60);
 });

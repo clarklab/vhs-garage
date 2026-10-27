@@ -78,7 +78,9 @@ export function checkoutParams({ drop, kind, orderId, origin, now }) {
       },
     ],
     expires_at: Math.floor(now.getTime() / 1000) + STRIPE_MIN_EXPIRY_MINUTES * 60,
-    return_url: `${origin}/drops?session_id={CHECKOUT_SESSION_ID}`,
+    // On drops.vhsgarage.com the page is the site root; elsewhere (the main
+    // domain, deploy previews) it's /drops/.
+    return_url: `${origin}${new URL(origin).hostname.startsWith('drops.') ? '/' : '/drops/'}?session_id={CHECKOUT_SESSION_ID}`,
     metadata: { drop_id: drop.id, order_id: String(orderId), kind },
     payment_intent_data: { metadata: { drop_id: drop.id, order_id: String(orderId), kind } },
   };
