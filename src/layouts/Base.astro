@@ -5,9 +5,17 @@ interface Props {
   title: string;
   description: string;
   ogImage?: string;
+  // Describes ogImage for screen readers and crawlers.
+  ogImageAlt?: string;
+  // Pixel size of ogImage, when known — lets platforms lay out the card
+  // before fetching the image.
+  ogImageSize?: [number, number];
+  // The page's one true URL (e.g. a subdomain that rewrites to this page).
+  canonical?: string;
+  themeColor?: string;
 }
 
-const { title, description, ogImage } = Astro.props;
+const { title, description, ogImage, ogImageAlt, ogImageSize, canonical, themeColor = '#000000' } = Astro.props;
 // OG/Twitter image — must be an absolute URL per spec. Crawlers
 // reject relative paths. We accept either a relative path
 // ("/images/blog/foo.webp") or an already-absolute URL from the
@@ -52,17 +60,25 @@ const manifestHref = `data:application/manifest+json;base64,${Buffer.from(JSON.s
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{fullTitle}</title>
   <meta name="description" content={description}>
-  <meta name="theme-color" content="#000000">
+  <meta name="theme-color" content={themeColor}>
+  {canonical && <link rel="canonical" href={canonical}>}
 
   <meta property="og:type" content="website">
+  <meta property="og:site_name" content="VHS Garage">
+  <meta property="og:locale" content="en_US">
   <meta property="og:title" content={fullTitle}>
   <meta property="og:description" content={description}>
+  {canonical && <meta property="og:url" content={canonical}>}
   <meta property="og:image" content={ogImageUrl}>
+  {ogImageSize && <meta property="og:image:width" content={String(ogImageSize[0])}>}
+  {ogImageSize && <meta property="og:image:height" content={String(ogImageSize[1])}>}
+  {ogImageAlt && <meta property="og:image:alt" content={ogImageAlt}>}
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content={fullTitle}>
   <meta name="twitter:description" content={description}>
   <meta name="twitter:image" content={ogImageUrl}>
+  {ogImageAlt && <meta name="twitter:image:alt" content={ogImageAlt}>}
 
   <link rel="icon" type="image/png" href="https://vhsgarage.com/favicon.png">
   <link rel="apple-touch-icon" href="https://vhsgarage.com/favicon.png">

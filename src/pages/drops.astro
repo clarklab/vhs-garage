@@ -8,12 +8,38 @@ const units = [['d', 'Days'], ['h', 'Hrs'], ['m', 'Min'], ['s', 'Sec']];
 const digits = [...'0123456789'];
 const ticker = ['VHS Garage Originals', 'One run only', 'No restocks', "When they're gone they're gone"];
 const usd = (n) => `$${n.toFixed(2)}`;
+
+const description = `Original VHS tapes and shirts from VHS Garage. One run, no restocks. Pre-order Drop #${DROP.number} for $${DROP.price}. When they're gone, they're gone.`;
+const ogImage = `${DROP.url}/images/drops/og.png`;
+// Search engines get the product and price. Availability is left out on
+// purpose: the page never says how many exist or how many are left.
+const productLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Product',
+  name: DROP.name,
+  description,
+  image: ogImage,
+  url: `${DROP.url}/`,
+  brand: { '@type': 'Brand', name: 'VHS Garage' },
+  offers: {
+    '@type': 'Offer',
+    url: `${DROP.url}/`,
+    price: DROP.price.toFixed(2),
+    priceCurrency: 'USD',
+  },
+};
 ---
 
 <Base
-  title="VHS Garage Originals"
-  description="VHS Garage Originals: one-time runs of tapes and shirts. No restocks. When they're gone, they're gone."
+  title={`VHS Garage Originals · Drop #${DROP.number}`}
+  description={description}
+  canonical={`${DROP.url}/`}
+  ogImage={ogImage}
+  ogImageSize={[1200, 630]}
+  ogImageAlt={`VHS Garage Originals Drop #${DROP.number}: a pixelated, censored VHS tape. Pre-order for $${DROP.price}.`}
+  themeColor="#dc2626"
 >
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify(productLd)} />
   <style>
     /* Print grain over the poster red. */
     .drop-grain {
