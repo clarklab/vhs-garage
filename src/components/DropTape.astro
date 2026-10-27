@@ -1,0 +1,167 @@
+---
+// A spinning VHS box, rendered mosaicked — "blurred to protect its identity".
+//
+// The art and the box are censored separately, so the box can stay sharp
+// enough to read as a VHS tape while the art stays unrecognizable:
+//   1. The art textures in /images/drops are baked at 5×8 px, so each face is
+//      a handful of censor blocks — and the real box art never ships to the
+//      browser (nothing to pull out of DevTools).
+//   2. The scene renders into a small canvas (`blocks` pixels wide) that CSS
+//      scales up with `image-rendering: pixelated`. Keep it well above the
+//      art's resolution so the silhouette and edges stay crisp.
+//   3. The sleeve's open end shows a drawn cassette — black shell, white
+//      label — the detail that says "VHS" without saying which movie.
+//
+// Every instance on a page shares one bundled script; hidden instances
+// (e.g. inactive layout variants) skip rendering.
+interface Props {
+  blocks?: number;
+  class?: string;
+}
+
+const { blocks = 40, class: className } = Astro.props;
+---
+
+<canvas
+  data-drop-tape
+  data-blocks={blocks}
+  role="img"
+  aria-label="A VHS tape, pixelated so you can't tell what it is yet"
+  class:list={['size-full touch-pan-y [image-rendering:pixelated]', className]}
+></canvas>
+
+<script>
+  import * as THREE from 'three';
+
+  const loader = new THREE.TextureLoader();
+  function texture(url) {
+    const t = loader.load(url, undefined, undefined, (err) => console.error('[drop-tape] texture failed', url, err));
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+  const art = {
+    front: texture('/images/drops/tape-front.png'),
+    back: texture('/images/drops/tape-back.png'),
+    spine: texture('/images/drops/tape-spine.png'),
+    cassette: cassetteTexture(),
+  };
+
+  // The open end of the sleeve: cardboard lip, the cassette's black shell,
+  // and its white spine label.
+  function cassetteTexture() {
+    const c = document.createElement('canvas');
+    c.width = 38;
+    c.height = 300;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#2a2a2a';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = '#080808';
+    ctx.fillRect(3, 4, c.width - 6, c.height - 8);
+    ctx.fillStyle = '#ececec';
+    ctx.fillRect(9, 50, c.width - 18, 200);
+    ctx.fillStyle = '#b5b5b5';
+    ctx.fillRect(9, 95, c.width - 18, 3);
+    ctx.fillRect(9, 205, c.width - 18, 3);
+    const t = new THREE.CanvasTexture(c);
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function mount(canvas) {
+    let renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true });
+    } catch (err) {
+      console.error('[drop-tape] WebGL unavailable', err);
+      return;
+    }
+    renderer.setPixelRatio(1);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+    const edge = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+    const face = (map) => new THREE.MeshLambertMaterial({ map });
+    // BoxGeometry face order: +x, -x, +y, -y, +z, -z.
+    const box = new THREE.Mesh(
+      new THREE.BoxGeometry(1.82, 3, 0.38),
+      [face(art.spine), face(art.cassette), edge, edge, face(art.front), face(art.back)],
+    );
+    scene.add(box);
+    scene.add(new THREE.AmbientLight(0xffffff, 1.4));
+    const key = new THREE.DirectionalLight(0xffffff, 2.4);
+    key.position.set(3, 4, 6);
+    scene.add(key);
+
+    const baseBlocks = Number(canvas.dataset.blocks) || 40;
+    let blocks = baseBlocks;
+
+    function resize() {
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      if (!w || !h) return;
+      renderer.setSize(Math.max(8, Math.round(blocks)), Math.max(8, Math.round(blocks * h / w)), false);
+      camera.aspect = w / h;
+      // Back the camera off until the box (with room to tumble) fits both ways.
+      const tan = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+      camera.position.z = Math.max(3.6 / (2 * tan), 2.6 / (2 * tan * camera.aspect));
+      camera.updateProjectionMatrix();
+    }
+    new ResizeObserver(resize).observe(canvas);
+
+    let onScreen = true;
+    new IntersectionObserver(([entry]) => { onScreen = entry.isIntersecting; }).observe(canvas);
+
+    // Drag to spin; the push decays back to the idle spin.
+    let push = 0;
+    let lastX = null;
+    canvas.addEventListener('pointerdown', (e) => { lastX = e.clientX; });
+    window.addEventListener('pointerup', () => { lastX = null; });
+    canvas.addEventListener('pointermove', (e) => {
+      if (lastX === null) return;
+      push += (e.clientX - lastX) * 0.02;
+      lastX = e.clientX;
+    });
+
+    // Every few seconds the mosaic hiccups — re-censoring itself.
+    let nextGlitch = performance.now() + 2000;
+    let glitchEnds = 0;
+
+    let last = performance.now();
+    function frame(now) {
+      requestAnimationFrame(frame);
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      if (!onScreen || canvas.offsetParent === null) return;
+
+      if (!reduceMotion) {
+        if (now > nextGlitch) {
+          blocks = baseBlocks * (Math.random() < 0.5 ? 0.7 : 1.25);
+          glitchEnds = now + 90 + Math.random() * 120;
+          nextGlitch = now + 1800 + Math.random() * 2600;
+          resize();
+        } else if (glitchEnds && now > glitchEnds) {
+          blocks = baseBlocks;
+          glitchEnds = 0;
+          resize();
+        }
+      }
+
+      push *= 0.94;
+      box.rotation.y += ((reduceMotion ? 0.15 : 0.7) + push) * dt;
+      box.rotation.x = Math.sin(now / 1600) * 0.12;
+      box.rotation.z = Math.sin(now / 2300) * 0.05;
+      renderer.render(scene, camera);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  document.querySelectorAll('canvas[data-drop-tape]').forEach(mount);
+</script>
