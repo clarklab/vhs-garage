@@ -10,7 +10,7 @@ export const DROP = {
   opensAt: '2026-11-20T12:00:00-06:00',
   opensLabel: 'Fri, Nov 20 · 12 PM CT',
   // Never shown on the page — "one run" is the pitch, not the count.
-  quantity: 20,
+  quantity: 6,
   price: 24,
   shipping: 6,
   // How long a copy is held for someone sitting in checkout.
