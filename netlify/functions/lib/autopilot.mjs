@@ -46,7 +46,7 @@ const SONG_FIELD_MAX = 200;
 export const JOBS_STORE = 'tik-jobs';
 export const ALLOWED_MODELS = new Set([
   'claude-opus-5', 'claude-opus-4-8', 'claude-sonnet-5', 'claude-haiku-4-5', 'claude-sonnet-4-6',
-  'gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gpt-4.1-nano',
+  'gpt-4.1-nano',
 ]);
 
 // The intro slide is its own writing problem, not "one more fact". It is the

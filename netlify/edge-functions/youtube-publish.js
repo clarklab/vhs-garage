@@ -14,11 +14,11 @@
 //   right provider name, and confirm the env vars for that provider are
 //   set in the Netlify dashboard.
 
+// Gemini 2.5 used to be the default here until the Gateway dropped that
+// family (Oct 2026) and every rewrite quietly fell back to template copy.
 const ALLOWED_MODELS = new Set([
-  'gemini-2.5-flash-lite',
-  'gemini-2.5-flash',
-  'gpt-4.1-nano',
-  'claude-haiku-4-5',
+  'claude-haiku-5-5',
+  'claude-sonnet-5-5',
 ]);
 
 function pickModel(requested, defaultModel) {
@@ -56,13 +56,17 @@ export default async (req) => {
       apiKey: env('OPENAI_API_KEY'),
       baseUrl: env('OPENAI_BASE_URL') || 'https://api.openai.com/v1',
     },
+    // The Gateway injects ANTHROPIC_BASE_URL as the root (no /v1), and
+    // some instances miss the provider-named vars entirely, so fall back
+    // to the Gateway's own pair (see netlify/functions/lib/gateway-env.mjs).
     anthropic: {
-      apiKey: env('ANTHROPIC_API_KEY'),
-      baseUrl: env('ANTHROPIC_BASE_URL') || 'https://api.anthropic.com/v1',
+      apiKey: env('ANTHROPIC_API_KEY') || env('NETLIFY_AI_GATEWAY_KEY'),
+      baseUrl: (env('ANTHROPIC_BASE_URL') || env('NETLIFY_AI_GATEWAY_URL') || 'https://api.anthropic.com')
+        .replace(/\/+$/, '').replace(/\/v1$/, ''),
     },
   };
 
-  const DEFAULT_MODEL = env('GEMINI_MODEL') || 'gemini-2.5-flash-lite';
+  const DEFAULT_MODEL = env('REWRITE_AI_MODEL') || 'claude-haiku-5-5';
 
   if (!YOUTUBE_CLIENT_ID || !YOUTUBE_CLIENT_SECRET) {
     return json({ error: 'YouTube OAuth not configured' }, 500);
@@ -318,6 +322,11 @@ SEO PRINCIPLES:
 - Long-tail keywords (specific brands, show names, actors, products, regional networks) beat generic ones
 - Every field should work even if other fields are ignored
 
+LANGUAGE:
+- Write the title, description, and tags in English, even if the metadata is in another language. Translate it.
+- If the content is foreign-language, keep the original-script title too: once in the description, and as a tag. People search in both languages.
+- Name the language and country in the description and tags (e.g. "Cantonese", "Hong Kong VHS").
+
 TITLE (max 70 chars, ideal 50-60):
 - Start with the most distinctive keyword (show/brand/product name, NOT generic like "Vintage" or "Retro")
 - Include year if known, format as (1987) or "1987" — never omit
@@ -459,7 +468,7 @@ async function callOpenAI(prompt, model, cfg, signal) {
 
 async function callAnthropic(prompt, model, cfg, signal) {
   if (!cfg.apiKey) throw new Error('Anthropic not configured (set ANTHROPIC_API_KEY)');
-  const res = await fetch(`${cfg.baseUrl}/messages`, {
+  const res = await fetch(`${cfg.baseUrl}/v1/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -468,7 +477,12 @@ async function callAnthropic(prompt, model, cfg, signal) {
     },
     body: JSON.stringify({
       model,
-      max_tokens: 1024,
+      // Thinking shares this ceiling with the answer on the Claude 5
+      // line; the copy itself is well under 1k tokens.
+      max_tokens: 4096,
+      // SEO copy is boilerplate-shaped, so low effort keeps it fast
+      // inside the 30s abort above.
+      output_config: { effort: 'low' },
       messages: [{ role: 'user', content: prompt }],
     }),
     signal,
@@ -481,7 +495,8 @@ async function callAnthropic(prompt, model, cfg, signal) {
   // Anthropic responses are a content array of blocks; we want the first
   // text block. parseModelJson handles any prefix/suffix prose.
   const block = (data.content || []).find((b) => b.type === 'text');
-  return block?.text || '';
+  if (!block?.text) throw new Error(`Anthropic returned no text (stop_reason: ${data.stop_reason})`);
+  return block.text;
 }
 
 function buildFallbackDescription(m) {

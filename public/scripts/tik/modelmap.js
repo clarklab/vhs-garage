@@ -19,8 +19,8 @@ export const PRICING = {
   'claude-opus-5': { in: 5, out: 25 },
   'claude-sonnet-5': { in: 3, out: 15 },
   'claude-haiku-4-5': { in: 1, out: 5 },
-  'gemini-2.5-flash': { in: 0.3, out: 2.5 },
-  'gemini-2.5-flash-lite': { in: 0.1, out: 0.4 },
+  'claude-haiku-5-5': { in: 0.1, out: 0.5 },
+  'claude-sonnet-5-5': { in: 2, out: 10 },
 };
 
 // A rough image-token count for one frame at the size the checker sends.
@@ -140,8 +140,8 @@ export const CALLS = [
 // Anything outside the studio, listed so the page is honest about being a map
 // of the whole site's model use and not just /tik.
 export const ELSEWHERE = [
-  { what: 'Sleeve scanner (/capture)', model: 'gemini-2.5-flash', why: 'Reads a VHS sleeve photo into fields. Cheap, high volume, not text quality sensitive.' },
-  { what: 'YouTube descriptions', model: 'gemini-2.5-flash-lite', why: 'Boilerplate-shaped writing where the cheapest capable model is the right call.' },
+  { what: 'Sleeve scanner (/capture)', model: 'claude-haiku-5-5', why: 'Reads a VHS sleeve photo into fields, translating foreign sleeves to English. Cheap, high volume, low effort is enough.' },
+  { what: 'YouTube descriptions', model: 'claude-haiku-5-5', why: 'Boilerplate-shaped writing where the cheapest capable model is the right call. Sonnet 5.5 is a toggle away in /capture.' },
 ];
 
 export const cost = (model, inTok, outTok) => {
@@ -189,8 +189,8 @@ const TIER = {
   'claude-opus-5': 'bg-amber-400/15 text-amber-300',
   'claude-sonnet-5': 'bg-sky-400/15 text-sky-300',
   'claude-haiku-4-5': 'bg-neutral-700/60 text-neutral-300',
-  'gemini-2.5-flash': 'bg-violet-400/15 text-violet-300',
-  'gemini-2.5-flash-lite': 'bg-violet-400/10 text-violet-300/80',
+  'claude-haiku-5-5': 'bg-neutral-700/60 text-neutral-300',
+  'claude-sonnet-5-5': 'bg-sky-400/15 text-sky-300',
 };
 const chip = (model) => `<span class="rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${TIER[model] || 'bg-neutral-800 text-neutral-300'}">${esc(model)}</span>`;
 

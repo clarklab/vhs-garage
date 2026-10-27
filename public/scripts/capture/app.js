@@ -1997,17 +1997,17 @@ function wireToolbarMenus() {
 // AI model selection
 // ---------------------------------------------------------------------------
 //
-// Three Gateway models, one persistent per-browser choice. Default is
-// Gemini Flash Lite — designed for high-volume structured outputs, fast,
-// cheap. GPT-4.1-nano + Claude Haiku 4.5 are alternatives if quality or
-// style needs differ. The selected ID is sent on every /api/youtube-publish
-// rewrite request; the function dispatches to the matching provider.
+// Two Gateway models, one persistent per-browser choice. Default is
+// Claude Haiku 5.5: fast and cheap for boilerplate-shaped SEO copy.
+// Sonnet 5.5 is there when a tape deserves better writing. The selected
+// ID is sent on every /api/youtube-publish rewrite request. (Gemini 2.5
+// Flash Lite was the default until the Gateway retired it in Oct 2026; a
+// browser that still has it stored falls back to the default below.)
 const AI_MODELS = [
-  { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite (default, fastest)' },
-  { id: 'gpt-4.1-nano',          label: 'GPT-4.1 nano' },
-  { id: 'claude-haiku-4-5',      label: 'Claude Haiku 4.5' },
+  { id: 'claude-haiku-5-5',  label: 'Claude Haiku 5.5 (default, fastest)' },
+  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 (better writing)' },
 ];
-const DEFAULT_AI_MODEL = 'gemini-2.5-flash-lite';
+const DEFAULT_AI_MODEL = 'claude-haiku-5-5';
 const AI_MODEL_KEY = 'vhsg_ai_model';
 
 function getAiModel() {

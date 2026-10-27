@@ -15,17 +15,17 @@ const GEMINI_BASE_URL = () => aiBase('GOOGLE_GEMINI_BASE_URL');
 const OPENAI_API_KEY = () => aiKey('OPENAI_API_KEY');
 const OPENAI_BASE_URL = () => aiBase('OPENAI_BASE_URL', 'https://api.openai.com/v1');
 const ANTHROPIC_API_KEY = () => aiKey('ANTHROPIC_API_KEY');
-const ANTHROPIC_BASE_URL = () => aiBase('ANTHROPIC_BASE_URL', 'https://api.anthropic.com/v1');
+// Root URL (no /v1), the way the Gateway injects it.
+const ANTHROPIC_BASE_URL = () => aiBase('ANTHROPIC_BASE_URL', 'https://api.anthropic.com').replace(/\/+$/, '').replace(/\/v1$/, '');
 
 // Default model. Overridable per-request via body.model. Allowlisted in
 // pickModel() — anything else falls back to the default so a typo can't
 // route to an unintended provider.
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+// Gemini 2.5 was the default until the Gateway dropped that family (Oct 2026).
+const DEFAULT_MODEL = process.env.REWRITE_AI_MODEL || 'claude-haiku-5-5';
 const ALLOWED_MODELS = new Set([
-  'gemini-2.5-flash-lite',
-  'gemini-2.5-flash',
-  'gpt-4.1-nano',
-  'claude-haiku-4-5',
+  'claude-haiku-5-5',
+  'claude-sonnet-5-5',
 ]);
 function pickModel(requested) {
   if (requested && ALLOWED_MODELS.has(requested)) return requested;
@@ -147,6 +147,11 @@ SEO PRINCIPLES:
 - Year + content type + "VHS" is usually the highest-intent search pattern
 - Long-tail keywords (specific brands, show names, actors, products, regional networks) beat generic ones
 - Every field should work even if other fields are ignored
+
+LANGUAGE:
+- Write the title, description, and tags in English, even if the metadata is in another language. Translate it.
+- If the content is foreign-language, keep the original-script title too: once in the description, and as a tag. People search in both languages.
+- Name the language and country in the description and tags (e.g. "Cantonese", "Hong Kong VHS").
 
 TITLE (max 70 chars, ideal 50-60):
 - Start with the most distinctive keyword (show/brand/product name, NOT generic like "Vintage" or "Retro")
@@ -287,7 +292,7 @@ async function callOpenAI(prompt, model, signal) {
 
 async function callAnthropic(prompt, model, signal) {
   if (!ANTHROPIC_API_KEY()) throw new Error('Anthropic not configured (set ANTHROPIC_API_KEY)');
-  const res = await fetch(`${ANTHROPIC_BASE_URL()}/messages`, {
+  const res = await fetch(`${ANTHROPIC_BASE_URL()}/v1/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -296,7 +301,9 @@ async function callAnthropic(prompt, model, signal) {
     },
     body: JSON.stringify({
       model,
-      max_tokens: 1024,
+      // Thinking shares this ceiling with the answer on the Claude 5 line.
+      max_tokens: 4096,
+      output_config: { effort: 'low' },
       messages: [{ role: 'user', content: prompt }],
     }),
     signal,
