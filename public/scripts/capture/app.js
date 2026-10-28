@@ -4294,11 +4294,22 @@ function wireThumbnailPicker() {
       return;
     }
     showState('loading');
+    // If another clip opens while frames are being pulled (a trim now
+    // finishes in about a second and opens its result), this clip's URL
+    // gets revoked mid-extraction. Its frames or failure belong to a clip
+    // that's no longer showing, and the new clip runs its own generate().
+    const url = playbackBlobUrl;
     try {
-      currentThumbnails = await extractThumbnailsFromBlob(playbackBlobUrl, 6);
+      const frames = await extractThumbnailsFromBlob(url, 6);
+      if (playbackBlobUrl !== url) return;
+      currentThumbnails = frames;
       renderGrid();
       showState('grid');
     } catch (e) {
+      if (playbackBlobUrl !== url) {
+        console.info('[thumb] clip changed during generation; dropped:', e.message);
+        return;
+      }
       console.warn('[thumb] generation failed:', e.message);
       // Keep whatever the grid already had (the saved pick and/or the
       // previous batch — currentThumbnails is only reassigned on success)
@@ -7535,6 +7546,17 @@ async function runTrimEncode(choice) {
     if (posEl) posEl.textContent = `${formatTrimTime(doneSec)} of ${formatTrimTime(totalSec)}`;
   };
 
+  // Fast path: copy the recording instead of re-recording it, so a trim
+  // takes seconds instead of the clip's running time and keeps full
+  // quality, still cut on the exact frames picked (trim-fast.js). If it
+  // can't handle the file, nothing is written and the real-time encoder
+  // below takes over.
+  if (await runFastTrim(choice, clip, srcFile, inSec, outSec, onProgress, detailEl)) {
+    toast?.classList.add('hidden');
+    return;
+  }
+  if (barEl) barEl.style.width = '0%';
+
   // encodeTrim returns { blob, mime, ext } so we can write a filename
   // matching the actual recorder output (mp4 source → mp4 output where
   // browser supports it). Fallback to webm extension if the shape is
@@ -7570,6 +7592,42 @@ async function runTrimEncode(choice) {
   } finally {
     toast?.classList.add('hidden');
   }
+}
+
+// Returns true when the trim was written and catalogued; false means the
+// fast path couldn't handle this file and left no trace, so the caller
+// should fall back to the real-time encoder.
+async function runFastTrim(choice, clip, srcFile, inSec, outSec, onProgress, detailEl) {
+  if (detailEl) detailEl.textContent = 'Saving the trimmed clip — leave this tab open.';
+  // The copy keeps the source's container, so the extension does too.
+  const ext = clip.filename.endsWith('.mp4') ? '.mp4' : '.webm';
+  let filename = null;
+  let fh = null;
+  let duration;
+  try {
+    const { fastTrim } = await import('./trim-fast.js');
+    filename = choice === 'replace' ? clip.filename : await pickTrimFilename(clip.filename, ext);
+    fh = await directoryHandle.getFileHandle(filename, { create: true });
+    // On failure fastTrim aborts the writable, so a replace leaves the
+    // source untouched.
+    ({ duration } = await fastTrim({ file: srcFile, inSec, outSec, writable: await fh.createWritable(), onProgress }));
+  } catch (e) {
+    console.warn('[trim] fast trim failed, falling back to real-time encode:', e);
+    if (choice !== 'replace' && filename) {
+      await directoryHandle.removeEntry(filename).catch((err) => console.warn('[trim] could not remove partial trim file:', err));
+    }
+    return false;
+  }
+
+  const bytes = (await fh.getFile()).size;
+  try {
+    if (choice === 'replace') await catalogTrimReplace(clip, filename, duration, bytes);
+    else await catalogTrimNew(clip, filename, duration, bytes);
+  } catch (e) {
+    console.error('[trim] persist failed:', e);
+    alert('Trim saved OK but updating the library failed: ' + e.message);
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -8209,7 +8267,11 @@ async function persistTrimNew(srcClip, blob, durationSec, bytes, ext = '.webm') 
   const w = await fh.createWritable();
   await w.write(blob);
   await w.close();
+  await catalogTrimNew(srcClip, filename, durationSec, bytes);
+}
 
+// Library side of a trim saved as a new clip, once `filename` is on disk.
+async function catalogTrimNew(srcClip, filename, durationSec, bytes) {
   // Build the catalog entry by cloning the source's metadata so the
   // new clip starts with the same title/tags/sleeve refs and the user
   // doesn't have to re-enter everything. The trimmed clip is a NEW
@@ -8259,7 +8321,12 @@ async function persistTrimReplace(srcClip, blob, durationSec, bytes, ext = '.web
   const w = await fh.createWritable();
   await w.write(blob);
   await w.close();
+  await catalogTrimReplace(srcClip, filename, durationSec, bytes);
+}
 
+// Library side of a trim that replaced its source, once `filename` is on
+// disk (the source's own name, or the same name with a new extension).
+async function catalogTrimReplace(srcClip, filename, durationSec, bytes) {
   // If the extension changed (rare — only happens when MediaRecorder
   // can't honor the source format and falls through to webm) we now
   // have BOTH the new file and the old file on disk. Delete the
