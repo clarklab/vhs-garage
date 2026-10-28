@@ -18,4 +18,16 @@ export const DROP = {
   name: 'VHS Garage Originals — Drop 001',
   // Where the drop lives. public/_redirects serves /drops/ at its root.
   url: 'https://drops.vhsgarage.com',
+  // Selling through AI shopping agents (Stripe Agentic Commerce Suite).
+  agent: {
+    sku: 'VG-DROP-001',
+    title: 'VHS Garage Originals Drop #001, Mystery VHS Tape',
+    description:
+      "An original VHS tape from VHS Garage, sold sight unseen: the title stays censored until drop day. One run, no restocks. When they're gone, they're gone.",
+    image: '/images/drops/agent-product.png',
+    // How long an agent's approved order holds its copy while Stripe charges.
+    holdMinutes: 15,
+    // Stripe Tax product tax code, once tax is set up for agent sales.
+    taxCode: null,
+  },
 };
