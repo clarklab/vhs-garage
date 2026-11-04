@@ -4,7 +4,7 @@
 // itself can't persist (browser limitation), but every slide's frame does.
 import { loadVideoFile, grabFrame, awaitSeekSettled, seekAndSettle } from './capture.js';
 import { initScrubber } from './scrubber.js';
-import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame, confirmFrame, flaggedCount } from './slides.js';
+import { addSlide, addSlideBeforeOutro, removeSlide, reorderSlide, editCaption, canAddSlide, MAX_SLIDES, updateSlideFrame, confirmFrame, flaggedCount, wrongCount } from './slides.js';
 // getRefreshToken is back for one caller: importing the posts that predate the
 // library reads them straight from TikTok. Everything else (the hashtag panel)
 // still goes through reports.js loadPosts().
@@ -1021,6 +1021,18 @@ async function renderLibrary() {
         : 'absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold text-neutral-950 shadow';
       chip.title = `${flagged} frame${flagged === 1 ? '' : 's'} flagged by batch to check — open the set and look for the amber “check frame” pills.`;
       chip.append(iconSpan('visibility', 'text-[13px]'), document.createTextNode(listView ? String(flagged) : `${flagged} to check`));
+      (listView ? sub : frame).appendChild(chip);
+    }
+    // Frames a person marked wrong (usually from the phone). Red, and on the
+    // other corner, because these are known-bad rather than maybe-bad.
+    const wrongs = key === 'posted' ? 0 : wrongCount(rec.slides);
+    if (wrongs) {
+      const chip = document.createElement('span');
+      chip.className = listView
+        ? 'flex flex-none items-center gap-0.5 rounded-md bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-red-200'
+        : 'absolute bottom-2 right-2 flex items-center gap-1 rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-bold text-white shadow';
+      chip.title = `${wrongs} frame${wrongs === 1 ? '' : 's'} marked wrong — open the set and look for the red “wrong frame” pills.`;
+      chip.append(iconSpan('flag', 'text-[13px]'), document.createTextNode(listView ? String(wrongs) : `${wrongs} wrong`));
       (listView ? sub : frame).appendChild(chip);
     }
     meta.append(name, sub);
@@ -3215,6 +3227,26 @@ function renderSlide(slide, index) {
       row.append(flag);
     }
     mid.append(row);
+  }
+
+  // Marked wrong by a person, usually from the phone, where it can't be
+  // re-shot on the spot. The note says what it should show. Re-grabbing the
+  // frame clears it; clicking says "it's right after all".
+  if (slide.frameScan?.wrong) {
+    const wrong = document.createElement('button');
+    wrong.type = 'button';
+    wrong.className = 'flex max-w-full items-center gap-1 self-start rounded-md bg-red-500/15 px-1.5 py-0.5 text-left text-[11px] font-semibold text-red-200 hover:bg-red-500/25';
+    const note = slide.frameScan.wrong.note;
+    wrong.append(iconSpan('flag', 'text-[14px] flex-none'), document.createTextNode(note ? `wrong frame: ${note}` : 'marked as the wrong frame'));
+    wrong.title = 'Marked as the wrong frame. Re-grab it to fix it, or click here if it is right after all.';
+    wrong.addEventListener('click', (e) => {
+      e.stopPropagation();
+      slides = confirmFrame(slides, slide.id);
+      markDirty();
+      render();
+      els.status.textContent = 'Wrong-frame mark cleared.';
+    });
+    mid.append(wrong);
   }
 
   // Editor-only hint from the AI: what shot to look for when (re)grabbing.

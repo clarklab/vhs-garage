@@ -67,14 +67,18 @@ export function updateSlideFrame(slides, id, bitmap, timecode) {
 
 function markFixed(scan) {
   if (!scan) return scan ?? null;
-  return { ...scan, wasFlagged: scan.wasFlagged ?? !!scan.review, review: false, fixed: true };
+  const { wrong, ...rest } = scan;
+  return { ...rest, wasFlagged: scan.wasFlagged ?? !!scan.review, ...(wrong ? { wasWrong: wrong } : {}), review: false, fixed: true };
 }
 
 // "I looked, it's right." Clears the flag without pretending it was fixed.
+// A "wrong frame" mark goes with it: confirming says the frame is fine.
 export function confirmFrame(slides, id) {
-  return slides.map(x => (x.id === id && x.frameScan
-    ? { ...x, frameScan: { ...x.frameScan, wasFlagged: x.frameScan.wasFlagged ?? !!x.frameScan.review, review: false, confirmed: true } }
-    : x));
+  return slides.map((x) => {
+    if (x.id !== id || !x.frameScan) return x;
+    const { wrong, ...rest } = x.frameScan;
+    return { ...x, frameScan: { ...rest, wasFlagged: x.frameScan.wasFlagged ?? !!x.frameScan.review, review: false, confirmed: true } };
+  });
 }
 
 // How many slides batch still wants a human to look at. The library card shows
@@ -82,4 +86,23 @@ export function confirmFrame(slides, id) {
 // instead of a hunt through every draft.
 export function flaggedCount(slides) {
   return (Array.isArray(slides) ? slides : []).filter((x) => x?.frameScan?.review).length;
+}
+
+// "This frame is wrong", said by a person (usually on the phone, where the
+// frame can't be re-shot). It lives inside frameScan because that is the one
+// slide record every save path carries through whole; a field of its own would
+// be dropped the next time the studio saved the set. `note` is what the frame
+// should show, for whoever re-shoots it. Re-grabbing the frame clears it.
+export function markWrongFrame(scan, { note = '', at = Date.now() } = {}) {
+  return { ...(scan || { source: 'manual' }), wrong: { note: String(note || '').slice(0, 300), at } };
+}
+
+export function clearWrongFrame(scan) {
+  if (!scan?.wrong) return scan ?? null;
+  const { wrong, ...rest } = scan;
+  return rest;
+}
+
+export function wrongCount(slides) {
+  return (Array.isArray(slides) ? slides : []).filter((x) => x?.frameScan?.wrong).length;
 }

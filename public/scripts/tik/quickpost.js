@@ -14,7 +14,8 @@ import { isSignedIn, clearLocalToken } from './auth.js';
 import { publishSlideshow } from './publish.js';
 import { composeToCanvas, captionFontReady, quoteStampReady, clampStampNudge } from './compose.js';
 import { projectDisplayName, relativeTime, toggleReady, statusOf } from './project.js';
-import { groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, flagsFor, songQuery } from './quickpostlib.js';
+import { groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, flagsFor, wrongsFor, songQuery } from './quickpostlib.js';
+import { markWrongFrame, clearWrongFrame } from './slides.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -25,7 +26,11 @@ const els = {
   drafts: $('qp-drafts'), draftCount: $('qp-draft-count'), draftsEmpty: $('qp-drafts-empty'),
   posted: $('qp-posted'), postedCount: $('qp-posted-count'), postedMore: $('qp-posted-more'),
   review: $('qp-review'), slides: $('qp-slides'), dots: $('qp-dots'), loading: $('qp-loading'),
-  slideCount: $('qp-slide-count'), slideFlag: $('qp-slide-flag'),
+  slideCount: $('qp-slide-count'), slideFlag: $('qp-slide-flag'), slideWrong: $('qp-slide-wrong'),
+  editText: $('qp-edit-text'), markWrong: $('qp-mark-wrong'), markWrongLabel: $('qp-mark-wrong-label'),
+  textBox: $('qp-text-box'), textSlideNo: $('qp-text-slide-no'), slideText: $('qp-slide-text'),
+  textUndo: $('qp-text-undo'), textDone: $('qp-text-done'),
+  wrongBox: $('qp-wrong-box'), wrongNote: $('qp-wrong-note'),
   songsWrap: $('qp-songs-wrap'), songs: $('qp-songs'), songsNone: $('qp-songs-none'),
   postTitle: $('qp-post-title'), postDesc: $('qp-post-desc'),
   done: $('qp-done'), next: $('qp-next'),
@@ -37,7 +42,7 @@ const PREVIEW_SCALE = 0.5;
 const POSTED_PAGE = 30;
 let showAllPosted = false;
 let thumbUrls = [];
-let current = null;   // { rec, bitmaps, flags: [bool] }
+let current = null;   // { rec, bitmaps, canvases, badges, index, original: Map<index, caption> }
 let openSeq = 0;
 let publishing = false;
 
@@ -59,6 +64,7 @@ function setCard(rec, tone) {
   const li = document.createElement('li');
   const n = (rec.slides || []).length;
   const flags = flagsFor(rec);
+  const wrongs = wrongsFor(rec);
   const song = songsFor(rec)[0];
   const pending = rec.batch?.pendingFrames;
   const when = relativeTime(rec.updatedAt || 0, Date.now());
@@ -71,6 +77,7 @@ function setCard(rec, tone) {
         <span class="mt-1 flex flex-wrap gap-1.5">
           ${pending ? '<span class="rounded-md bg-red-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-red-200">frames not shot</span>' : ''}
           ${flags ? `<span class="rounded-md bg-amber-400/15 px-1.5 py-0.5 text-[11px] font-semibold text-amber-200">${flags} to check</span>` : ''}
+          ${wrongs ? `<span class="rounded-md bg-red-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-red-200">${wrongs} wrong</span>` : ''}
           ${song ? `<span class="truncate text-[11px] text-neutral-500">♪ ${esc(song.title)}</span>` : ''}
         </span>
       </span>
@@ -142,6 +149,7 @@ function showView(view) {
 
 function closeReview() {
   openSeq++;
+  flushSave();
   current?.bitmaps.forEach((b) => b?.close?.());
   current = null;
   els.slides.replaceChildren();
@@ -156,6 +164,8 @@ async function openReview(id, { push = true } = {}) {
   els.slides.replaceChildren();
   els.dots.replaceChildren();
   els.done.classList.add('hidden');
+  els.textBox.classList.add('hidden');
+  els.wrongBox.classList.add('hidden');
   els.loading.classList.remove('hidden');
   els.status.textContent = '';
   let rec;
@@ -168,7 +178,7 @@ async function openReview(id, { push = true } = {}) {
     await Promise.all([captionFontReady(), quoteStampReady()]);
     const bitmaps = await Promise.all((rec.slides || []).map(frameBitmap));
     if (seq !== openSeq) { bitmaps.forEach((b) => b?.close?.()); return; }
-    current = { rec, bitmaps, flags: (rec.slides || []).map((s) => !!s.frameScan?.review) };
+    current = { rec, bitmaps, canvases: [], badges: [], index: 0, original: new Map() };
   } catch (e) {
     console.error('[quickpost] open failed:', e);
     els.loading.classList.add('hidden');
@@ -200,48 +210,166 @@ async function frameBitmap(s) {
 }
 
 function drawSlides() {
-  const { rec, bitmaps, flags } = current;
-  const opts = composeOptionsFor(rec);
+  const { rec } = current;
   const frag = document.createDocumentFragment();
   const dots = document.createDocumentFragment();
+  current.canvases = [];
+  current.badges = [];
   (rec.slides || []).forEach((s, i) => {
     const wrap = document.createElement('div');
     wrap.className = 'relative flex-none snap-center overflow-hidden rounded-xl bg-black';
     wrap.style.width = 'min(calc(100vw - 3.5rem), 26rem)';
     const cvs = document.createElement('canvas');
     cvs.className = 'block h-auto w-full';
-    if (bitmaps[i]) {
-      composeToCanvas(cvs, bitmaps[i], s.caption || '', {
-        ...opts, scale: PREVIEW_SCALE, fontScale: s.fontScale || 1, kind: s.kind,
-        adjust: s.adjust, stampNudge: clampStampNudge(s.stampNudge), captionStyle: 'pills',
-      });
-    }
     wrap.appendChild(cvs);
-    if (flags[i]) wrap.insertAdjacentHTML('beforeend', '<span class="absolute left-2 top-2 rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold text-neutral-950">check frame</span>');
+    const badges = document.createElement('span');
+    badges.className = 'absolute left-2 top-2 flex gap-1';
+    wrap.appendChild(badges);
+    current.canvases.push(cvs);
+    current.badges.push(badges);
     frag.appendChild(wrap);
-    const dot = document.createElement('li');
-    dot.className = `h-1.5 w-1.5 rounded-full ${flags[i] ? 'bg-amber-400' : 'bg-neutral-700'}`;
-    dots.appendChild(dot);
+    dots.appendChild(document.createElement('li'));
+    renderSlide(i);
   });
   els.slides.replaceChildren(frag);
   els.dots.replaceChildren(dots);
+  current.index = -1;
   onSlideScroll();
+}
+
+// Draw one slide, exactly as the studio would post it.
+function renderSlide(i) {
+  const s = current.rec.slides[i];
+  const bitmap = current.bitmaps[i];
+  if (bitmap) {
+    composeToCanvas(current.canvases[i], bitmap, s.caption || '', {
+      ...composeOptionsFor(current.rec), scale: PREVIEW_SCALE, fontScale: s.fontScale || 1, kind: s.kind,
+      adjust: s.adjust, stampNudge: clampStampNudge(s.stampNudge), captionStyle: 'pills',
+    });
+  }
+  current.badges[i].innerHTML = `${s.frameScan?.review ? '<span class="rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold text-neutral-950">check frame</span>' : ''}${
+    s.frameScan?.wrong ? '<span class="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-bold text-white">wrong frame</span>' : ''}`;
 }
 
 function onSlideScroll() {
   if (!current) return;
   const first = els.slides.firstElementChild;
   if (!first) return;
+  const n = current.rec.slides.length;
   const step = first.getBoundingClientRect().width + 12;
-  const i = Math.min(current.rec.slides.length - 1, Math.max(0, Math.round(els.slides.scrollLeft / step)));
-  els.slideCount.textContent = `Slide ${i + 1} of ${current.rec.slides.length}`;
-  els.slideFlag.classList.toggle('hidden', !current.flags[i]);
+  const i = Math.min(n - 1, Math.max(0, Math.round(els.slides.scrollLeft / step)));
+  const moved = i !== current.index;
+  current.index = i;
+  const s = current.rec.slides[i];
+  els.slideCount.textContent = `Slide ${i + 1} of ${n}`;
+  els.slideFlag.classList.toggle('hidden', !s.frameScan?.review);
+  els.slideWrong.classList.toggle('hidden', !s.frameScan?.wrong);
   [...els.dots.children].forEach((d, k) => {
-    d.classList.toggle('bg-white', k === i);
-    d.classList.toggle('scale-150', k === i);
+    const sk = current.rec.slides[k];
+    const tone = k === i ? 'bg-white scale-150' : sk.frameScan?.wrong ? 'bg-red-500' : sk.frameScan?.review ? 'bg-amber-400' : 'bg-neutral-700';
+    d.className = `h-1.5 w-1.5 rounded-full transition ${tone}`;
   });
+  if (moved) syncSlideTools();
 }
+
+// The edit / mark tools follow whichever slide is on screen.
+function syncSlideTools() {
+  const i = current.index;
+  const s = current.rec.slides[i];
+  const wrong = !!s.frameScan?.wrong;
+  els.markWrong.setAttribute('aria-pressed', String(wrong));
+  els.markWrongLabel.textContent = wrong ? 'Marked wrong' : 'Wrong frame';
+  els.wrongBox.classList.toggle('hidden', !wrong);
+  if (document.activeElement !== els.wrongNote) els.wrongNote.value = s.frameScan?.wrong?.note || '';
+  const editing = !els.textBox.classList.contains('hidden');
+  els.editText.setAttribute('aria-pressed', String(editing));
+  if (editing) {
+    els.textSlideNo.textContent = String(i + 1);
+    if (document.activeElement !== els.slideText) els.slideText.value = s.caption || '';
+    els.textUndo.disabled = !current.original.has(i) || current.original.get(i) === (s.caption || '');
+  }
+}
+
 els.slides.addEventListener('scroll', () => requestAnimationFrame(onSlideScroll), { passive: true });
+
+let saveTimer = null;
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    saveCurrent().catch((e) => { console.error('[quickpost] save failed:', e); els.status.textContent = 'Couldn’t save that change — try again.'; });
+  }, 800);
+}
+function flushSave() {
+  if (!saveTimer) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  saveCurrent().catch((e) => console.error('[quickpost] save failed:', e));
+}
+
+els.editText.addEventListener('click', () => {
+  if (!current) return;
+  const open = els.textBox.classList.contains('hidden');
+  els.textBox.classList.toggle('hidden', !open);
+  syncSlideTools();
+  if (open) els.slideText.focus();
+});
+els.textDone.addEventListener('click', () => {
+  els.textBox.classList.add('hidden');
+  els.slideText.blur();
+  flushSave();
+  if (current) syncSlideTools();
+});
+
+let drawQueued = false;
+els.slideText.addEventListener('input', () => {
+  if (!current) return;
+  const i = current.index;
+  const s = current.rec.slides[i];
+  if (!current.original.has(i)) current.original.set(i, s.caption || '');
+  s.caption = els.slideText.value;
+  els.textUndo.disabled = current.original.get(i) === s.caption;
+  if (!drawQueued) {
+    drawQueued = true;
+    requestAnimationFrame(() => { drawQueued = false; if (current) renderSlide(i); });
+  }
+  scheduleSave();
+});
+els.textUndo.addEventListener('click', () => {
+  if (!current || !current.original.has(current.index)) return;
+  const i = current.index;
+  current.rec.slides[i].caption = current.original.get(i);
+  els.slideText.value = current.rec.slides[i].caption;
+  els.textUndo.disabled = true;
+  renderSlide(i);
+  scheduleSave();
+});
+
+// "This frame is wrong." It can't be re-shot from the phone, so it is marked
+// for the desk (red in the studio, with the note) and the set stays postable.
+els.markWrong.addEventListener('click', () => {
+  if (!current) return;
+  const i = current.index;
+  const s = current.rec.slides[i];
+  s.frameScan = s.frameScan?.wrong ? clearWrongFrame(s.frameScan) : markWrongFrame(s.frameScan);
+  renderSlide(i);
+  onSlideScroll();
+  syncSlideTools();
+  syncActions();
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  saveCurrent().catch((e) => { console.error('[quickpost] mark save failed:', e); els.status.textContent = 'Couldn’t save the mark — try again.'; });
+});
+// A caption typed just before the phone locks or the tab closes still lands.
+window.addEventListener('pagehide', flushSave);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
+els.wrongNote.addEventListener('input', () => {
+  if (!current) return;
+  const s = current.rec.slides[current.index];
+  if (!s.frameScan?.wrong) return;
+  s.frameScan = { ...s.frameScan, wrong: { ...s.frameScan.wrong, note: els.wrongNote.value.slice(0, 300) } };
+  scheduleSave();
+});
 
 function fillDetails() {
   const { rec } = current;
@@ -269,14 +397,12 @@ function fillDetails() {
   els.postDesc.value = copy.description;
 }
 
-let copyTimer = null;
 function onCopyEdit() {
   if (!current) return;
   current.rec.postTitle = els.postTitle.value;
   current.rec.postDesc = els.postDesc.value;
   current.rec.postEdited = true;
-  clearTimeout(copyTimer);
-  copyTimer = setTimeout(() => saveCurrent().catch((e) => console.error('[quickpost] caption save failed:', e)), 800);
+  scheduleSave();
 }
 els.postTitle.addEventListener('input', onCopyEdit);
 els.postDesc.addEventListener('input', onCopyEdit);
@@ -300,8 +426,9 @@ function syncActions() {
     els.status.textContent = posted
       ? `Posted ${relativeTime(rec.postedAt || rec.updatedAt || 0, Date.now())}.`
       : !check.ok ? check.reason
-        : flagsFor(rec) ? `${flagsFor(rec)} frame${flagsFor(rec) === 1 ? '' : 's'} marked to check — swipe through first.`
-          : '';
+        : wrongsFor(rec) ? `${wrongsFor(rec)} frame${wrongsFor(rec) === 1 ? '' : 's'} marked wrong — fix at the desk, or post anyway.`
+          : flagsFor(rec) ? `${flagsFor(rec)} frame${flagsFor(rec) === 1 ? '' : 's'} marked to check — swipe through first.`
+            : '';
   }
 }
 
@@ -324,6 +451,9 @@ els.publish.addEventListener('click', async () => {
   const { rec, bitmaps } = current;
   const check = canPublish(rec);
   if (!check.ok) { els.status.textContent = check.reason; return; }
+  const wrongs = wrongsFor(rec);
+  if (wrongs && !confirm(`${wrongs} frame${wrongs === 1 ? ' is' : 's are'} marked wrong. Post anyway?`)) return;
+  flushSave();
   publishing = true;
   syncActions();
   try {

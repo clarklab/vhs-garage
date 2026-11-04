@@ -29,7 +29,7 @@ import { BUILD_ID } from '../../utils/build-id.js';
         <p class="font-bold">Link this phone to your library</p>
         <p class="mt-1 text-amber-100/80">On your computer, open the studio, go to Posts, and tap <b>Link a phone</b>. Open that link here once. Or paste the key:</p>
         <div class="mt-3 flex gap-2">
-          <input id="qp-key" type="password" autocomplete="off" placeholder="Library sync key" class="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm" />
+          <input id="qp-key" type="password" autocomplete="off" placeholder="Library sync key" class="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-base" />
           <button id="qp-key-save" class="rounded-lg bg-amber-400 px-3 py-2 text-sm font-bold text-neutral-950">Link</button>
         </div>
       </div>
@@ -76,10 +76,35 @@ import { BUILD_ID } from '../../utils/build-id.js';
     <main id="qp-review" class="hidden mx-auto w-full max-w-xl pb-40">
       <div class="flex items-center justify-between px-4 pt-3 text-xs text-neutral-500">
         <span id="qp-slide-count" class="tabular-nums"></span>
-        <span id="qp-slide-flag" class="hidden rounded-md bg-amber-400/15 px-1.5 py-0.5 font-semibold text-amber-200">check this frame</span>
+        <span class="flex gap-1.5">
+          <span id="qp-slide-flag" class="hidden rounded-md bg-amber-400/15 px-1.5 py-0.5 font-semibold text-amber-200">check this frame</span>
+          <span id="qp-slide-wrong" class="hidden rounded-md bg-red-500/15 px-1.5 py-0.5 font-semibold text-red-200">marked wrong</span>
+        </span>
       </div>
       <div id="qp-slides" class="mt-2 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2" style="scrollbar-width:none"></div>
       <ol id="qp-dots" class="mt-1 flex flex-wrap justify-center gap-1.5 px-4"></ol>
+
+      <!-- Tools for the slide on screen. Swiping moves them to the next one. -->
+      <div id="qp-slide-tools" class="mt-3 flex gap-2 px-4">
+        <button id="qp-edit-text" class="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-neutral-700 px-3 py-2.5 text-sm font-semibold text-neutral-200 aria-pressed:border-neutral-300 aria-pressed:bg-neutral-800" aria-pressed="false">
+          <span class="material-symbols-outlined text-[18px] leading-none">edit</span><span>Edit text</span>
+        </button>
+        <button id="qp-mark-wrong" class="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-neutral-700 px-3 py-2.5 text-sm font-semibold text-neutral-200 aria-pressed:border-red-500/60 aria-pressed:bg-red-500/15 aria-pressed:text-red-200" aria-pressed="false">
+          <span class="material-symbols-outlined text-[18px] leading-none">flag</span><span id="qp-mark-wrong-label">Wrong frame</span>
+        </button>
+      </div>
+      <div id="qp-text-box" class="hidden mx-4 mt-2 rounded-xl border border-neutral-700 bg-neutral-900 p-3">
+        <label for="qp-slide-text" class="text-[11px] text-neutral-500">Text on slide <span id="qp-text-slide-no"></span></label>
+        <textarea id="qp-slide-text" rows="5" class="mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-base leading-snug"></textarea>
+        <div class="mt-2 flex items-center justify-between">
+          <button id="qp-text-undo" class="text-xs font-semibold text-neutral-400 disabled:opacity-40" disabled>Undo changes</button>
+          <button id="qp-text-done" class="rounded-lg bg-neutral-100 px-3 py-1.5 text-xs font-bold text-neutral-950">Done</button>
+        </div>
+      </div>
+      <div id="qp-wrong-box" class="hidden mx-4 mt-2 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-100">
+        <p>Marked as the wrong frame. It shows in red in the studio so it can be re-shot. Tap the button again to unmark it.</p>
+        <input id="qp-wrong-note" maxlength="300" autocomplete="off" placeholder="What should it show? (optional)" class="mt-2 w-full rounded-lg border border-red-500/30 bg-neutral-950 px-3 py-2 text-base text-neutral-100" />
+      </div>
       <p id="qp-loading" class="hidden px-4 py-10 text-center text-sm text-neutral-400">Getting the frames…</p>
 
       <div class="mt-5 flex flex-col gap-4 px-4">
@@ -95,9 +120,9 @@ import { BUILD_ID } from '../../utils/build-id.js';
         <details class="rounded-xl border border-neutral-800 bg-neutral-900 p-3" id="qp-copy-box">
           <summary class="cursor-pointer text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Caption</summary>
           <label class="mt-3 block text-[11px] text-neutral-500" for="qp-post-title">Title</label>
-          <input id="qp-post-title" maxlength="90" class="mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm" />
+          <input id="qp-post-title" maxlength="90" class="mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-base" />
           <label class="mt-3 block text-[11px] text-neutral-500" for="qp-post-desc">Description</label>
-          <textarea id="qp-post-desc" rows="6" class="mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm leading-snug"></textarea>
+          <textarea id="qp-post-desc" rows="6" class="mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-base leading-snug"></textarea>
         </details>
       </div>
 
