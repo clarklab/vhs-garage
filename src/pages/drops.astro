@@ -186,7 +186,7 @@ const productLd = {
       <div data-view="live" hidden class="flex flex-col gap-5 bg-black p-5 text-white">
         <div class="flex items-end justify-between gap-4">
           <p class="text-8xl tracking-tight tabular-nums">${DROP.price}</p>
-          <p class="pb-2 text-right text-sm uppercase tracking-widest text-white/65">Each<br />+ ${DROP.shipping} shipping</p>
+          <p class="pb-2 text-right text-sm uppercase tracking-widest text-white/65">Each + ${DROP.shipping} shipping<br />or free Austin pickup</p>
         </div>
         <button type="button" data-buy data-when-buyable class="h-16 bg-[#dc2626] text-xl uppercase tracking-wider text-white transition-colors hover:bg-[#ef4444] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Buy now →</button>
         <p data-when-held hidden class="flex h-16 items-center justify-center gap-3 border-2 border-dashed border-white/35 text-lg uppercase tracking-wider text-white/80"><span class="size-2 bg-[#dc2626]"></span>All copies in carts</p>
@@ -223,7 +223,9 @@ const productLd = {
             </div>
           ))}
         </dl>
-        <p data-order-preorder hidden class="text-base text-white/75 sm:text-sm">It's a pre-order, so it ships when the drop opens on {DROP.opensLabel}.</p>
+        <p data-order-preorder="ship" hidden class="text-base text-white/75 sm:text-sm">It's a pre-order, so it ships when the drop opens on {DROP.opensLabel}.</p>
+        <p data-order-preorder="pickup" hidden class="text-base text-white/75 sm:text-sm">It's a pre-order. Once the drop opens on {DROP.opensLabel}, we'll email you to set up your Austin pickup.</p>
+        <p data-order-pickup hidden class="text-base text-white/75 sm:text-sm">We'll email you to set up your pickup at one of our Austin VHS swaps.</p>
         <button type="button" data-share class="h-14 bg-[#dc2626] text-base uppercase tracking-wider text-white transition-colors hover:bg-[#ef4444] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Share the drop</button>
         <a href="https://vhsgarage.com" class="flex h-14 items-center justify-center border border-white/30 text-base uppercase tracking-wider text-white transition-colors hover:border-white">Back to the Garage</a>
       </div>
@@ -272,6 +274,23 @@ const productLd = {
           <p class="text-lg tabular-nums">${DROP.price}</p>
         </div>
 
+        <fieldset class="flex flex-col gap-2">
+          <legend class="sr-only">How you want it</legend>
+          <div class="grid grid-cols-2 gap-2">
+            {[
+              ['ship', 'Ship it', `${usd(DROP.shipping)} · US only`],
+              ['pickup', 'Local pickup', 'Free · Austin'],
+            ].map(([value, title, sub]) => (
+              <label class="flex cursor-pointer flex-col gap-1 border border-[#2a2a2a] p-3 transition-colors has-checked:border-[#dc2626] has-checked:bg-[#dc2626]/10 has-focus-visible:outline-2 has-focus-visible:outline-white has-disabled:cursor-wait has-disabled:opacity-60">
+                <input type="radio" name="fulfillment" value={value} checked={value === 'ship'} class="sr-only" />
+                <span class="text-base uppercase tracking-wide">{title}</span>
+                <span class="font-sans text-sm text-white/60">{sub}</span>
+              </label>
+            ))}
+          </div>
+          <p data-pickup-note hidden class="font-sans text-base text-white/60 sm:text-sm">No shipping. We'll email you to set up a handoff at one of our Austin VHS swaps.</p>
+        </fieldset>
+
         <div data-express hidden class="flex flex-col gap-4">
           <div id="drop-express"></div>
           <div aria-hidden="true" class="flex items-center gap-3 text-xs uppercase tracking-widest text-white/55">
@@ -284,7 +303,7 @@ const productLd = {
 
         <div class="flex flex-col gap-2.5 font-sans text-base text-white/65 sm:text-sm">
           <div class="flex justify-between"><p>Subtotal</p><p class="tabular-nums">{usd(DROP.price)}</p></div>
-          <div class="flex justify-between"><p>Shipping</p><p class="tabular-nums">{usd(DROP.shipping)}</p></div>
+          <div class="flex justify-between"><p>Shipping</p><p data-ship-amount class="tabular-nums">{usd(DROP.shipping)}</p></div>
         </div>
         <div class="flex items-baseline justify-between border-t border-[#2a2a2a] pt-3">
           <p class="text-base uppercase tracking-widest">Total</p>
@@ -384,9 +403,12 @@ const productLd = {
       set('number', o.orderNumber);
       set('item', `Drop ${DROP.number}`);
       set('paid', o.status === 'paid' ? `$${(o.total / 100).toFixed(2)}` : 'Processing');
+      const pickup = o.fulfillment === 'pickup';
       set('ship', o.shipTo ?? '—');
+      $$('[data-order="ship"]').forEach((el) => { el.previousElementSibling.textContent = pickup ? 'Pickup' : 'Ships to'; });
       $$('[data-order-to]').forEach((el) => { el.textContent = o.email ? ` to ${o.email}` : ''; });
-      $$('[data-order-preorder]').forEach((el) => { el.hidden = o.kind !== 'preorder'; });
+      $$('[data-order-preorder]').forEach((el) => { el.hidden = o.kind !== 'preorder' || el.dataset.orderPreorder !== o.fulfillment; });
+      $$('[data-order-pickup]').forEach((el) => { el.hidden = !pickup || o.kind === 'preorder'; });
     }
 
     async function loadOrder(sessionId) {
@@ -436,6 +458,9 @@ const productLd = {
     let actions = null;
     let holdTimer;
     let paying = false;
+    let fulfillment = 'ship'; // or 'pickup' — free Austin pickup, no address
+    let saleKind = 'preorder';
+    const radios = sheet.querySelectorAll('input[name="fulfillment"]');
 
     // Stripe.js must load from js.stripe.com — never bundled or self-hosted.
     function loadStripeJs() {
@@ -504,14 +529,37 @@ const productLd = {
         .catch((err) => console.error('[drops] release failed', err));
     }
 
-    function teardown() {
-      clearInterval(holdTimer);
+    // Reflect ship vs pickup everywhere in the sheet: the choice, the address
+    // form, the shipping line and the provisional total.
+    function applyFulfillment(start) {
+      fulfillment = start.fulfillment === 'pickup' ? 'pickup' : 'ship';
+      saleKind = start.kind;
+      const pickup = fulfillment === 'pickup';
+      radios.forEach((r) => { r.checked = r.value === fulfillment; });
+      sheet.querySelector('#drop-shipping').hidden = pickup;
+      sheet.querySelector('[data-pickup-note]').hidden = !pickup;
+      sheet.querySelector('[data-ship-amount]').textContent = pickup ? 'Free' : `$${DROP.shipping.toFixed(2)}`;
+      const total = `$${(DROP.price + (pickup ? 0 : DROP.shipping)).toFixed(2)}`;
+      sheet.querySelector('[data-total]').textContent = total;
+      payBtn.textContent = `Pay ${total}`;
+      sheet.querySelector('[data-checkout-kind]').textContent =
+        saleKind === 'preorder'
+          ? (pickup ? 'Pre-order · Austin pickup once the drop opens' : 'Pre-order · Ships when the drop opens')
+          : (pickup ? 'VHS Garage Original · Austin pickup' : 'VHS Garage Original · Qty 1');
+    }
+
+    function unmountStripe() {
       elements.forEach((el) => {
         try { el.destroy(); } catch (err) { console.warn('[drops] element destroy failed', err); }
       });
       elements = [];
       actions = null;
       sheet.querySelector('[data-express]').hidden = true;
+    }
+
+    function teardown() {
+      clearInterval(holdTimer);
+      unmountStripe();
     }
 
     function closeSheet() {
@@ -545,14 +593,18 @@ const productLd = {
       });
 
       const contact = checkout.createContactDetailsElement();
-      const shipping = checkout.createShippingAddressElement();
       const payment = checkout.createPaymentElement();
       const express = checkout.createExpressCheckoutElement({ buttonHeight: 52, buttonTheme: { applePay: 'white' } });
       contact.mount('#drop-contact');
-      shipping.mount('#drop-shipping');
       payment.mount('#drop-payment');
       express.mount('#drop-express');
-      elements = [contact, shipping, payment, express];
+      elements = [contact, payment, express];
+      // Pickup sessions don't collect an address at all.
+      if (start.fulfillment !== 'pickup') {
+        const shipping = checkout.createShippingAddressElement();
+        shipping.mount('#drop-shipping');
+        elements.push(shipping);
+      }
 
       express.on('availablepaymentmethodschange', ({ paymentMethods }) => {
         sheet.querySelector('[data-express]').hidden = !paymentMethods;
@@ -581,7 +633,7 @@ const productLd = {
         const r = await fetch('/.netlify/functions/drop-checkout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'start' }),
+          body: JSON.stringify({ action: 'start', fulfillment }),
         });
         const start = await r.json();
         if (r.status === 409) {
@@ -596,8 +648,7 @@ const productLd = {
         paying = false;
         showPayError('');
         setHoldExpired(false);
-        sheet.querySelector('[data-checkout-kind]').textContent =
-          start.kind === 'preorder' ? 'Pre-order · Ships when the drop opens' : 'VHS Garage Original · Qty 1';
+        applyFulfillment(start);
         sheet.hidden = false;
         document.documentElement.classList.add('overflow-hidden');
         startHoldTimer(new Date(start.heldUntil).getTime());
@@ -613,6 +664,40 @@ const productLd = {
         done();
       }
     }
+
+    // Ship ↔ pickup: a new Stripe session for the same held copy (and timer).
+    async function switchFulfillment(next) {
+      if (!hold || paying || next === fulfillment) return;
+      radios.forEach((r) => { r.disabled = true; });
+      payBtn.disabled = true;
+      showPayError('');
+      try {
+        const r = await fetch('/.netlify/functions/drop-checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'switch', sessionId: hold.sessionId, fulfillment: next }),
+        });
+        const start = await r.json();
+        if (r.status === 410) {
+          hold = null;
+          clearInterval(holdTimer);
+          setHoldExpired(true);
+          return;
+        }
+        if (!r.ok) throw new Error(start.error ?? `HTTP ${r.status}`);
+        unmountStripe();
+        hold = { sessionId: start.sessionId };
+        applyFulfillment(start);
+        await mountStripe(start);
+      } catch (err) {
+        console.error('[drops] switching ship/pickup failed', err);
+        applyFulfillment({ fulfillment, kind: saleKind });
+        showPayError("Couldn't switch that. Try again.");
+      } finally {
+        radios.forEach((r) => { r.disabled = false; });
+      }
+    }
+    radios.forEach((r) => r.addEventListener('change', () => r.checked && switchFulfillment(r.value)));
 
     $$('[data-buy]').forEach((btn) => btn.addEventListener('click', () => openCheckout(btn)));
     $$('[data-checkout-close]').forEach((btn) => btn.addEventListener('click', closeSheet));

@@ -50,7 +50,19 @@ export function shipTo(session) {
   return [address.city, address.state].filter(Boolean).join(', ');
 }
 
-export function checkoutParams({ drop, kind, orderId, origin, now }) {
+export const PICKUP_LABEL = 'Local pickup (Austin)';
+
+// What the order page and packing list show for how an order gets to the
+// buyer: the pickup label, or the ship-to city.
+export function fulfillmentLabel(session) {
+  return session.metadata?.fulfillment === 'pickup' ? PICKUP_LABEL : shipTo(session);
+}
+
+// fulfillment: 'ship' (address + flat shipping) or 'pickup' (handed over at
+// an Austin VHS swap — no address, no shipping charge).
+export function checkoutParams({ drop, kind, orderId, origin, now, fulfillment = 'ship' }) {
+  const pickup = fulfillment === 'pickup';
+  const meta = { drop_id: drop.id, order_id: String(orderId), kind, fulfillment: pickup ? 'pickup' : 'ship' };
   return {
     ui_mode: 'elements',
     mode: 'payment',
@@ -62,28 +74,34 @@ export function checkoutParams({ drop, kind, orderId, origin, now }) {
           unit_amount: drop.price * 100,
           product_data: {
             name: drop.name,
-            description: kind === 'preorder' ? 'Pre-order. Ships when the drop opens.' : 'One run, no restocks.',
+            description: pickup
+              ? `Local pickup in Austin${kind === 'preorder' ? ' once the drop opens' : ''}. We'll email you to set a time.`
+              : kind === 'preorder' ? 'Pre-order. Ships when the drop opens.' : 'One run, no restocks.',
           },
         },
       },
     ],
-    shipping_address_collection: { allowed_countries: ['US'] },
-    shipping_options: [
-      {
-        shipping_rate_data: {
-          type: 'fixed_amount',
-          display_name: 'Shipping',
-          fixed_amount: { amount: drop.shipping * 100, currency: 'usd' },
-        },
-      },
-    ],
+    ...(pickup
+      ? {}
+      : {
+          shipping_address_collection: { allowed_countries: ['US'] },
+          shipping_options: [
+            {
+              shipping_rate_data: {
+                type: 'fixed_amount',
+                display_name: 'Shipping',
+                fixed_amount: { amount: drop.shipping * 100, currency: 'usd' },
+              },
+            },
+          ],
+        }),
     expires_at: Math.floor(now.getTime() / 1000) + STRIPE_MIN_EXPIRY_MINUTES * 60,
     // On drops.vhsgarage.com the page is the site root; elsewhere (the main
     // domain, deploy previews) it's /drops/.
     return_url: `${origin}${new URL(origin).hostname.startsWith('drops.') ? '/' : '/drops/'}?session_id={CHECKOUT_SESSION_ID}`,
-    metadata: { drop_id: drop.id, order_id: String(orderId), kind },
+    metadata: meta,
     payment_intent_data: {
-      metadata: { drop_id: drop.id, order_id: String(orderId), kind },
+      metadata: meta,
       // The Stripe account is Superfun Games LLC; without this, buyers'
       // statements wouldn't mention VHS Garage at all.
       statement_descriptor_suffix: 'VHS GARAGE',
@@ -178,13 +196,31 @@ async function markPaid(db, drop, session) {
   const paid = await db.sql`
     UPDATE drop_orders
     SET status = 'paid', paid_at = NOW(), email = ${email},
-        ship_to = ${shipTo(session)}, amount_total = ${session.amount_total ?? null}
+        ship_to = ${fulfillmentLabel(session)}, amount_total = ${session.amount_total ?? null}
     WHERE session_id = ${session.id} AND status = 'held'
     RETURNING id
   `;
   if (paid.length) return;
 
-  const [order] = await db.sql`SELECT id, status FROM drop_orders WHERE session_id = ${session.id}`;
+  // Not found by session: either already paid, or the buyer switched ship ↔
+  // pickup (which moves the order to a new session) and then paid the old
+  // one anyway. The order id in metadata still finds it.
+  const [order] = await db.sql`
+    SELECT id, status FROM drop_orders
+    WHERE session_id = ${session.id} OR id = ${Number(session.metadata?.order_id) || 0}
+    ORDER BY (session_id = ${session.id}) DESC
+    LIMIT 1
+  `;
+  if (order?.status === 'held') {
+    console.warn('[drops] paid a superseded session; recording it on the order', session.id, order.id);
+    await db.sql`
+      UPDATE drop_orders
+      SET status = 'paid', paid_at = NOW(), session_id = ${session.id}, email = ${email},
+          ship_to = ${fulfillmentLabel(session)}, amount_total = ${session.amount_total ?? null}
+      WHERE id = ${order.id} AND status = 'held'
+    `;
+    return;
+  }
   if (order?.status !== 'released') return; // already paid — nothing to do
   // Should be impossible (holds are only released once Stripe says the
   // session expired), but if it happens the buyer paid, so take a copy back.
