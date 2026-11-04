@@ -26,7 +26,7 @@ const els = {
   posted: $('qp-posted'), postedCount: $('qp-posted-count'), postedMore: $('qp-posted-more'),
   review: $('qp-review'), slides: $('qp-slides'), dots: $('qp-dots'), loading: $('qp-loading'),
   slideCount: $('qp-slide-count'), slideFlag: $('qp-slide-flag'),
-  songsWrap: $('qp-songs-wrap'), songs: $('qp-songs'),
+  songsWrap: $('qp-songs-wrap'), songs: $('qp-songs'), songsNone: $('qp-songs-none'),
   postTitle: $('qp-post-title'), postDesc: $('qp-post-desc'),
   done: $('qp-done'), next: $('qp-next'),
   actions: $('qp-actions'), status: $('qp-status'), toggleReady: $('qp-toggle-ready'),
@@ -246,7 +246,7 @@ els.slides.addEventListener('scroll', () => requestAnimationFrame(onSlideScroll)
 function fillDetails() {
   const { rec } = current;
   const songs = songsFor(rec);
-  els.songsWrap.classList.toggle('hidden', !songs.length);
+  els.songsNone.classList.toggle('hidden', songs.length > 0);
   els.songs.replaceChildren(...songs.map((s) => {
     const li = document.createElement('li');
     li.className = 'flex items-start gap-3';
