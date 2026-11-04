@@ -1,7 +1,7 @@
 // Quick post (the phone page) — the pure parts. No DOM. Unit-tested.
 
 import { statusOf, isImported, defaultPostFields, projectDisplayName } from './project.js';
-import { flaggedCount } from './slides.js';
+import { flaggedCount, wrongCount } from './slides.js';
 
 const YEAR_FRAME_HEIGHT_RATIO = 0.6;   // keep in step with app.js frameHeightRatio()
 
@@ -55,6 +55,7 @@ export function postCopyFor(rec) {
 
 export const songsFor = (rec) => (rec?.postMeta?.songs || []).filter((s) => s && s.title);
 export const flagsFor = (rec) => flaggedCount(rec?.slides || []);
+export const wrongsFor = (rec) => wrongCount(rec?.slides || []);
 
 // A sound pick as one searchable line for the TikTok sound search.
 export const songQuery = (s) => [s.title, s.artist].filter(Boolean).join(' ');

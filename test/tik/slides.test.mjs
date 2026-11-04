@@ -194,3 +194,43 @@ test('flaggedCount counts only frames still waiting for a look', () => {
   assert.equal(flaggedCount(undefined), 0);
   assert.equal(flaggedCount([null]), 0);
 });
+
+// ---- "This frame is wrong", marked on the phone ----
+
+import { markWrongFrame, clearWrongFrame, wrongCount } from '../../public/scripts/tik/slides.js';
+
+test('marking a frame wrong keeps the batch verdict and adds the note', () => {
+  const scan = markWrongFrame({ source: 'claude', score: 100, review: false }, { note: 'should be the Goro fight', at: 5 });
+  assert.deepEqual(scan, { source: 'claude', score: 100, review: false, wrong: { note: 'should be the Goro fight', at: 5 } });
+  assert.equal(markWrongFrame(null, { at: 1 }).source, 'manual', 'a hand-grabbed slide can be marked too');
+  assert.equal(clearWrongFrame(scan).wrong, undefined);
+  assert.equal(clearWrongFrame(scan).source, 'claude');
+  assert.equal(clearWrongFrame(null), null);
+});
+
+test('wrong marks are counted separately from batch flags', () => {
+  const slides = [
+    { frameScan: { review: true } },
+    { frameScan: { wrong: { note: '' } } },
+    { frameScan: { review: true, wrong: { note: 'x' } } },
+    { frameScan: null }, {},
+  ];
+  assert.equal(wrongCount(slides), 2);
+  assert.equal(flaggedCount(slides), 2);
+  assert.equal(wrongCount(null), 0);
+});
+
+test('re-grabbing a frame marked wrong clears the mark and remembers it', () => {
+  const set = [{ id: '1', frameScan: { source: 'claude', review: false, wrong: { note: 'n', at: 1 } } }];
+  const [s] = updateSlideFrame(set, '1', 'bmp', 10);
+  assert.equal(s.frameScan.wrong, undefined);
+  assert.deepEqual(s.frameScan.wasWrong, { note: 'n', at: 1 });
+  assert.equal(s.frameScan.fixed, true);
+});
+
+test('confirming a frame marked wrong clears the mark', () => {
+  const set = [{ id: '1', frameScan: { source: 'claude', review: false, wrong: { note: '', at: 1 } } }];
+  const [s] = confirmFrame(set, '1');
+  assert.equal(s.frameScan.wrong, undefined);
+  assert.equal(s.frameScan.confirmed, true);
+});

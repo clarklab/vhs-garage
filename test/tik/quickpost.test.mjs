@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, songQuery,
+  groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, songQuery, wrongsFor, flagsFor,
 } from '../../public/scripts/tik/quickpostlib.js';
 
 const slide = (extra = {}) => ({ caption: 'x', frame: null, ...extra });
@@ -60,4 +60,11 @@ test('every element the quick-post page script looks up exists in its page', () 
   assert.ok(wanted.length > 20, `expected id lookups, found ${wanted.length}`);
   const missing = wanted.filter((id) => !html.includes(`id="${id}"`));
   assert.deepEqual(missing, []);
+});
+
+test('a set counts its batch flags and its wrong-frame marks separately', () => {
+  const rec = { slides: [{ frameScan: { review: true } }, { frameScan: { wrong: { note: '' } } }, { frameScan: null }] };
+  assert.equal(flagsFor(rec), 1);
+  assert.equal(wrongsFor(rec), 1);
+  assert.equal(wrongsFor({}), 0);
 });
