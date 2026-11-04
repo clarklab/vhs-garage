@@ -130,7 +130,7 @@ export async function readStatus(db, drop) {
 
 // Claim one copy and open a held order for it. Returns null when there's
 // nothing left to claim.
-export async function claim(db, drop, kind) {
+export async function claim(db, drop, kind, { channel = 'site', agentRequestId = null } = {}) {
   await ensureStock(db, drop);
   const won = await db.sql`
     UPDATE drop_stock SET claimed = claimed + 1
@@ -140,8 +140,8 @@ export async function claim(db, drop, kind) {
   if (!won.length) return null;
   try {
     const [order] = await db.sql`
-      INSERT INTO drop_orders (drop_id, kind, held_until)
-      VALUES (${drop.id}, ${kind}, NOW() + make_interval(mins => ${drop.holdMinutes}))
+      INSERT INTO drop_orders (drop_id, kind, held_until, channel, agent_request_id)
+      VALUES (${drop.id}, ${kind}, NOW() + make_interval(mins => ${drop.holdMinutes}), ${channel}, ${agentRequestId})
       RETURNING id, held_until
     `;
     return order;
@@ -206,6 +206,13 @@ async function markPaid(db, drop, session) {
 export async function settle(db, stripe, drop, sessionOrId) {
   const session =
     typeof sessionOrId === 'string' ? await stripe.checkout.sessions.retrieve(sessionOrId) : sessionOrId;
+  // Agent checkouts are created by Stripe, not us: the approval hook made the
+  // order and put its id in the session metadata. Tie the two together here.
+  // (Site orders already carry this session id, so it's a no-op for them.)
+  const orderId = Number(session.metadata?.order_id);
+  if (orderId) {
+    await db.sql`UPDATE drop_orders SET session_id = ${session.id} WHERE id = ${orderId} AND session_id IS NULL`;
+  }
   const outcome = sessionOutcome(session);
   if (outcome === 'paid') {
     await markPaid(db, drop, session);
