@@ -6,6 +6,7 @@ import {
   saleKind,
   orderNumber,
   shipTo,
+  fulfillmentLabel,
   checkoutParams,
 } from '../../netlify/functions/lib/drops.mjs';
 
@@ -72,10 +73,29 @@ test('checkoutParams builds an on-page session with the hold baked in', () => {
   assert.equal(p.shipping_options[0].shipping_rate_data.fixed_amount.amount, 600);
   assert.deepEqual(p.shipping_address_collection.allowed_countries, ['US']);
   assert.equal(p.return_url, 'https://vhsgarage.com/drops/?session_id={CHECKOUT_SESSION_ID}');
-  assert.deepEqual(p.metadata, { drop_id: '001', order_id: '42', kind: 'preorder' });
+  assert.deepEqual(p.metadata, { drop_id: '001', order_id: '42', kind: 'preorder', fulfillment: 'ship' });
   assert.equal(p.payment_intent_data.statement_descriptor_suffix, 'VHS GARAGE');
   const sub = checkoutParams({ drop, kind: 'sale', orderId: 1, origin: 'https://drops.vhsgarage.com', now });
   assert.equal(sub.return_url, 'https://drops.vhsgarage.com/?session_id={CHECKOUT_SESSION_ID}');
   // Stripe won't expire a session sooner than 30 minutes out.
   assert.ok(p.expires_at >= now.getTime() / 1000 + 30 * 60);
+});
+
+test('checkoutParams for local pickup skips the address and the shipping charge', () => {
+  const now = new Date('2026-11-01T12:00:00Z');
+  const p = checkoutParams({ drop, kind: 'preorder', orderId: 42, origin: 'https://drops.vhsgarage.com', now, fulfillment: 'pickup' });
+
+  assert.equal(p.shipping_address_collection, undefined);
+  assert.equal(p.shipping_options, undefined);
+  assert.equal(p.metadata.fulfillment, 'pickup');
+  assert.equal(p.payment_intent_data.metadata.fulfillment, 'pickup');
+  assert.match(p.line_items[0].price_data.product_data.description, /local pickup in austin/i);
+  assert.equal(p.line_items[0].price_data.unit_amount, 2400);
+});
+
+test('fulfillmentLabel names pickup orders, and ship-to for shipped ones', () => {
+  const address = { city: 'Austin', state: 'TX' };
+  assert.equal(fulfillmentLabel({ metadata: { fulfillment: 'pickup' } }), 'Local pickup (Austin)');
+  assert.equal(fulfillmentLabel({ metadata: { fulfillment: 'ship' }, collected_information: { shipping_details: { address } } }), 'Austin, TX');
+  assert.equal(fulfillmentLabel({ metadata: {} }), null);
 });

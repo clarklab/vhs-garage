@@ -1,13 +1,13 @@
 // drop-order — what the thank-you screen shows after Stripe sends a buyer
 // back to /drops?session_id=….
 //
-// GET ?session_id=cs_… → { status, kind, orderNumber, email, shipTo, total }
+// GET ?session_id=cs_… → { status, kind, orderNumber, email, shipTo, fulfillment, total }
 //   status: 'paid' | 'pending' | 'released'
 //
 // Settles the order against Stripe on the way, so a paid order is recorded
 // even if the webhook is slow or never arrives.
 
-import { DROP, findOrder, getDatabase, json, orderNumber, settle, shipTo, stripeClient } from './lib/drops.mjs';
+import { DROP, findOrder, fulfillmentLabel, getDatabase, json, orderNumber, settle, stripeClient } from './lib/drops.mjs';
 
 export default async (req) => {
   const sessionId = new URL(req.url).searchParams.get('session_id');
@@ -23,7 +23,8 @@ export default async (req) => {
       kind: order.kind,
       orderNumber: orderNumber(DROP.id, order.id),
       email: session.customer_details?.email ?? order.email,
-      shipTo: shipTo(session) ?? order.ship_to,
+      shipTo: fulfillmentLabel(session) ?? order.ship_to,
+      fulfillment: session.metadata?.fulfillment === 'pickup' ? 'pickup' : 'ship',
       total: session.amount_total,
     });
   } catch (e) {
