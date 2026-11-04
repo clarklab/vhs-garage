@@ -83,10 +83,13 @@ import { BUILD_ID } from '../../utils/build-id.js';
       <p id="qp-loading" class="hidden px-4 py-10 text-center text-sm text-neutral-400">Getting the frames…</p>
 
       <div class="mt-5 flex flex-col gap-4 px-4">
-        <div id="qp-songs-wrap" class="hidden rounded-xl border border-neutral-800 bg-neutral-900 p-3">
+        <div id="qp-songs-wrap" class="rounded-xl border border-neutral-800 bg-neutral-900 p-3">
           <p class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Sound</p>
           <p class="mt-1 text-[11px] text-neutral-500">TikTok can’t attach a sound for us. Copy one, then search it in TikTok when you finish the post.</p>
           <ol id="qp-songs" class="mt-2 flex flex-col gap-2"></ol>
+          <!-- The writer only picks licensed songs, never orchestral score, so a
+               score-only film (Star Wars, Gladiator) honestly has none. -->
+          <p id="qp-songs-none" class="mt-2 hidden text-sm text-neutral-300">No soundtrack songs to suggest: this film's music is all score. Pick a trending sound in TikTok.</p>
         </div>
 
         <details class="rounded-xl border border-neutral-800 bg-neutral-900 p-3" id="qp-copy-box">
