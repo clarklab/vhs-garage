@@ -24,6 +24,7 @@ import {
   importedProject, newImports, isImported,
 } from './project.js';
 import { storageAvailable, putProject, getProject, listProjects, deleteProject } from './store.js';
+import { initSync, captureLinkFromUrl, hydrateRecord, onSyncStatus, isLinked, phoneLink, setSyncKey, fullSync } from './sync.js';
 import { packLibrary, unpackLibrary, backupFileName, restorable, keepStorage, storageUsed } from './backup.js';
 import { makeCardBitmap } from './placeholder.js';
 import { composeMosaic, MOSAIC_MAX } from './mosaic.js';
@@ -113,7 +114,7 @@ const els = {
   openReports: $('open-reports'), connectHistoryBtn: $('connect-history'), reportsHint: $('reports-hint'),
   importPosts: $('import-posts'),
   backupSave: $('backup-save'), backupLoad: $('backup-load'), backupFile: $('backup-file'),
-  storageState: $('storage-state'),
+  storageState: $('storage-state'), syncState: $('sync-state'), syncPhone: $('sync-phone'),
   statsModes: $('stats-modes'), statsStyles: $('stats-styles'), statsForecast: $('stats-forecast'),
   statsLegend: $('stats-legend'),
   libraryFilters: $('library-filters'), libraryViews: $('library-views'),
@@ -522,9 +523,14 @@ async function newProject(format) {
 
 async function openProject(id) {
   const seq = ++openSeq; // superseded by any later open/new/goHome
-  const rec = await getProject(id);
+  let rec = await getProject(id);
   if (seq !== openSeq) return;
   if (!rec) throw new Error('Project not found');
+  // A set that arrived from the cloud library has its frames fetched on first
+  // open. If they can't be, refuse to open it: an editor missing frames would
+  // save the set back without them.
+  rec = await hydrateRecord(rec);
+  if (seq !== openSeq) return;
   await teardownProject();
   if (seq !== openSeq) return; // superseded while flushing the previous save
   project = { ...rec, slides: [], thumb: null };
@@ -929,7 +935,7 @@ async function renderLibrary() {
     frame.className = listView
       ? 'relative h-12 w-9 flex-none overflow-hidden rounded bg-neutral-950'
       : 'relative aspect-[9/14] w-full overflow-hidden bg-neutral-950';
-    if (rec.thumb) {
+    if (rec.thumb instanceof Blob) {
       const url = URL.createObjectURL(rec.thumb);
       thumbUrls.push(url);
       const img = document.createElement('img');
@@ -1077,6 +1083,35 @@ els.connectHistoryBtn.addEventListener('click', async () => {
 // movie files never leave the machine, and it is also why clearing site data,
 // a new profile, or a browser deciding to reclaim space takes the lot. A
 // library with no way out is one bad day from nothing.
+// ---- Cloud library sync ----
+onSyncStatus((st) => {
+  if (!els.syncState) return;
+  const ago = st.at ? relativeTime(st.at, Date.now()) : '';
+  els.syncState.textContent = st.state === 'off' ? 'Cloud library: not linked on this device — your phone can’t see these sets yet.'
+    : st.state === 'unlinked' ? `Cloud library: ${st.detail}`
+      : st.state === 'syncing' ? `Cloud library: ${st.detail || 'syncing…'}`
+        : st.state === 'error' ? `Cloud library: last sync failed (${st.detail}). It will retry.`
+          : `Cloud library: in sync${ago ? ` · ${ago}` : ''}${st.detail ? ` · ${st.detail}` : ''}`;
+  els.syncState.className = `w-full text-[11px] leading-snug ${st.state === 'error' || st.state === 'unlinked' || st.state === 'off' ? 'font-semibold text-amber-300/90' : 'text-neutral-500'}`;
+  els.syncPhone.textContent = isLinked() ? 'Link a phone' : 'Link this device';
+});
+els.syncPhone?.addEventListener('click', async () => {
+  if (!isLinked()) {
+    const key = prompt('Paste the library sync key');
+    if (!key) return;
+    setSyncKey(key);
+    initSync({ onRemoteChange: () => renderLibrary().catch((e) => console.error('[tik] library redraw after sync failed:', e)) });
+    return;
+  }
+  const link = phoneLink();
+  try {
+    await navigator.clipboard.writeText(link);
+    toast('Phone link copied — open it on your phone once', 'ready');
+  } catch {
+    prompt('Open this on your phone once:', link);
+  }
+});
+
 els.backupSave.addEventListener('click', async () => {
   if (!storageAvailable()) { alert('The local library is unavailable.'); return; }
   els.backupSave.disabled = true;
@@ -3868,11 +3903,37 @@ els.post.addEventListener('click', async () => {
 
 // ================= Boot =================
 (async () => {
+  // A phone-link (/tik/?link=<key>) joins this device to the cloud library.
+  captureLinkFromUrl();
+  const params = new URLSearchParams(location.search);
+  // The quick-post page sends phones here to sign in, because TikTok only
+  // accepts this page as the sign-in return address.
+  if (params.get('signin') === '1' && !isSignedIn()) {
+    try { await startAuth(); return; } catch (e) { console.error('[tik] sign-in start failed:', e); }
+  }
   let authMsg = '';
   try {
     if (await handleRedirect()) authMsg = 'Signed in to TikTok.';
   } catch (e) { console.error('[tik] sign-in failed:', e); authMsg = e.message; }
   refreshAuthUI();
+
+  // Phones open on the quick-post page: ready sets first, review, publish.
+  // ?studio=1 (its "Full studio" link) keeps the full studio for this tab.
+  if (params.get('studio') === '1') { try { sessionStorage.setItem('tik_full_studio', '1'); } catch { /* fine */ } }
+  const wantsStudio = (() => { try { return sessionStorage.getItem('tik_full_studio') === '1'; } catch { return false; } })();
+  if (!wantsStudio && !location.hash.startsWith('#p/') && matchMedia('(max-width: 700px)').matches) {
+    location.replace('/tik/post/');
+    return;
+  }
+
+  initSync({
+    onRemoteChange: (ids) => {
+      if (!els.home.classList.contains('hidden')) renderLibrary().catch((e) => console.error('[tik] library redraw after sync failed:', e));
+      else if (project && ids.includes(project.id)) {
+        els.status.textContent = 'This set was changed on another device. Go back to the library and reopen it to see the change.';
+      }
+    },
+  });
 
   // Ask the browser to KEEP the library before anything is written into it.
   //
@@ -3883,8 +3944,11 @@ els.post.addEventListener('click', async () => {
   keepStorage().then(async (state) => {
     const { usage } = await storageUsed();
     const mb = usage ? `${(usage / 1e6).toFixed(0)}MB` : 'nothing yet';
-    if (state === 'granted') {
-      els.storageState.textContent = `Library: ${mb} in this browser, marked persistent. Still worth a backup — it only exists here.`;
+    const cloud = isLinked();
+    if (state === 'granted' || cloud) {
+      els.storageState.textContent = cloud
+        ? `Library: ${mb} in this browser${state === 'granted' ? ', marked persistent' : ''}, and copied to the cloud library.`
+        : `Library: ${mb} in this browser, marked persistent. Still worth a backup — it only exists here.`;
       els.storageState.className = 'w-full text-[11px] leading-snug text-neutral-600';
       return;
     }
