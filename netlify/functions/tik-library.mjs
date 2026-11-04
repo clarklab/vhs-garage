@@ -162,6 +162,8 @@ async function putProjects(store, records) {
   await Promise.all(ready.map((rec) => store.setJSON(versionKey(rec.id, Number(rec.updatedAt)), rec)));
   const previous = {};
   const outcome = await updateManifest(store, (manifest) => {
+    // A retry starts from a fresh manifest, so forget what the lost attempt saw.
+    for (const k of Object.keys(previous)) delete previous[k];
     let next = manifest;
     const accepted = [];
     const conflicts = {};
@@ -189,6 +191,7 @@ async function deleteProjects(store, items) {
   for (const it of items) if (!validId(it?.id) || !Number.isFinite(Number(it?.at))) throw bad('each deletion needs an id and at');
   const gone = {};
   const outcome = await updateManifest(store, (manifest) => {
+    for (const k of Object.keys(gone)) delete gone[k];
     let next = manifest;
     const deleted = [];
     const conflicts = {};
