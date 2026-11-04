@@ -9,6 +9,20 @@ const STORE = 'projects';
 
 let dbPromise = null;
 
+// Whoever wants to hear about local changes (the cloud sync). Writes the sync
+// makes itself pass { silent: true } so a pulled project isn't pushed straight
+// back. Listeners never block or fail a write.
+const listeners = new Set();
+export function onLibraryChange(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+function notify(change) {
+  for (const fn of listeners) {
+    try { fn(change); } catch (e) { console.error('[tik-store] change listener failed:', e); }
+  }
+}
+
 export function storageAvailable() {
   try { return typeof indexedDB !== 'undefined'; } catch { return false; }
 }
@@ -62,9 +76,11 @@ function writeToPromise(db, op) {
 }
 
 // Insert-or-replace a full project record (see app.js serializeProject()).
-export async function putProject(record) {
+export async function putProject(record, { silent = false } = {}) {
   const db = await openDB();
-  return writeToPromise(db, (store) => store.put(record));
+  const result = await writeToPromise(db, (store) => store.put(record));
+  if (!silent) notify({ type: 'put', id: record.id, updatedAt: record.updatedAt || 0 });
+  return result;
 }
 
 export async function getProject(id) {
@@ -80,7 +96,9 @@ export async function listProjects() {
   return (all || []).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 }
 
-export async function deleteProject(id) {
+export async function deleteProject(id, { silent = false } = {}) {
   const db = await openDB();
-  return writeToPromise(db, (store) => store.delete(id));
+  const result = await writeToPromise(db, (store) => store.delete(id));
+  if (!silent) notify({ type: 'delete', id, at: Date.now() });
+  return result;
 }

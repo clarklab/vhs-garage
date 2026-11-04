@@ -1,0 +1,134 @@
+---
+import Base from '../../layouts/Base.astro';
+import { BUILD_ID } from '../../utils/build-id.js';
+---
+<!-- Quick post: the phone's view of the studio. Ready sets first, a swipe-
+     through review, and one button to send the set to the TikTok inbox. The
+     library comes from the cloud copy (sync.js), so it's the same library the
+     desk works in. -->
+<Base title="Quick post" description="VHS Garage quick post">
+  <meta slot="head" name="robots" content="noindex" />
+  <link slot="head" rel="preconnect" href="https://fonts.googleapis.com" />
+  <link slot="head" rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link slot="head" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" />
+  <link slot="head" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+
+  <div id="qp" class="min-h-screen bg-neutral-950 text-neutral-100 antialiased">
+    <header class="sticky top-0 z-20 flex items-center gap-3 border-b border-neutral-800/80 bg-neutral-950/95 px-4 py-2.5 backdrop-blur" style="padding-top: max(0.625rem, env(safe-area-inset-top))">
+      <button id="qp-back" class="hidden -ml-1 rounded-md p-1 text-neutral-300 hover:bg-neutral-800" aria-label="Back to the list">
+        <span class="material-symbols-outlined text-[22px] leading-none">arrow_back</span>
+      </button>
+      <img id="qp-logo" src="/images/vhs-garage-logo-square.png" alt="VHS Garage" class="h-6 w-6 rounded" />
+      <h1 id="qp-title" class="min-w-0 flex-1 truncate text-sm font-extrabold tracking-tight">Quick post</h1>
+      <span id="qp-sync" class="flex items-center gap-1.5 text-[11px] text-neutral-500"><span id="qp-sync-dot" class="h-1.5 w-1.5 rounded-full bg-neutral-600"></span><span id="qp-sync-text"></span></span>
+    </header>
+
+    <!-- ============ LIST ============ -->
+    <main id="qp-home" class="mx-auto w-full max-w-xl px-4 pb-16 pt-4">
+      <div id="qp-link" class="hidden rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
+        <p class="font-bold">Link this phone to your library</p>
+        <p class="mt-1 text-amber-100/80">On your computer, open the studio, go to Posts, and tap <b>Link a phone</b>. Open that link here once. Or paste the key:</p>
+        <div class="mt-3 flex gap-2">
+          <input id="qp-key" type="password" autocomplete="off" placeholder="Library sync key" class="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm" />
+          <button id="qp-key-save" class="rounded-lg bg-amber-400 px-3 py-2 text-sm font-bold text-neutral-950">Link</button>
+        </div>
+      </div>
+
+      <div id="qp-signin" class="hidden mt-3 flex items-center gap-3 rounded-xl border border-neutral-800 bg-neutral-900 p-3 text-sm">
+        <span class="material-symbols-outlined text-[22px] text-neutral-400">account_circle</span>
+        <p class="min-w-0 flex-1 text-neutral-300">Sign in to TikTok on this phone to post from it.</p>
+        <a href="/tik/?signin=1" class="rounded-lg bg-neutral-100 px-3 py-2 text-xs font-bold text-neutral-950">Sign in</a>
+      </div>
+
+      <section class="mt-4">
+        <div class="flex items-baseline justify-between">
+          <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-violet-300">Ready to post</h2>
+          <span id="qp-ready-count" class="text-xs tabular-nums text-neutral-500"></span>
+        </div>
+        <ol id="qp-ready" class="mt-2 flex flex-col gap-2"></ol>
+        <p id="qp-ready-empty" class="mt-2 hidden rounded-xl border border-dashed border-neutral-800 p-5 text-center text-sm text-neutral-500">Nothing marked ready. Review a draft below and mark it ready, or post it straight away.</p>
+      </section>
+
+      <section class="mt-8">
+        <div class="flex items-baseline justify-between">
+          <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-amber-300">Drafts</h2>
+          <span id="qp-draft-count" class="text-xs tabular-nums text-neutral-500"></span>
+        </div>
+        <ol id="qp-drafts" class="mt-2 flex flex-col gap-2"></ol>
+        <p id="qp-drafts-empty" class="mt-2 hidden text-sm text-neutral-500">No drafts.</p>
+      </section>
+
+      <section class="mt-8">
+        <div class="flex items-baseline justify-between">
+          <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300">Posted</h2>
+          <span id="qp-posted-count" class="text-xs tabular-nums text-neutral-500"></span>
+        </div>
+        <ol id="qp-posted" class="mt-2 grid grid-cols-3 gap-2"></ol>
+        <button id="qp-posted-more" class="mt-3 hidden w-full rounded-lg border border-neutral-800 py-2 text-xs font-semibold text-neutral-300">Show all posts</button>
+      </section>
+
+      <p class="mt-10 text-center text-xs text-neutral-600">
+        <a href="/tik/?studio=1" class="underline decoration-neutral-700 underline-offset-2 hover:text-neutral-400">Open the full studio</a>
+      </p>
+    </main>
+
+    <!-- ============ REVIEW ============ -->
+    <main id="qp-review" class="hidden mx-auto w-full max-w-xl pb-40">
+      <div class="flex items-center justify-between px-4 pt-3 text-xs text-neutral-500">
+        <span id="qp-slide-count" class="tabular-nums"></span>
+        <span id="qp-slide-flag" class="hidden rounded-md bg-amber-400/15 px-1.5 py-0.5 font-semibold text-amber-200">check this frame</span>
+      </div>
+      <div id="qp-slides" class="mt-2 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2" style="scrollbar-width:none"></div>
+      <ol id="qp-dots" class="mt-1 flex flex-wrap justify-center gap-1.5 px-4"></ol>
+      <p id="qp-loading" class="hidden px-4 py-10 text-center text-sm text-neutral-400">Getting the frames…</p>
+
+      <div class="mt-5 flex flex-col gap-4 px-4">
+        <div id="qp-songs-wrap" class="hidden rounded-xl border border-neutral-800 bg-neutral-900 p-3">
+          <p class="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Sound</p>
+          <p class="mt-1 text-[11px] text-neutral-500">TikTok can’t attach a sound for us. Copy one, then search it in TikTok when you finish the post.</p>
+          <ol id="qp-songs" class="mt-2 flex flex-col gap-2"></ol>
+        </div>
+
+        <details class="rounded-xl border border-neutral-800 bg-neutral-900 p-3" id="qp-copy-box">
+          <summary class="cursor-pointer text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">Caption</summary>
+          <label class="mt-3 block text-[11px] text-neutral-500" for="qp-post-title">Title</label>
+          <input id="qp-post-title" maxlength="90" class="mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm" />
+          <label class="mt-3 block text-[11px] text-neutral-500" for="qp-post-desc">Description</label>
+          <textarea id="qp-post-desc" rows="6" class="mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm leading-snug"></textarea>
+        </details>
+      </div>
+
+      <div id="qp-done" class="hidden mx-4 mt-5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+        <p class="text-base font-bold">In your TikTok inbox</p>
+        <p class="mt-1 text-emerald-100/80">Open TikTok, tap the notification or your inbox, add the sound, and post.</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <a href="https://www.tiktok.com/" class="rounded-lg bg-emerald-400 px-3 py-2 text-sm font-bold text-neutral-950">Open TikTok</a>
+          <button id="qp-next" class="rounded-lg border border-emerald-500/50 px-3 py-2 text-sm font-semibold">Next set</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- The action bar for the set being reviewed: always in reach. -->
+    <div id="qp-actions" class="hidden fixed inset-x-0 bottom-0 z-30 border-t border-neutral-800 bg-neutral-950/95 px-4 pt-3 backdrop-blur" style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom))">
+      <div class="mx-auto flex max-w-xl flex-col gap-2">
+        <p id="qp-status" class="min-h-4 text-xs text-neutral-400" role="status" aria-live="polite"></p>
+        <div class="flex gap-2">
+          <button id="qp-toggle-ready" class="rounded-xl border border-neutral-700 px-3 py-3 text-sm font-semibold text-neutral-200"></button>
+          <button id="qp-publish" class="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-extrabold text-neutral-950 disabled:opacity-40">
+            <span class="material-symbols-outlined text-[20px] leading-none">send</span><span id="qp-publish-label">Post to TikTok</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style is:global>
+    #qp {
+      font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      font-feature-settings: 'cv11';
+    }
+    #qp-slides::-webkit-scrollbar { display: none; }
+  </style>
+
+  <script type="module" src={`/scripts/tik/quickpost.js?v=${BUILD_ID}`}></script>
+</Base>
