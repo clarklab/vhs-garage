@@ -59,3 +59,36 @@ export const wrongsFor = (rec) => wrongCount(rec?.slides || []);
 
 // A sound pick as one searchable line for the TikTok sound search.
 export const songQuery = (s) => [s.title, s.artist].filter(Boolean).join(' ');
+
+// Why this frame: the writer's shot direction, and the picker's own note on
+// what it chose. Both are editor-only (never drawn, never posted). Side by
+// side they say how a frame missed — the direction asked for the wrong thing,
+// or the pick did — which is what a person marking it wrong from the phone
+// wants to know, and what the desk needs to fix it. → [{ label, text }]
+const CLAUDE_PREFIX = /^Picked by Claude from (?:the whole film|a local look at the whole film):?\s*/i;
+export function shotNotesFor(slide) {
+  const notes = [];
+  const direction = String(slide?.grabHint || '').trim();
+  if (direction) notes.push({ label: 'Direction', text: direction });
+  const fs = slide?.frameScan;
+  const why = String(fs?.why || '').trim();
+  const at = Number.isFinite(slide?.timecode) ? ` · at ${hms(slide.timecode)}` : '';
+  const picked = fs?.source === 'claude' ? `Claude: ${why.replace(CLAUDE_PREFIX, '') || 'a look at the whole film, no note'}`
+    : fs?.source === 'scan' ? `web shoot, ${Number.isFinite(fs.score) ? `${fs.score}% sure` : 'unsure'}${why ? `: ${why}` : ''}`
+      : fs?.source === 'cue' ? `web shoot, from a subtitle cue${why ? `: ${why}` : ''}`
+        : fs?.source === 'verify' ? `web shoot, old checker${why ? `: ${why}` : ''}`
+          : fs?.source === 'failed' ? `nothing found${why ? `: ${why}` : ''}`
+            : fs?.source === 'manual' || (!fs?.source && at) ? 'by hand'
+              : why;
+  if (picked) notes.push({ label: 'Picked', text: picked + at });
+  return notes;
+}
+
+// Seconds → m:ss, or h:mm:ss past an hour.
+export function hms(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${r}` : `${m}:${r}`;
+}

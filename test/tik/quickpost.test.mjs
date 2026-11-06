@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, songQuery, wrongsFor, flagsFor,
+  groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, songQuery, wrongsFor, flagsFor, shotNotesFor, hms,
 } from '../../public/scripts/tik/quickpostlib.js';
 
 const slide = (extra = {}) => ({ caption: 'x', frame: null, ...extra });
@@ -60,6 +60,28 @@ test('every element the quick-post page script looks up exists in its page', () 
   assert.ok(wanted.length > 20, `expected id lookups, found ${wanted.length}`);
   const missing = wanted.filter((id) => !html.includes(`id="${id}"`));
   assert.deepEqual(missing, []);
+});
+
+test('the phone can say how a frame was chosen: the direction, then the pick', () => {
+  assert.deepEqual(shotNotesFor({
+    grabHint: ' Kano, red eye plate ', timecode: 209,
+    frameScan: { source: 'claude', why: 'Picked by Claude from the whole film: Kano face on, eye plate lit' },
+  }), [
+    { label: 'Direction', text: 'Kano, red eye plate' },
+    { label: 'Picked', text: 'Claude: Kano face on, eye plate lit · at 3:29' },
+  ]);
+  assert.deepEqual(shotNotesFor({ timecode: 3725.5, frameScan: { source: 'scan', score: 62, why: 'two men at a table' } }),
+    [{ label: 'Picked', text: 'web shoot, 62% sure: two men at a table · at 1:02:05' }]);
+  assert.deepEqual(shotNotesFor({ timecode: 12, frameScan: { source: 'manual', wrong: { note: '' } } }),
+    [{ label: 'Picked', text: 'by hand · at 0:12' }]);
+  assert.deepEqual(shotNotesFor({ timecode: 12 }), [{ label: 'Picked', text: 'by hand · at 0:12' }], 'a frame grabbed before scans existed');
+  assert.deepEqual(shotNotesFor({ frameScan: { source: 'claude', why: 'Picked by Claude from a local look at the whole film' } }),
+    [{ label: 'Picked', text: 'Claude: a look at the whole film, no note' }]);
+  assert.deepEqual(shotNotesFor({ frameScan: { source: 'failed', why: 'no match' } }), [{ label: 'Picked', text: 'nothing found: no match' }]);
+  assert.deepEqual(shotNotesFor({ caption: 'x' }), [], 'nothing to say about a slide with no frame history');
+  assert.deepEqual(shotNotesFor(null), []);
+  assert.equal(hms(0), '0:00');
+  assert.equal(hms(3600), '1:00:00');
 });
 
 test('a set counts its batch flags and its wrong-frame marks separately', () => {

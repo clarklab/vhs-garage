@@ -14,7 +14,7 @@ import { isSignedIn, clearLocalToken } from './auth.js';
 import { publishSlideshow } from './publish.js';
 import { composeToCanvas, captionFontReady, quoteStampReady, clampStampNudge } from './compose.js';
 import { projectDisplayName, relativeTime, toggleReady, statusOf } from './project.js';
-import { groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, flagsFor, wrongsFor, songQuery } from './quickpostlib.js';
+import { groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, flagsFor, wrongsFor, songQuery, shotNotesFor } from './quickpostlib.js';
 import { markWrongFrame, clearWrongFrame } from './slides.js';
 
 const $ = (id) => document.getElementById(id);
@@ -30,7 +30,7 @@ const els = {
   editText: $('qp-edit-text'), markWrong: $('qp-mark-wrong'), markWrongLabel: $('qp-mark-wrong-label'),
   textBox: $('qp-text-box'), textSlideNo: $('qp-text-slide-no'), slideText: $('qp-slide-text'),
   textUndo: $('qp-text-undo'), textDone: $('qp-text-done'),
-  wrongBox: $('qp-wrong-box'), wrongNote: $('qp-wrong-note'),
+  wrongBox: $('qp-wrong-box'), wrongNote: $('qp-wrong-note'), slideWhy: $('qp-slide-why'),
   songsWrap: $('qp-songs-wrap'), songs: $('qp-songs'), songsNone: $('qp-songs-none'),
   postTitle: $('qp-post-title'), postDesc: $('qp-post-desc'),
   done: $('qp-done'), next: $('qp-next'),
@@ -166,6 +166,7 @@ async function openReview(id, { push = true } = {}) {
   els.done.classList.add('hidden');
   els.textBox.classList.add('hidden');
   els.wrongBox.classList.add('hidden');
+  els.slideWhy.classList.add('hidden');
   els.loading.classList.remove('hidden');
   els.status.textContent = '';
   let rec;
@@ -281,6 +282,12 @@ function syncSlideTools() {
   els.markWrongLabel.textContent = wrong ? 'Marked wrong' : 'Wrong frame';
   els.wrongBox.classList.toggle('hidden', !wrong);
   if (document.activeElement !== els.wrongNote) els.wrongNote.value = s.frameScan?.wrong?.note || '';
+  // How this frame was chosen, so a miss can be read on the spot: the
+  // direction was off, or the pick was. Then the note says which.
+  const notes = shotNotesFor(s);
+  els.slideWhy.classList.toggle('hidden', !notes.length);
+  els.slideWhy.innerHTML = notes.map((n) =>
+    `<dt class="font-semibold uppercase tracking-wide text-neutral-600">${esc(n.label)}</dt><dd class="min-w-0 text-neutral-400">${esc(n.text)}</dd>`).join('');
   const editing = !els.textBox.classList.contains('hidden');
   els.editText.setAttribute('aria-pressed', String(editing));
   if (editing) {
