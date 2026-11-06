@@ -105,6 +105,8 @@ import { BUILD_ID } from '../../utils/build-id.js';
         <p>Marked as the wrong frame. It shows in red in the studio so it can be re-shot. Tap the button again to unmark it.</p>
         <input id="qp-wrong-note" maxlength="300" autocomplete="off" placeholder="What should it show? (optional)" class="mt-2 w-full rounded-lg border border-red-500/30 bg-neutral-950 px-3 py-2 text-base text-neutral-100" />
       </div>
+      <!-- How the frame on screen was chosen: the writer's direction and the picker's note. Editor-only, never drawn. -->
+      <dl id="qp-slide-why" class="hidden mx-4 mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] leading-snug"></dl>
       <p id="qp-loading" class="hidden px-4 py-10 text-center text-sm text-neutral-400">Getting the frames…</p>
 
       <div class="mt-5 flex flex-col gap-4 px-4">
