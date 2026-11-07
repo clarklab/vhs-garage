@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   NEUTRAL, PRESETS, PRESET_KEYS, normalizeAdjust, isNeutral, filterString,
-  applyPreset, autoLevels, describeAdjust, zoomOf, zoomSourceRect,
+  applyPreset, autoLevels, describeAdjust, zoomOf, zoomSourceRect, levelsFromPixels,
 } from '../../public/scripts/tik/adjust.js';
 
 // ---- the stored shape ----
@@ -213,4 +213,35 @@ test('both zoom presets are on the menu, worded as asked for', () => {
   const labels = PRESETS.map((p) => p.label);
   assert.ok(labels.includes('Zoom center 20%'), labels.join(' | '));
   assert.ok(labels.includes('Zoom center 35%'), labels.join(' | '));
+});
+
+// ---- measuring a frame for Auto (the pure half; the canvas read is in levels.js) ----
+
+// RGBA pixels of one flat luma value, n of them.
+const flat = (v, n) => Uint8ClampedArray.from({ length: n * 4 }, (_, i) => (i % 4 === 3 ? 255 : v));
+
+test('a flat frame measures as one level: black and white meet at its luma', () => {
+  const { black, white } = levelsFromPixels(flat(128, 400));
+  assert.ok(Math.abs(black - 128 / 255) < 0.005, `black ${black}`);
+  assert.ok(Math.abs(white - 128 / 255) < 0.005, `white ${white}`);
+});
+
+test('one specular highlight does not decide the white point', () => {
+  const px = flat(20, 1000);
+  px[0] = px[1] = px[2] = 255;   // a single blown pixel in a dark frame
+  const { white } = levelsFromPixels(px);
+  assert.ok(Math.abs(white - 20 / 255) < 0.005, `white ${white} should stay at the dark level`);
+});
+
+test('a frame that already spans the range needs no stretch', () => {
+  const half = 500;
+  const px = new Uint8ClampedArray(half * 2 * 4);
+  for (let i = 0; i < px.length; i += 4) {
+    const v = i < half * 4 ? 0 : 255;
+    px[i] = px[i + 1] = px[i + 2] = v; px[i + 3] = 255;
+  }
+  const levels = levelsFromPixels(px);
+  assert.equal(levels.black, 0);
+  assert.equal(levels.white, 1);
+  assert.deepEqual(autoLevels(levels), NEUTRAL);
 });

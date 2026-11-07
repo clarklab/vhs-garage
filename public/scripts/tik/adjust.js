@@ -118,6 +118,29 @@ export function applyPreset(adjust, key, levels = null) {
   return normalizeAdjust(next);
 }
 
+// Where a frame's darks and lights actually sit, from its RGBA pixels: luma
+// at the 1st and 99th percentile, in 0..1. Percentiles rather than the true
+// min and max, so one specular highlight or one crushed pixel cannot decide
+// the stretch for the whole frame. The canvas read that feeds this lives in
+// levels.js; this half is pure so it can be tested.
+export function levelsFromPixels(data) {
+  const hist = new Array(256).fill(0);
+  let n = 0;
+  for (let i = 0; i + 2 < data.length; i += 4) {
+    // Rec. 601 luma is close enough for deciding how dark a frame is.
+    hist[(data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114) | 0]++;
+    n++;
+  }
+  if (!n) return { black: 0, white: 1 };
+  const at = (p) => {
+    let seen = 0;
+    const want = n * p;
+    for (let v = 0; v < 256; v++) { seen += hist[v]; if (seen >= want) return v / 255; }
+    return 1;
+  };
+  return { black: at(0.01), white: at(0.99) };
+}
+
 // Turn a measured black point and white point into brightness + contrast.
 //
 // A levels stretch is out = (x - black) / (white - black). CSS applies
