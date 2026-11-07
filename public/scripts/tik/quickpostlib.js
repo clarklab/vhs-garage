@@ -2,6 +2,7 @@
 
 import { statusOf, isImported, defaultPostFields, projectDisplayName } from './project.js';
 import { flaggedCount, wrongCount } from './slides.js';
+import { describeAdjust, isNeutral } from './adjust.js';
 
 const YEAR_FRAME_HEIGHT_RATIO = 0.6;   // keep in step with app.js frameHeightRatio()
 
@@ -91,4 +92,12 @@ export function hms(sec) {
   const m = Math.floor((s % 3600) / 60);
   const r = String(s % 60).padStart(2, '0');
   return h ? `${h}:${String(m).padStart(2, '0')}:${r}` : `${m}:${r}`;
+}
+
+// The Adjust tool's face for the slide on screen: what the button says and
+// the one-line summary of what has been done to the frame.
+// → { label, summary, touched }
+export function adjustNotesFor(slide) {
+  const touched = !isNeutral(slide?.adjust);
+  return { label: touched ? 'Adjusted' : 'Adjust', summary: touched ? describeAdjust(slide.adjust) : 'As grabbed', touched };
 }

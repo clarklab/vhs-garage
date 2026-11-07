@@ -14,8 +14,10 @@ import { isSignedIn, clearLocalToken } from './auth.js';
 import { publishSlideshow } from './publish.js';
 import { composeToCanvas, captionFontReady, quoteStampReady, clampStampNudge } from './compose.js';
 import { projectDisplayName, relativeTime, toggleReady, statusOf } from './project.js';
-import { groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, flagsFor, wrongsFor, songQuery, shotNotesFor } from './quickpostlib.js';
+import { groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, flagsFor, wrongsFor, songQuery, shotNotesFor, adjustNotesFor } from './quickpostlib.js';
 import { markWrongFrame, clearWrongFrame } from './slides.js';
+import { PRESETS, applyPreset, autoLevels, NEUTRAL } from './adjust.js';
+import { measureLevels } from './levels.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -31,6 +33,8 @@ const els = {
   textBox: $('qp-text-box'), textSlideNo: $('qp-text-slide-no'), slideText: $('qp-slide-text'),
   textUndo: $('qp-text-undo'), textDone: $('qp-text-done'),
   wrongBox: $('qp-wrong-box'), wrongNote: $('qp-wrong-note'), slideWhy: $('qp-slide-why'),
+  adjust: $('qp-adjust'), adjustLabel: $('qp-adjust-label'), adjustBox: $('qp-adjust-box'), adjustSlideNo: $('qp-adjust-slide-no'),
+  adjustSummary: $('qp-adjust-summary'), adjustPresets: $('qp-adjust-presets'), adjustReset: $('qp-adjust-reset'), adjustDone: $('qp-adjust-done'),
   songsWrap: $('qp-songs-wrap'), songs: $('qp-songs'), songsNone: $('qp-songs-none'),
   postTitle: $('qp-post-title'), postDesc: $('qp-post-desc'),
   done: $('qp-done'), next: $('qp-next'),
@@ -165,6 +169,7 @@ async function openReview(id, { push = true } = {}) {
   els.dots.replaceChildren();
   els.done.classList.add('hidden');
   els.textBox.classList.add('hidden');
+  els.adjustBox.classList.add('hidden');
   els.wrongBox.classList.add('hidden');
   els.slideWhy.classList.add('hidden');
   els.loading.classList.remove('hidden');
@@ -295,6 +300,22 @@ function syncSlideTools() {
     if (document.activeElement !== els.slideText) els.slideText.value = s.caption || '';
     els.textUndo.disabled = !current.original.has(i) || current.original.get(i) === (s.caption || '');
   }
+  // The Adjust tool reads the slide's own correction, so it can say what has
+  // been done to this frame before anything else is tapped.
+  const tweak = adjustNotesFor(s);
+  els.adjustLabel.textContent = tweak.label;
+  els.adjust.classList.toggle('text-amber-300', tweak.touched);
+  const adjusting = !els.adjustBox.classList.contains('hidden');
+  els.adjust.setAttribute('aria-pressed', String(adjusting));
+  if (adjusting) {
+    const hasFrame = !!current.bitmaps[i];
+    els.adjustSlideNo.textContent = String(i + 1);
+    els.adjustSummary.textContent = hasFrame ? tweak.summary : 'No frame to adjust';
+    els.adjustSummary.classList.toggle('text-amber-300', tweak.touched && hasFrame);
+    els.adjustSummary.classList.toggle('text-neutral-500', !(tweak.touched && hasFrame));
+    els.adjustReset.disabled = !tweak.touched || !hasFrame;
+    for (const b of els.adjustPresets.children) b.disabled = !hasFrame;
+  }
 }
 
 els.slides.addEventListener('scroll', () => requestAnimationFrame(onSlideScroll), { passive: true });
@@ -318,6 +339,7 @@ els.editText.addEventListener('click', () => {
   if (!current) return;
   const open = els.textBox.classList.contains('hidden');
   els.textBox.classList.toggle('hidden', !open);
+  if (open) els.adjustBox.classList.add('hidden');   // one tool open at a time on a phone
   syncSlideTools();
   if (open) els.slideText.focus();
 });
@@ -350,6 +372,51 @@ els.textUndo.addEventListener('click', () => {
   els.textUndo.disabled = true;
   renderSlide(i);
   scheduleSave();
+});
+
+// ---- Adjust: brightness / contrast / colour / centre zoom for this frame ----
+//
+// The studio's menu, one tap per step. Presets compound (two "Brighter +10%"
+// is +21%), the slide is redrawn at once through the same compose code the post
+// uses, and the correction saves with the set, so the desk sees it too.
+for (const preset of PRESETS) {
+  if (preset.key === 'reset') continue;   // Reset has its own button under the grid
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'rounded-lg border border-neutral-800 bg-neutral-950 px-2.5 py-2 text-left active:bg-neutral-800 disabled:opacity-40';
+  b.innerHTML = `<span class="block text-[13px] font-semibold text-neutral-100">${esc(preset.label)}</span><span class="block text-[11px] leading-snug text-neutral-500">${esc(preset.hint)}</span>`;
+  b.addEventListener('click', () => applyAdjustTo(preset.key));
+  els.adjustPresets.appendChild(b);
+}
+
+function applyAdjustTo(key) {
+  if (!current) return;
+  const i = current.index;
+  const s = current.rec.slides[i];
+  const bitmap = current.bitmaps[i];
+  if (!bitmap) { els.status.textContent = 'This slide has no frame to adjust.'; return; }
+  // Auto is the only preset that has to look at the picture.
+  const levels = key === 'auto' ? autoLevels(measureLevels(bitmap)) : null;
+  s.adjust = applyPreset(s.adjust || NEUTRAL, key, levels);
+  renderSlide(i);
+  syncSlideTools();
+  scheduleSave();
+  const { touched, summary } = adjustNotesFor(s);
+  els.status.textContent = touched ? `Slide ${i + 1}: ${summary}.` : `Slide ${i + 1} back to how it was grabbed.`;
+}
+
+els.adjust.addEventListener('click', () => {
+  if (!current) return;
+  const open = els.adjustBox.classList.contains('hidden');
+  els.adjustBox.classList.toggle('hidden', !open);
+  if (open) { els.textBox.classList.add('hidden'); els.slideText.blur(); }
+  syncSlideTools();
+});
+els.adjustReset.addEventListener('click', () => applyAdjustTo('reset'));
+els.adjustDone.addEventListener('click', () => {
+  els.adjustBox.classList.add('hidden');
+  flushSave();
+  if (current) syncSlideTools();
 });
 
 // "This frame is wrong." It can't be re-shot from the phone, so it is marked

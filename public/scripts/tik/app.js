@@ -16,6 +16,7 @@ import { parseMovieName } from './filename.js';
 import { composeToCanvas, composeSlide, captionFontReady, quoteStampReady, wantsQuoteStamp, clampStampNudge, canNudgeStamp, captionStyleOf } from './compose.js';
 import { clockTimecode, formatTimecode } from './timecode.js';
 import { PRESETS, applyPreset, autoLevels, describeAdjust, isNeutral, NEUTRAL } from './adjust.js';
+import { measureLevels } from './levels.js';
 import {
   FORMATS, YEAR_LISTS, YEAR_LIST_SIZE, formatOf, makeProject, defaultPostFields, captionForRole,
   sectionCaption, captionForYearEntry, photoQueryFor, renumberYearEntries,
@@ -1391,36 +1392,6 @@ async function togglePairLayout(id) {
 function grabTarget() {
   if (editingId) return slides.find((s) => s.id === editingId) || null;
   return slides.length ? slides[slides.length - 1] : null;
-}
-
-// Measure the frame so Auto has something to stretch against.
-//
-// Sampled small and on a stride: a full 1080p read is two million pixels for a
-// number that only needs to be roughly right, and this runs on a click.
-function measureLevels(bitmap) {
-  const W = 160;
-  const H = Math.max(1, Math.round((bitmap.height / bitmap.width) * W));
-  const c = document.createElement('canvas');
-  c.width = W; c.height = H;
-  const ctx = c.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(bitmap, 0, 0, W, H);
-  const d = ctx.getImageData(0, 0, W, H).data;
-  const hist = new Array(256).fill(0);
-  let n = 0;
-  for (let i = 0; i < d.length; i += 4) {
-    // Rec. 601 luma is close enough for deciding how dark a frame is.
-    hist[(d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0]++;
-    n++;
-  }
-  // Percentiles, not min and max: one specular highlight or one crushed pixel
-  // would otherwise decide the stretch for the whole frame.
-  const at = (p) => {
-    let seen = 0;
-    const want = n * p;
-    for (let v = 0; v < 256; v++) { seen += hist[v]; if (seen >= want) return v / 255; }
-    return 1;
-  };
-  return { black: at(0.01), white: at(0.99) };
 }
 
 // The pair checkbox is the only frame control left in the video toolbar, and it

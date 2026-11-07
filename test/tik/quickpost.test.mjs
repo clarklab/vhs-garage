@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, songQuery, wrongsFor, flagsFor, shotNotesFor, hms,
+  groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, songQuery, wrongsFor, flagsFor, shotNotesFor, hms, adjustNotesFor,
 } from '../../public/scripts/tik/quickpostlib.js';
 
 const slide = (extra = {}) => ({ caption: 'x', frame: null, ...extra });
@@ -89,4 +89,11 @@ test('a set counts its batch flags and its wrong-frame marks separately', () => 
   assert.equal(flagsFor(rec), 1);
   assert.equal(wrongsFor(rec), 1);
   assert.equal(wrongsFor({}), 0);
+});
+
+test('the adjust tool says whether this frame has been touched, and how', () => {
+  assert.deepEqual(adjustNotesFor({ adjust: { brightness: 1.2, contrast: 1, saturate: 1, zoom: 1.2 } }),
+    { label: 'Adjusted', summary: '+20% bright, +20% zoom', touched: true });
+  assert.deepEqual(adjustNotesFor({ caption: 'x' }), { label: 'Adjust', summary: 'As grabbed', touched: false });
+  assert.deepEqual(adjustNotesFor(null), { label: 'Adjust', summary: 'As grabbed', touched: false });
 });
