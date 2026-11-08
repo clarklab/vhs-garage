@@ -12,6 +12,13 @@ Needs ffmpeg and Python 3 with Pillow. Work files go to `$TIK_FRAMES_WORK`
 (default `~/.cache/vhs-tik-frames`), never into the repo.
 
 ## The files
+- `WRITE-BRIEF.md` — the brief a writer follows to turn a film's IMDb trivia pool into the
+  11 slides and post copy of a new set (house rules mirror netlify/functions/lib/autopilot.mjs).
+- `make-draft.py` + `draft.js` — check a written set and save it as a draft in the studio
+  library from the tab, in the shape batch mode writes (placeholder frames, pending).
+- `serve.py` — CORS file server for `W` on port 8765, so the tab fetches payloads instead of
+  having them pasted; `recv.py` is the other direction.
+- `make-briefs.py` — picker fact sheets for fresh drafts (`W/ids.json` + the dump + the writes).
 - `prep.py` — `prep.py <slug> <film>` makes the contact sheets (`W/films/<slug>/grids/`);
   `prep.py <slug> <film> pin <name> t…` makes a 12-frame close look at exact seconds.
 - `BRIEF.md` — the instructions a picker follows, and the rules a pick must meet.
@@ -47,3 +54,20 @@ optional note on what it should show). Run `find-wrong.js` in the tab to list
 them, then follow the steps above for just those slides. The phone shows each
 slide's **Direction** (the writer's hint) and **Picked** (the note and time), so
 a mark usually says which of the two was wrong.
+
+## Writing a new set locally (the "all Fable" path)
+The studio's Batch WRITE asks the server's fast models to write the captions. When the
+writing itself should be done by Claude Code, do it here:
+1. **Choose films from the shelf list, not from memory.** The Son of Plex Shelf artifact
+   (claude.ai/artifact/2g5HukbgrUwetZWf7PNVLy) ranks every pre-2006 film on the drive by
+   IMDb votes and marks what is posted. Then check the live library for EVERY title field:
+   sets imported from TikTok have no `movie.title`, the film is only in `name` /
+   `imported.title` / `postTitle`, and a check on movie titles alone misses them.
+2. Pull the pool: `curl -s -X POST https://vhsgarage.com/.netlify/functions/tik-imdb -H 'Content-Type: application/json' -d '{"action":"trivia","query":"<title>","year":<year>,"includeSpoilers":true}' > W/pools/<slug>.json`.
+3. One writer agent per film follows `WRITE-BRIEF.md` → `W/writes/<slug>.json`. Read every
+   set yourself before it becomes a draft: facts, title slide, dashes, length.
+4. `python3 serve.py &`, then `python3 make-draft.py <slug> <n>` and run the two lines it
+   prints in the tab; keep the returned ids in `W/ids.json` and the movie paths in `W/films.json`.
+5. `recv.py` + `dump-facts.js`, `python3 make-briefs.py`, then shoot as above (one picker per
+   film, review sheet, deliver). Pickers also catch caption errors (who did what to whom);
+   fix the caption in the draft before applying frames.
