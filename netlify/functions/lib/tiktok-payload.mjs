@@ -5,8 +5,8 @@
 // description<=4000 (UTF-16 runes).
 
 export const MAX_PHOTOS = 35;
-const TITLE_MAX = 90;
-const DESC_MAX = 4000;
+export const TITLE_MAX = 90;
+export const DESC_MAX = 4000;
 
 // TikTok counts title/description limits in UTF-16 code units (its "runes").
 // Truncate by code units to match, but never split a surrogate pair (which
