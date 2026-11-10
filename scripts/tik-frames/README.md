@@ -48,7 +48,16 @@ Needs ffmpeg and Python 3 with Pillow. Work files go to `$TIK_FRAMES_WORK`
    that were never looked at full size and no notes; dozens were wrong.
 5. `python3 deliver.py <slug> "<film path>" <draft id> picks.json`, then run the
    printed `apply.js` in the tab. Uploads expire after about two hours, so apply
-   soon. It replaces just those frames, records each `why` as the pick note the
+   soon. With `serve.py` running the tab can fetch it instead of a paste; define
+   this once per session, then `await window.__applyFromServer('<slug>')`:
+   ```js
+   window.__applyFromServer = async (slug) => {
+     const r = await fetch(`http://127.0.0.1:8765/deliver/${slug}/apply.js?v=${Date.now()}`);
+     if (!r.ok) throw new Error(`apply.js for ${slug}: ${r.status}`);
+     const AF = Object.getPrototypeOf(async function () {}).constructor;   // apply.js has a top-level await
+     return new AF((await r.text()).replace('await window.__applyFrames(', 'return await window.__applyFrames('))();
+   };
+   ``` It replaces just those frames, records each `why` as the pick note the
    phone shows under **Picked**, clears any wrong mark (keeping `wasWrong`), and
    the browser syncs the change to the phone.
 
