@@ -13,9 +13,13 @@ Needs ffmpeg and Python 3 with Pillow. Work files go to `$TIK_FRAMES_WORK`
 
 ## The files
 - `WRITE-BRIEF.md` — the brief a writer follows to turn a film's IMDb trivia pool into the
-  11 slides and post copy of a new set (house rules mirror netlify/functions/lib/autopilot.mjs).
-- `make-draft.py` + `draft.js` — check a written set and save it as a draft in the studio
-  library from the tab, in the shape batch mode writes (placeholder frames, pending).
+  ten facts of a new set, plus the research the copy is written from.
+- `COPY.md` — how the title slide's line, the sign-off, the post title, the description and
+  the tags are written by hand for each film, and why the generated ones are not used here.
+- `check-copy.mjs` — the check on that hand-written copy (lengths, tags, stale house lines,
+  and that the post reads back as the film to the queue).
+- `make-draft.py` + `draft.js` — check a written set and its copy and save it as a draft in
+  the studio library from the tab, in the shape batch mode writes (placeholder frames, pending).
 - `serve.py` — CORS file server for `W` on port 8765, so the tab fetches payloads instead of
   having them pasted; `recv.py` is the other direction.
 - `make-briefs.py` — picker fact sheets for fresh drafts (`W/ids.json` + the dump + the writes).
@@ -44,7 +48,16 @@ Needs ffmpeg and Python 3 with Pillow. Work files go to `$TIK_FRAMES_WORK`
    that were never looked at full size and no notes; dozens were wrong.
 5. `python3 deliver.py <slug> "<film path>" <draft id> picks.json`, then run the
    printed `apply.js` in the tab. Uploads expire after about two hours, so apply
-   soon. It replaces just those frames, records each `why` as the pick note the
+   soon. With `serve.py` running the tab can fetch it instead of a paste; define
+   this once per session, then `await window.__applyFromServer('<slug>')`:
+   ```js
+   window.__applyFromServer = async (slug) => {
+     const r = await fetch(`http://127.0.0.1:8765/deliver/${slug}/apply.js?v=${Date.now()}`);
+     if (!r.ok) throw new Error(`apply.js for ${slug}: ${r.status}`);
+     const AF = Object.getPrototypeOf(async function () {}).constructor;   // apply.js has a top-level await
+     return new AF((await r.text()).replace('await window.__applyFrames(', 'return await window.__applyFrames('))();
+   };
+   ``` It replaces just those frames, records each `why` as the pick note the
    phone shows under **Picked**, clears any wrong mark (keeping `wasWrong`), and
    the browser syncs the change to the phone.
 
@@ -65,9 +78,13 @@ writing itself should be done by Claude Code, do it here:
    `imported.title` / `postTitle`, and a check on movie titles alone misses them.
 2. Pull the pool: `curl -s -X POST https://vhsgarage.com/.netlify/functions/tik-imdb -H 'Content-Type: application/json' -d '{"action":"trivia","query":"<title>","year":<year>,"includeSpoilers":true}' > W/pools/<slug>.json`.
 3. One writer agent per film follows `WRITE-BRIEF.md` → `W/writes/<slug>.json`. Read every
-   set yourself before it becomes a draft: facts, title slide, dashes, length.
-4. `python3 serve.py &`, then `python3 make-draft.py <slug> <n>` and run the two lines it
-   prints in the tab; keep the returned ids in `W/ids.json` and the movie paths in `W/films.json`.
-5. `recv.py` + `dump-facts.js`, `python3 make-briefs.py`, then shoot as above (one picker per
+   set yourself before it becomes a draft: facts, dashes, length.
+4. Write each film's copy yourself, following `COPY.md` → `W/copy/<slug>.json`: the title
+   slide's line, the sign-off, the post title, the description and five tags. Not a writer
+   agent's job and not the studio's templates.
+5. `python3 serve.py &`, then `python3 make-draft.py <slug> <n>` (it runs `check-copy.mjs`)
+   and run the two lines it prints in the tab; keep the returned ids in `W/ids.json` and the
+   movie paths in `W/films.json`. The result should say `postEdited: true`.
+6. `recv.py` + `dump-facts.js`, `python3 make-briefs.py`, then shoot as above (one picker per
    film, review sheet, deliver). Pickers also catch caption errors (who did what to whom);
    fix the caption in the draft before applying frames.

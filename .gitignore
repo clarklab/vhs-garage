@@ -25,3 +25,6 @@ video/edits/
 
 # Local git worktrees
 .worktrees/
+
+# Python bytecode
+__pycache__/
