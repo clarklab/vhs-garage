@@ -38,6 +38,24 @@ export function fitFontSize(lineCount, bandHeight, opts = {}) {
   return Math.max(minFont, Math.min(maxFont, ideal));
 }
 
+// Tape Trivia captions earn their length when a fact needs it, but past a few
+// lines the pills get dense on a phone. A long caption therefore starts a click
+// or two down the studio's font nudge (one click = FONT_SCALE_STEP), which the
+// desk and the phone can both still nudge from. Measured on the sets written
+// in November 2026: 180 characters is about 32 words and read fine; the median
+// had crept to 41.
+export const FONT_SCALE_STEP = 0.1;
+export const FONT_SCALE_MIN = 0.5;
+export const FONT_SCALE_MAX = 1.6;
+export const TRIVIA_WORDS_ONE_DOWN = 34;
+export const TRIVIA_WORDS_TWO_DOWN = 44;
+export function fontScaleForTrivia(text) {
+  const words = String(text ?? '').trim().split(/\s+/).filter(Boolean).length;
+  if (words > TRIVIA_WORDS_TWO_DOWN) return 0.8;
+  if (words > TRIVIA_WORDS_ONE_DOWN) return 0.9;
+  return 1;
+}
+
 export function fontScaleForQuote(text) {
   const n = String(text ?? '').trim().length;
   if (!n) return 1;

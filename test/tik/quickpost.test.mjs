@@ -97,3 +97,23 @@ test('the adjust tool says whether this frame has been touched, and how', () => 
   assert.deepEqual(adjustNotesFor({ caption: 'x' }), { label: 'Adjust', summary: 'As grabbed', touched: false });
   assert.deepEqual(adjustNotesFor(null), { label: 'Adjust', summary: 'As grabbed', touched: false });
 });
+
+// ---- Text size on the phone: the studio's caption nudge, a click at a time ----
+import * as qp from '../../public/scripts/tik/quickpostlib.js';
+
+test('the phone nudges a caption size in the studio steps and stays inside its range', () => {
+  assert.equal(typeof qp.nudgedFontScale, 'function');
+  assert.equal(qp.nudgedFontScale(1, -1), 0.9);
+  assert.equal(qp.nudgedFontScale(0.9, -1), 0.8);
+  assert.equal(qp.nudgedFontScale(0.8, +1), 0.9, 'no float drift: 0.8 + 0.1 is 0.9, not 0.9000000001');
+  assert.equal(qp.nudgedFontScale(undefined, +1), 1.1, 'a slide with no scale is at 1');
+  assert.equal(qp.nudgedFontScale(0.5, -1), 0.5, 'floor');
+  assert.equal(qp.nudgedFontScale(1.6, +1), 1.6, 'ceiling');
+});
+
+test('the text size tool says where this caption sits', () => {
+  assert.equal(typeof qp.textSizeNotesFor, 'function');
+  assert.deepEqual(qp.textSizeNotesFor({ caption: 'x' }), { label: 'Text size', summary: '100%', touched: false });
+  assert.deepEqual(qp.textSizeNotesFor({ caption: 'x', fontScale: 0.9 }), { label: 'Text 90%', summary: '90%', touched: true });
+  assert.deepEqual(qp.textSizeNotesFor({ caption: 'x', fontScale: 1.2 }), { label: 'Text 120%', summary: '120%', touched: true });
+});

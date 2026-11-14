@@ -21,7 +21,7 @@ Rank for: surprise, a FRAME OF THE FILM that can show it, brevity, variety, and 
 - A confident factual STATEMENT. No questions, challenges or hype: never "you won't believe", "did you notice", "get this", "wait for it", "no way", "fun fact".
 - NO em dashes or en dashes (— or –) anywhere, in any field. Use commas, periods or "and".
 - Concrete: name the specific person, prop, number, line or technique. Tie it to a specific scene or shot.
-- One idea, about 180 characters; up to 300 is allowed when the sentence needs it. Never pad. No hashtags, no emoji.
+- One idea, about 150 characters (25 to 30 words). 220 is the ceiling for a fact that needs the room, and 300 only when it cannot be told shorter; past 34 words the slide's text is sized down a click on its own, past 44 two clicks, so a long caption costs readability on a phone. Never pad. No hashtags, no emoji.
 - Write in your own words; never copy an IMDb sentence.
 - Plain words. The voice is a friend who knows the tape, not a presenter.
 

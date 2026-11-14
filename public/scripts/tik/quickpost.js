@@ -14,7 +14,7 @@ import { isSignedIn, clearLocalToken } from './auth.js';
 import { publishSlideshow } from './publish.js';
 import { composeToCanvas, captionFontReady, quoteStampReady, clampStampNudge } from './compose.js';
 import { projectDisplayName, relativeTime, toggleReady, statusOf } from './project.js';
-import { groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, flagsFor, wrongsFor, songQuery, shotNotesFor, adjustNotesFor } from './quickpostlib.js';
+import { groupForQuickPost, canPublish, composeOptionsFor, postCopyFor, songsFor, flagsFor, wrongsFor, songQuery, shotNotesFor, adjustNotesFor, nudgedFontScale, textSizeNotesFor } from './quickpostlib.js';
 import { markWrongFrame, clearWrongFrame } from './slides.js';
 import { PRESETS, applyPreset, autoLevels, NEUTRAL } from './adjust.js';
 import { measureLevels } from './levels.js';
@@ -35,6 +35,8 @@ const els = {
   wrongBox: $('qp-wrong-box'), wrongNote: $('qp-wrong-note'), slideWhy: $('qp-slide-why'),
   adjust: $('qp-adjust'), adjustLabel: $('qp-adjust-label'), adjustBox: $('qp-adjust-box'), adjustSlideNo: $('qp-adjust-slide-no'),
   adjustSummary: $('qp-adjust-summary'), adjustPresets: $('qp-adjust-presets'), adjustReset: $('qp-adjust-reset'), adjustDone: $('qp-adjust-done'),
+  textSize: $('qp-text-size'), textSizeLabel: $('qp-text-size-label'), sizeBox: $('qp-size-box'), sizeSlideNo: $('qp-size-slide-no'),
+  sizeSummary: $('qp-size-summary'), sizeDown: $('qp-size-down'), sizeUp: $('qp-size-up'), sizeReset: $('qp-size-reset'), sizeDone: $('qp-size-done'),
   songsWrap: $('qp-songs-wrap'), songs: $('qp-songs'), songsNone: $('qp-songs-none'),
   postTitle: $('qp-post-title'), postDesc: $('qp-post-desc'),
   done: $('qp-done'), next: $('qp-next'),
@@ -170,6 +172,7 @@ async function openReview(id, { push = true } = {}) {
   els.done.classList.add('hidden');
   els.textBox.classList.add('hidden');
   els.adjustBox.classList.add('hidden');
+  els.sizeBox.classList.add('hidden');
   els.wrongBox.classList.add('hidden');
   els.slideWhy.classList.add('hidden');
   els.loading.classList.remove('hidden');
@@ -316,6 +319,21 @@ function syncSlideTools() {
     els.adjustReset.disabled = !tweak.touched || !hasFrame;
     for (const b of els.adjustPresets.children) b.disabled = !hasFrame;
   }
+  // Text size reads the slide's own scale the same way.
+  const size = textSizeNotesFor(s);
+  els.textSizeLabel.textContent = size.label;
+  els.textSize.classList.toggle('text-amber-300', size.touched);
+  const sizing = !els.sizeBox.classList.contains('hidden');
+  els.textSize.setAttribute('aria-pressed', String(sizing));
+  if (sizing) {
+    els.sizeSlideNo.textContent = String(i + 1);
+    els.sizeSummary.textContent = size.summary;
+    els.sizeSummary.classList.toggle('text-amber-300', size.touched);
+    els.sizeSummary.classList.toggle('text-neutral-500', !size.touched);
+    els.sizeReset.disabled = !size.touched;
+    els.sizeDown.disabled = nudgedFontScale(s.fontScale, -1) === (s.fontScale || 1);
+    els.sizeUp.disabled = nudgedFontScale(s.fontScale, +1) === (s.fontScale || 1);
+  }
 }
 
 els.slides.addEventListener('scroll', () => requestAnimationFrame(onSlideScroll), { passive: true });
@@ -339,7 +357,7 @@ els.editText.addEventListener('click', () => {
   if (!current) return;
   const open = els.textBox.classList.contains('hidden');
   els.textBox.classList.toggle('hidden', !open);
-  if (open) els.adjustBox.classList.add('hidden');   // one tool open at a time on a phone
+  if (open) { els.adjustBox.classList.add('hidden'); els.sizeBox.classList.add('hidden'); }   // one tool open at a time on a phone
   syncSlideTools();
   if (open) els.slideText.focus();
 });
@@ -409,12 +427,42 @@ els.adjust.addEventListener('click', () => {
   if (!current) return;
   const open = els.adjustBox.classList.contains('hidden');
   els.adjustBox.classList.toggle('hidden', !open);
-  if (open) { els.textBox.classList.add('hidden'); els.slideText.blur(); }
+  if (open) { els.textBox.classList.add('hidden'); els.slideText.blur(); els.sizeBox.classList.add('hidden'); }
   syncSlideTools();
 });
 els.adjustReset.addEventListener('click', () => applyAdjustTo('reset'));
 els.adjustDone.addEventListener('click', () => {
   els.adjustBox.classList.add('hidden');
+  flushSave();
+  if (current) syncSlideTools();
+});
+
+// ---- Text size: the studio's caption nudge, one click per tap ----
+//
+// Same step and range as the desk's A- / A+, saved on the slide, so a set
+// sized on the phone looks the same when it is opened in the full studio.
+function setTextSizeTo(scale) {
+  if (!current) return;
+  const i = current.index;
+  const s = current.rec.slides[i];
+  s.fontScale = scale;
+  renderSlide(i);
+  syncSlideTools();
+  scheduleSave();
+  els.status.textContent = `Slide ${i + 1}: text at ${textSizeNotesFor(s).summary}.`;
+}
+els.textSize.addEventListener('click', () => {
+  if (!current) return;
+  const open = els.sizeBox.classList.contains('hidden');
+  els.sizeBox.classList.toggle('hidden', !open);
+  if (open) { els.textBox.classList.add('hidden'); els.slideText.blur(); els.adjustBox.classList.add('hidden'); }
+  syncSlideTools();
+});
+els.sizeDown.addEventListener('click', () => { if (current) setTextSizeTo(nudgedFontScale(current.rec.slides[current.index].fontScale, -1)); });
+els.sizeUp.addEventListener('click', () => { if (current) setTextSizeTo(nudgedFontScale(current.rec.slides[current.index].fontScale, +1)); });
+els.sizeReset.addEventListener('click', () => setTextSizeTo(1));
+els.sizeDone.addEventListener('click', () => {
+  els.sizeBox.classList.add('hidden');
   flushSave();
   if (current) syncSlideTools();
 });

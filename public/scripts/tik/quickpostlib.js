@@ -3,6 +3,7 @@
 import { statusOf, isImported, defaultPostFields, projectDisplayName } from './project.js';
 import { flaggedCount, wrongCount } from './slides.js';
 import { describeAdjust, isNeutral } from './adjust.js';
+import { FONT_SCALE_STEP, FONT_SCALE_MIN, FONT_SCALE_MAX } from './caption.js';
 
 const YEAR_FRAME_HEIGHT_RATIO = 0.6;   // keep in step with app.js frameHeightRatio()
 
@@ -100,4 +101,22 @@ export function hms(sec) {
 export function adjustNotesFor(slide) {
   const touched = !isNeutral(slide?.adjust);
   return { label: touched ? 'Adjusted' : 'Adjust', summary: touched ? describeAdjust(slide.adjust) : 'As grabbed', touched };
+}
+
+// Text size: the studio's caption nudge, one click at a time, in the same
+// steps and range so a slide reads the same on the desk afterwards. Scales are
+// kept to one decimal so 0.8 + 0.1 is 0.9 and not 0.9000000000000001.
+export function nudgedFontScale(current, clicks) {
+  const now = Number.isFinite(Number(current)) && Number(current) > 0 ? Number(current) : 1;
+  const next = now + (Number(clicks) || 0) * FONT_SCALE_STEP;
+  return Math.round(Math.min(Math.max(next, FONT_SCALE_MIN), FONT_SCALE_MAX) * 10) / 10;
+}
+
+// The Text size tool's face: what the button says and where the caption sits.
+// → { label, summary, touched }
+export function textSizeNotesFor(slide) {
+  const scale = Number.isFinite(Number(slide?.fontScale)) && Number(slide.fontScale) > 0 ? Number(slide.fontScale) : 1;
+  const pct = `${Math.round(scale * 100)}%`;
+  const touched = Math.round(scale * 100) !== 100;
+  return { label: touched ? `Text ${pct}` : 'Text size', summary: pct, touched };
 }
