@@ -22,7 +22,7 @@ import { createTriviaPool, helpfulLabel, DEFAULT_PICK } from './triviapool.js';
 // and the run, and nothing here reaches into it beyond showing and refreshing.
 import { initShoot, refreshShoot, isShooting } from './shoot.js';
 import { fetchTriviaPost, fetchQuotesPost, fetchSubtitles } from './autopilot.js';
-import { fontScaleForQuote } from './caption.js';
+import { fontScaleForQuote, fontScaleForTrivia } from './caption.js';
 import { makeProject, defaultPostFields, pickOutro } from './project.js';
 import { parseTitleList, pickBestMatch, queueAdmission } from './movielist.js';
 import { houseSetAt } from './hashtags.js';
@@ -1384,7 +1384,7 @@ async function saveDraft(item, suggestions, meta = null, batchIndex = 0) {
         caption: s.caption,
         timecode: s.timecode,
         grabHint: s.grab || '',
-        fontScale: i === 0 ? 1 : (batchFormat === 'quotes' ? fontScaleForQuote(s.caption) : 1),
+        fontScale: i === 0 ? 1 : (batchFormat === 'quotes' ? fontScaleForQuote(s.caption) : fontScaleForTrivia(s.caption)),
         role: null, kind: i === 0 ? 'title' : null, entry: null, section: null,
         // Where the timecode came from, so Shoot and the editor can say whether
         // it was matched against the subtitles or estimated.

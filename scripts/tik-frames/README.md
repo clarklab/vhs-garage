@@ -78,7 +78,9 @@ writing itself should be done by Claude Code, do it here:
    `imported.title` / `postTitle`, and a check on movie titles alone misses them.
 2. Pull the pool: `curl -s -X POST https://vhsgarage.com/.netlify/functions/tik-imdb -H 'Content-Type: application/json' -d '{"action":"trivia","query":"<title>","year":<year>,"includeSpoilers":true}' > W/pools/<slug>.json`.
 3. One writer agent per film follows `WRITE-BRIEF.md` → `W/writes/<slug>.json`. Read every
-   set yourself before it becomes a draft: facts, dashes, length.
+   set yourself before it becomes a draft: facts, dashes, length (about 150 characters; past
+   34 words a caption starts a click down the font scale on its own, past 44 two clicks, see
+   `fontScaleForTrivia` in public/scripts/tik/caption.js, and the phone can nudge it from there).
 4. Write each film's copy yourself, following `COPY.md` → `W/copy/<slug>.json`: the title
    slide's line, the sign-off, the post title, the description and five tags. Not a writer
    agent's job and not the studio's templates.

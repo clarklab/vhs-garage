@@ -85,14 +85,17 @@ import { BUILD_ID } from '../../utils/build-id.js';
       <ol id="qp-dots" class="mt-1 flex flex-wrap justify-center gap-1.5 px-4"></ol>
 
       <!-- Tools for the slide on screen. Swiping moves them to the next one.
-           Icon over label: three of these have to share a 375px row, and
-           "Marked wrong" beside an icon does not fit a third of that. -->
-      <div id="qp-slide-tools" class="mt-3 grid grid-cols-3 gap-2 px-4">
+           Icon over label: four of these have to share a 375px row, and
+           "Marked wrong" beside an icon does not fit a quarter of that. -->
+      <div id="qp-slide-tools" class="mt-3 grid grid-cols-4 gap-1.5 px-4">
         <button id="qp-edit-text" class="flex flex-col items-center justify-center gap-1 rounded-xl border border-neutral-700 px-2 py-2 text-xs font-semibold text-neutral-200 aria-pressed:border-neutral-300 aria-pressed:bg-neutral-800" aria-pressed="false">
           <span class="material-symbols-outlined text-[20px] leading-none">edit</span><span>Edit text</span>
         </button>
         <button id="qp-adjust" class="flex flex-col items-center justify-center gap-1 rounded-xl border border-neutral-700 px-2 py-2 text-xs font-semibold text-neutral-200 aria-pressed:border-neutral-300 aria-pressed:bg-neutral-800" aria-pressed="false">
           <span class="material-symbols-outlined text-[20px] leading-none">exposure</span><span id="qp-adjust-label">Adjust</span>
+        </button>
+        <button id="qp-text-size" class="flex flex-col items-center justify-center gap-1 rounded-xl border border-neutral-700 px-2 py-2 text-xs font-semibold text-neutral-200 aria-pressed:border-neutral-300 aria-pressed:bg-neutral-800" aria-pressed="false">
+          <span class="material-symbols-outlined text-[20px] leading-none">format_size</span><span id="qp-text-size-label">Text size</span>
         </button>
         <button id="qp-mark-wrong" class="flex flex-col items-center justify-center gap-1 rounded-xl border border-neutral-700 px-2 py-2 text-xs font-semibold text-neutral-200 aria-pressed:border-red-500/60 aria-pressed:bg-red-500/15 aria-pressed:text-red-200" aria-pressed="false">
           <span class="material-symbols-outlined text-[20px] leading-none">flag</span><span id="qp-mark-wrong-label">Wrong frame</span>
@@ -104,6 +107,23 @@ import { BUILD_ID } from '../../utils/build-id.js';
         <div class="mt-2 flex items-center justify-between">
           <button id="qp-text-undo" class="text-xs font-semibold text-neutral-400 disabled:opacity-40" disabled>Undo changes</button>
           <button id="qp-text-done" class="rounded-lg bg-neutral-100 px-3 py-1.5 text-xs font-bold text-neutral-950">Done</button>
+        </div>
+      </div>
+      <!-- The studio's caption nudge, a click at a time. A long fact starts a
+           click or two down on its own (caption.js fontScaleForTrivia); this
+           is where the phone takes it the rest of the way, or back up. -->
+      <div id="qp-size-box" class="hidden mx-4 mt-2 rounded-xl border border-neutral-700 bg-neutral-900 p-3">
+        <div class="flex items-center justify-between gap-2 text-[11px]">
+          <span class="text-neutral-500">Text on slide <span id="qp-size-slide-no"></span></span>
+          <span id="qp-size-summary" class="font-semibold text-neutral-500">100%</span>
+        </div>
+        <div class="mt-2 grid grid-cols-2 gap-1.5">
+          <button id="qp-size-down" class="flex items-center justify-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-950 px-2.5 py-2.5 text-[13px] font-semibold text-neutral-100 active:bg-neutral-800 disabled:opacity-40"><span class="material-symbols-outlined text-[18px] leading-none">text_decrease</span>Smaller</button>
+          <button id="qp-size-up" class="flex items-center justify-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-950 px-2.5 py-2.5 text-[13px] font-semibold text-neutral-100 active:bg-neutral-800 disabled:opacity-40"><span class="material-symbols-outlined text-[18px] leading-none">text_increase</span>Bigger</button>
+        </div>
+        <div class="mt-2 flex items-center justify-between">
+          <button id="qp-size-reset" class="text-xs font-semibold text-neutral-400 disabled:opacity-40" disabled>Back to 100%</button>
+          <button id="qp-size-done" class="rounded-lg bg-neutral-100 px-3 py-1.5 text-xs font-bold text-neutral-950">Done</button>
         </div>
       </div>
       <!-- The studio's Adjust menu, for a last-minute nudge before posting.

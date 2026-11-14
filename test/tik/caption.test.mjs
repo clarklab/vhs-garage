@@ -243,3 +243,19 @@ test('long speaker labels stay unspoken even when their words wrap', () => {
   assert.deepEqual(tokens.filter((t) => t.spoken).map((t) => t.text), ['Hello', 'there.', 'Welcome', 'back.']);
   assert.equal(tokens.filter((t) => !t.spoken).length, 5);
 });
+
+// ---- Tape Trivia captions that run long start a click or two down the font scale ----
+import * as cap from '../../public/scripts/tik/caption.js';
+
+test('a trivia caption keeps full size up to the word limit, then steps down a click, then two', () => {
+  assert.equal(typeof cap.fontScaleForTrivia, 'function');
+  const words = (n) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ');
+  assert.equal(cap.fontScaleForTrivia(''), 1);
+  assert.equal(cap.fontScaleForTrivia(words(20)), 1);
+  assert.equal(cap.fontScaleForTrivia(words(cap.TRIVIA_WORDS_ONE_DOWN)), 1, 'at the limit is still full size');
+  assert.equal(cap.fontScaleForTrivia(words(cap.TRIVIA_WORDS_ONE_DOWN + 1)), 0.9, 'one over is one click down');
+  assert.equal(cap.fontScaleForTrivia(words(cap.TRIVIA_WORDS_TWO_DOWN)), 0.9);
+  assert.equal(cap.fontScaleForTrivia(words(cap.TRIVIA_WORDS_TWO_DOWN + 1)), 0.8, 'two clicks down, never more');
+  assert.equal(cap.fontScaleForTrivia(words(90)), 0.8);
+  assert.equal(cap.fontScaleForTrivia('  spaced   out\n\nwords here  '), 1, 'counts words, not whitespace');
+});

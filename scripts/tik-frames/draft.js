@@ -7,6 +7,7 @@
 // the studio regenerates both from its templates on open for any set that is not marked edited.
 window.__makeDraft = async (w) => {
   const { makeProject, defaultPostFields, pickOutro } = await import('/scripts/tik/project.js');
+  const { fontScaleForTrivia } = await import('/scripts/tik/caption.js');
   const { makeCardBitmap } = await import('/scripts/tik/placeholder.js');
   const { houseSetAt } = await import('/scripts/tik/hashtags.js');
   const { putProject, getProject } = await import('/scripts/tik/store.js');
@@ -36,7 +37,7 @@ window.__makeDraft = async (w) => {
     postTitle: post.title, postDesc: post.description, postEdited: written, hashtagSet: post.hashtagSet, postMeta: w.meta,
     batch: { imdbId: w.imdbId, runtimeSeconds: w.runtimeSeconds, pendingFrames: true, sourceCount: w.slides.length },
     slides: [
-      ...w.slides.map((s, i) => ({ id: String(i + 1), caption: s.caption, timecode: s.timecode, grabHint: s.grab, fontScale: 1, role: null, kind: i === 0 ? 'title' : null, entry: null, section: null, cue: null, frame, batchShot: i === 0 ? 'title' : 'trivia' })),
+      ...w.slides.map((s, i) => ({ id: String(i + 1), caption: s.caption, timecode: s.timecode, grabHint: s.grab, fontScale: i === 0 ? 1 : fontScaleForTrivia(s.caption), role: null, kind: i === 0 ? 'title' : null, entry: null, section: null, cue: null, frame, batchShot: i === 0 ? 'title' : 'trivia' })),
       ...(outro ? [{ id: String(w.slides.length + 1), caption: String(w.outro || '').trim() || pickOutro('trivia'), timecode: null, grabHint: '', fontScale: 1, role: null, kind: 'outro', entry: null, section: null, frame: outro, batchShot: 'skip' }] : []),
     ],
     thumb,
