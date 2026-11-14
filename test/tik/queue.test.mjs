@@ -415,3 +415,10 @@ test('a library post with only a caption is still covered', () => {
   const picks = normalizeQueue({ picks: [{ title: 'The Mask', year: 1994 }, { title: 'Elf', year: 2003 }] }, { posted });
   assert.deepEqual(picks.map((p) => p.title), ['Elf']);
 });
+
+test("a title that begins with It's is not mistaken for an It's-the-film lead-in", () => {
+  // "It's Jaws (1975)!" opens on a lead-in; "It's a Wonderful Life (1946)" IS the film.
+  assert.equal(parsePostedMovie("It's a Wonderful Life (1946): 10 things you never knew about Bedford Falls"), "It's a Wonderful Life");
+  assert.equal(parsePostedMovie("It's a Wonderful Life (1946), directed by Frank Capra, with James Stewart and Donna Reed."), "It's a Wonderful Life");
+  assert.equal(parsePostedMovie("It's Jaws (1975)! Ten things you missed."), 'Jaws');
+});
