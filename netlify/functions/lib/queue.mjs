@@ -64,7 +64,9 @@ const LEAD_INS = [
   /^.*\basked\s+for\s+/i,
   /^.*\brequest:\s*/i,
   /^.*\bstars?\s+in\s+/i,
-  /^(?:it'?s|it is)\s+/i,
+  // "It's Jaws (1975)!" is a lead-in; "It's a Wonderful Life (1946)" is the
+  // film, so the lead-in only counts when a capitalised title follows it.
+  /^(?:[Ii]t'?s|[Ii]t is)\s+(?=[A-Z0-9])/,
 ];
 
 export function filmFromCaption(caption) {
